@@ -49,6 +49,7 @@ function reset_env() {
 
 function dau_test_rm($p) {
   if (is_link($p) || is_file($p)) { @unlink($p); return; }
+  if (!is_dir($p)) return;
   foreach (scandir($p) as $f) if ($f !== '.' && $f !== '..') dau_test_rm("$p/$f");
   @rmdir($p);
 }

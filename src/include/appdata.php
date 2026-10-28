@@ -57,7 +57,7 @@ function dau_templates_read() {
   foreach (glob(DAU_TEMPLATES . '/my-*.xml') ?: [] as $f) {
     $n = substr(basename($f), 3, -4);
     if (!dau_valid_name($n)) continue;
-    $x = @simplexml_load_file($f, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);
+    $x = @simplexml_load_string((string)@file_get_contents($f), 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);   // read as text: works even while the entity loader is off
     if (!$x) continue;
     $paths = [];
     foreach ($x->Config ?? [] as $c) if (strtolower((string)$c['Type']) === 'path') { $v = trim((string)$c); if ($v !== '' && $v[0] === '/') $paths[] = $v; }

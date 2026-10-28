@@ -14,6 +14,7 @@
 - New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
 - Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
 - Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
 - Improved: an automatic reboot after an OS update also waits while the mover is running.
 - Improved: no deprecation warnings on newer PHP versions.
 ###2026.11.01
@@ -2312,8 +2313,9 @@ function dau_url_hosts($text) {
 function dau_plg_parse($text) {
   if (preg_match('/<!ENTITY\s+\S+\s+(SYSTEM|PUBLIC)\b/i', $text)) return null;
   $prev = libxml_use_internal_errors(true);
-  if (PHP_VERSION_ID < 80000) libxml_disable_entity_loader(true);
+  $loader = PHP_VERSION_ID < 80000 ? libxml_disable_entity_loader(true) : null;     // process-wide on PHP 7: put it back, or later simplexml_load_file() calls fail
   $x = @simplexml_load_string($text, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOENT);
+  if ($loader !== null) libxml_disable_entity_loader($loader);
   libxml_clear_errors(); libxml_use_internal_errors($prev);
   return $x instanceof SimpleXMLElement && $x->getName() === 'PLUGIN' ? $x : null;
 }
@@ -2449,7 +2451,7 @@ function dau_plugin_slots(array $cfg) {
   return $s ? ['plugins' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>23b8ac6266fa1adbbe4499ac370ea094d5f8f6221a27121f22a6253a19a380de</SHA256>
+<SHA256>5338ffc73c874670e8186ae3d5f38b1a4307afe6d65f03dd00aa86f4d4a4ac2c</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/os.php" Mode="0644">
@@ -3225,7 +3227,7 @@ function dau_templates_read() {
   foreach (glob(DAU_TEMPLATES . '/my-*.xml') ?: [] as $f) {
     $n = substr(basename($f), 3, -4);
     if (!dau_valid_name($n)) continue;
-    $x = @simplexml_load_file($f, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);
+    $x = @simplexml_load_string((string)@file_get_contents($f), 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);   // read as text: works even while the entity loader is off
     if (!$x) continue;
     $paths = [];
     foreach ($x->Config ?? [] as $c) if (strtolower((string)$c['Type']) === 'path') { $v = trim((string)$c); if ($v !== '' && $v[0] === '/') $paths[] = $v; }
@@ -3484,7 +3486,7 @@ function dau_cleanup_summary($a = null, $d = null) {
   return $sum;
 }
 ]]></INLINE>
-<SHA256>88127c3cd5220fcd73c64816e0b4cbba782536d90b2a85718e603d138ecc0375</SHA256>
+<SHA256>60947e84d76b25f02568fc9bb58fdc89d8603222d591eff57419c87e06c65dd8</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/jobs.php" Mode="0644">

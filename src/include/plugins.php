@@ -65,8 +65,9 @@ function dau_url_hosts($text) {
 function dau_plg_parse($text) {
   if (preg_match('/<!ENTITY\s+\S+\s+(SYSTEM|PUBLIC)\b/i', $text)) return null;
   $prev = libxml_use_internal_errors(true);
-  if (PHP_VERSION_ID < 80000) libxml_disable_entity_loader(true);
+  $loader = PHP_VERSION_ID < 80000 ? libxml_disable_entity_loader(true) : null;     // process-wide on PHP 7: put it back, or later simplexml_load_file() calls fail
   $x = @simplexml_load_string($text, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOENT);
+  if ($loader !== null) libxml_disable_entity_loader($loader);
   libxml_clear_errors(); libxml_use_internal_errors($prev);
   return $x instanceof SimpleXMLElement && $x->getName() === 'PLUGIN' ? $x : null;
 }
