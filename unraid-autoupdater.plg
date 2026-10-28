@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-autoupdater">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.30">
+<!ENTITY version "2026.10.30a">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg">
@@ -10,6 +10,9 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
+###2026.10.30a
+- Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
+- README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.
 ###2026.10.30
 - Renamed to Unraid AutoUpdater (plugin name unraid-autoupdater). Existing installs update through a one-time migration that keeps settings, history and the webhook; the old "docker.autoupdate" entry is removed automatically.
 - One version everywhere: the plugin version (date based) is the only version shown, on the dashboard, in Discord and in the README.
@@ -83,7 +86,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/a
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.30');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.30a');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid AutoUpdater');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
@@ -336,7 +339,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>0d42f91edca4edb3642a1fae46c34c40daaa141b92f05aef10b60f4b290ceca1</SHA256>
+<SHA256>4d5ae4ca2ede06c351fc66fa8ace984d9bd3f93ad42a8fa8bb7ac1f11e72903e</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -3012,9 +3015,9 @@ exit(64);
 /* header: logo + title + orange version line */
 .dau .brand{display:flex;align-items:center;gap:16px;min-width:0}
 .dau .logo{width:64px;height:64px;border-radius:14px;flex:none;display:block}
-.dau .title{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:700;line-height:1.15;letter-spacing:0;color:#fff}
+.dau .dau-name{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:600;line-height:1.15;letter-spacing:0;color:#fff;background:none;border:0;padding:0;margin:0;text-shadow:none}
 .dau .ver{font-size:15px;font-weight:500;color:var(--accent);margin-top:4px}
-@media (max-width:600px){.dau .brand{gap:12px}.dau .logo{width:48px;height:48px;border-radius:11px}.dau .title{font-size:21px}.dau .ver{font-size:13px}}
+@media (max-width:600px){.dau .brand{gap:12px}.dau .logo{width:48px;height:48px;border-radius:11px}.dau .dau-name{font-size:21px}.dau .ver{font-size:13px}}
 .dau .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dau .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
 .dau .tab{background:none!important;border:0!important;border-bottom:2px solid transparent!important;color:var(--muted)!important;padding:8px 14px!important;margin:0!important;cursor:pointer;font:inherit!important;white-space:nowrap;border-radius:0!important;text-transform:none!important;letter-spacing:0!important}
@@ -3070,7 +3073,7 @@ exit(64);
   .dau .drawer td{padding:0!important}
 }
 ]]></INLINE>
-<SHA256>712a10d198eda2b56559dec6454e093ef63a05aac6062db86e0e74d95e2d6fd5</SHA256>
+<SHA256>e19b7f836a06104b0a920b01a58f2440db11f00892be2dd6600ba3b634cb3eb5</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.js" Mode="0644">
@@ -3167,7 +3170,7 @@ exit(64);
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
-    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-autoupdater/images/unraid-autoupdater.png' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid AutoUpdater'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
+    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-autoupdater/images/unraid-autoupdater.png' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'dau-name' }, S.ov.name || 'Unraid AutoUpdater'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
@@ -3546,7 +3549,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); });
 })();
 ]]></INLINE>
-<SHA256>c4025c30baa62b4c2721083325d31a7e80261d6b013046b9ff9dbbc8328e9477</SHA256>
+<SHA256>37c0edf56040eb9d363bdcec4ee7bb13dba433368eb9e134dd5901da8bdead1e</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

@@ -354,7 +354,7 @@ t('release: version, build, icon and update metadata are consistent', function (
   ok($fn >= 15, 'all inline files carry a checksum');
   has(file_get_contents(__DIR__ . '/../src/UnraidAutoUpdater.page'), 'Icon="unraid-autoupdater.png"');
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-autoupdater.png"); has($js, "class: 'brand'");
-  ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'title'"), 'logo is left of the title');
+  ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'dau-name'"), 'logo is left of the title');
 });
 
 t('release: settings and webhook survive a plugin update', function () {
