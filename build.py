@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Builds unraid-autoupdater.plg from src/ (every file is inlined, as Unraid plugins require).
-Usage: python3 build.py [VERSION]      default version = today's date, e.g. 2026.10.30 (add a letter for a second release that day: 2026.10.30a)
+Usage: python3 build.py [VERSION] [--beta]      default version = today's date, e.g. 2026.10.30 (add a letter for a second release that day: 2026.10.30a)
 Also writes docker.autoupdate.plg: a small migration stub for installs made under the former plugin name.
 """
 import sys, re, pathlib, datetime, hashlib, base64, textwrap
 
 root = pathlib.Path(__file__).parent
 src = root / 'src'
-version = sys.argv[1] if len(sys.argv) > 1 else datetime.date.today().strftime('%Y.%m.%d')
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+BETA = '--beta' in sys.argv          # a beta build updates itself from the beta branch and does not touch the migration stub
+version = args[0] if args else datetime.date.today().strftime('%Y.%m.%d')
+BRANCH = 'beta' if BETA else 'stable'
 files = [
-    ('UnraidAutoUpdater.page', '0644'),
+    ('UnraidSwissManager.page', '0644'), ('UnraidAutoUpdaterDash.page', '0644'),
     ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
-    ('include/discord.php', '0644'), ('include/backup.php', '0644'), ('include/docker.php', '0644'), ('include/plugins.php', '0644'),
-    ('include/os.php', '0644'), ('include/workflow.php', '0644'), ('include/jobs.php', '0644'), ('include/api.php', '0644'),
+    ('include/discord.php', '0644'), ('include/backup.php', '0644'), ('include/backups.php', '0644'), ('include/docker.php', '0644'), ('include/plugins.php', '0644'),
+    ('include/os.php', '0644'), ('include/workflow.php', '0644'), ('include/extras.php', '0644'), ('include/appdata.php', '0644'), ('include/jobs.php', '0644'), ('include/api.php', '0644'),
     ('scripts/run.php', '0755'), ('assets/app.css', '0644'), ('assets/app.js', '0644'),
 ]
 changes = (root / 'CHANGES.txt').read_text().strip()
@@ -24,14 +27,14 @@ out = ["""<?xml version='1.0' standalone='yes'?>
 <!ENTITY version "%s">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/%s/unraid-autoupdater.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
 %s
 </CHANGES>
-""" % (version, changes)]
+""" % (version, BRANCH, changes)]
 
 for rel, mode in files:
     text = (src / rel).read_text()
@@ -79,6 +82,8 @@ mkdir -p &emhttp;/images
 echo '""" + icon_b64 + """' | base64 -d > /tmp/dau-icon.png 2>/dev/null
 if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = \"""" + icon_sha + """\" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-autoupdater.png; chmod 644 &emhttp;/images/unraid-autoupdater.png; else echo "icon check failed, skipped"; fi
 rm -f /tmp/dau-icon.png
+# the settings page used to be called UnraidAutoUpdater (renamed with the plugin)
+rm -f &emhttp;/UnraidAutoUpdater.page
 </INLINE>
 </FILE>
 """)
@@ -112,7 +117,8 @@ echo "Unraid Swiss Manager removed. Settings, history and backups were kept in &
 </PLUGIN>
 """)
 (root / 'unraid-autoupdater.plg').write_text('\n'.join(out))
-print('built unraid-autoupdater.plg', version)
+print('built unraid-autoupdater.plg', version, '(beta)' if BETA else '')
+if BETA: sys.exit(0)
 
 # ---- migration stub: keeps the old plugin name updatable and moves installs over to the new one ----
 NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg'
@@ -121,9 +127,9 @@ stub = """<?xml version='1.0' standalone='yes'?>
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
 <!ENTITY version "%s">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/docker.autoupdate.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/docker.autoupdate.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="refresh">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="refresh">
 
 <CHANGES>
 ###%s

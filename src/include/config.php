@@ -73,7 +73,16 @@ function dau_defaults() {
       'batching'   => 'combine',        // combine | separate
       'max_messages' => 5,
       'icon_url'   => '',               // optional https image for the webhook avatar; empty = bundled default
+      'ui_url'     => '',               // address of this server's web GUI (for the approve / skip links); empty = http://<server name>
+      'action_links' => true,           // add "Approve" / "Skip this version" links to update-available messages
     ],
+    /* notifications are held back during quiet hours and sent afterwards; failures and reboot notices can still come through */
+    'quiet' => ['enabled' => false, 'days' => [0, 1, 2, 3, 4, 5, 6], 'start' => '23:00', 'end' => '07:00', 'urgent' => true],
+    /* appdata cleanup: folders to look in, and Safe mode = unused folders are moved to a hidden quarantine folder instead of being deleted */
+    'appdata' => ['roots' => ['/mnt/user/appdata'], 'safe_mode' => true, 'ignore' => [], 'purge_days' => 0, 'report' => false],
+    /* scheduled backups of appdata and of the boot drive: see backups.php */
+    'backups' => dau_bk_defaults(),
+    'ui' => ['theme' => 'dark', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -88,6 +97,8 @@ function dau_container_spec() {
     'delay_hours' => ['int_or_null', 0, 720],
     'backup'      => ['bool'],
     'schedule'    => ['obj_or_null', dau_sched_spec()],
+    'after'       => ['names'],       // update only after these containers (dependency order)
+    'watch_major' => ['bool'],        // hold back updates that jump to a new major version (databases, for example)
   ];
 }
 
@@ -112,6 +123,29 @@ function dau_clean_value($spec, $v, $cur) {
     case 'path': // absolute path under /mnt, no traversal, no control characters
       if ($v === '' || $v === null) return '';
       return dau_valid_dest($v) ? rtrim($v, '/') : $cur;
+    case 'paths':
+      if (!is_array($v)) return $cur;
+      $o = [];
+      foreach ($v as $x) { $x = is_string($x) ? rtrim(trim($x), '/') : ''; if ($x !== '' && dau_valid_dest($x) && !in_array($x, $o, true) && count($o) < 5) $o[] = $x; }
+      return $o ?: $cur;
+    case 'folders':   // single folder names (never a path, never hidden)
+      if (!is_array($v)) return $cur;
+      $o = [];
+      foreach ($v as $n) if (is_string($n) && preg_match('#^[^/\x00-\x1F\x7F.][^/\x00-\x1F\x7F]{0,254}$#', $n) && !in_array($n, $o, true) && count($o) < 100) $o[] = $n;
+      return $o;
+    case 'names':
+      if (!is_array($v)) return $cur;
+      $o = [];
+      foreach ($v as $n) if (is_string($n) && dau_valid_name($n) && !in_array($n, $o, true) && count($o) < 20) $o[] = $n;
+      return $o;
+    case 'color': return (is_string($v) && preg_match('/^#[0-9a-fA-F]{6}$/', $v)) ? strtolower($v) : $cur;
+    case 'css':
+      if (!is_string($v)) return $cur;
+      if (strlen($v) > 8000 || preg_match('/@import|expression\s*\(|javascript:|<\/?[a-z!]|\\0|behavior\s*:|-moz-binding/i', $v)) return $cur;
+      return $v;
+    case 'url':
+      if ($v === '' || $v === null) return '';
+      return (is_string($v) && strlen($v) <= 200 && preg_match('#^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/+-]*)?$#', $v)) ? rtrim($v, '/') : $cur;
     case 'icon':  return ($v === '' || $v === null) ? '' : (dau_icon_url_valid($v) ? $v : $cur);
     case 'obj':   return is_array($v) ? dau_apply_spec(is_array($cur) ? $cur : [], $v, $spec[1]) : $cur;
     case 'obj_or_null':
@@ -184,7 +218,7 @@ function dau_discord_spec() {
     'types'   => ['obj', ['success' => ['bool'], 'failed' => ['bool'], 'available' => ['bool'], 'summary' => ['bool']]],
     'batching' => ['enum', ['combine', 'separate']],
     'max_messages' => ['int', 1, 20],
-    'icon_url' => ['icon'],
+    'icon_url' => ['icon'], 'ui_url' => ['url'], 'action_links' => ['bool'],
   ];
 }
 
@@ -202,6 +236,10 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['notify_unraid']) && is_array($in['notify_unraid'])) {
     $cur['notify_unraid'] = dau_apply_spec($cur['notify_unraid'], $in['notify_unraid'], ['docker' => ['bool'], 'plugins' => ['bool'], 'os' => ['bool']]);
   }
+  if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
+  if (isset($in['appdata']) && is_array($in['appdata'])) $cur['appdata'] = dau_apply_spec($cur['appdata'], $in['appdata'], ['roots' => ['paths'], 'safe_mode' => ['bool'], 'ignore' => ['folders'], 'purge_days' => ['int', 0, 365], 'report' => ['bool']]);
+  if (isset($in['backups']) && is_array($in['backups'])) $cur['backups'] = dau_apply_spec($cur['backups'], $in['backups'], dau_bk_spec());
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {
@@ -290,7 +328,7 @@ function dau_save_config(array $cfg) {
 
 function dau_container_cfg(array $cfg, $name) {
   $c = is_array($cfg['containers'][$name] ?? null) ? $cfg['containers'][$name] : [];
-  return $c + ['policy' => 'ignore', 'notify' => true, 'critical' => false, 'delay_hours' => null, 'backup' => false, 'schedule' => null];
+  return $c + ['policy' => 'ignore', 'notify' => true, 'critical' => false, 'delay_hours' => null, 'backup' => false, 'schedule' => null, 'after' => [], 'watch_major' => false];
 }
 
 function dau_container_delay_hours(array $cfg, $name) {

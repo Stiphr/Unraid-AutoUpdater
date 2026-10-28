@@ -149,3 +149,48 @@ Activity tab shows history and the log. *Docker service is not running* banner: 
 ## Removal
 
 Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/unraid-autoupdater/` and can be deleted manually.
+
+
+## Beta features
+
+- **Update after**: in a container's settings, pick the containers that must be updated first. If one fails, its dependants are skipped.
+- **Skip this version**: Docker, Plugins and Unraid OS rows have *Skip*; *Un-skip* undoes it. A newer version clears the skip.
+- **Discord action links**: Discord webhooks cannot show real buttons, so messages contain links (Update now / Skip). They open the web GUI and need your Unraid login; set the web GUI address in Settings.
+- **Quiet hours**: non-urgent notifications are held and sent by the next run after the window ends.
+- **Rollback**: *Roll back* on a container restores the previous image. The container is then pinned and that new version skipped until you press *Unpin*. Check that your data is compatible with the older version.
+- **Major-version guard**: enable *watch major* for a container (e.g. postgres). A major jump is held; use *Update anyway* to allow it.
+- **Cleanup**: lists unused images and leftover containers with sizes. Nothing is removed until you select and confirm. Volumes and appdata are never touched.
+- **Appearance**: dark, midnight or light theme, accent colour, custom CSS and a switch for the Dashboard tile.
+
+### Cleanup: appdata, quarantine, templates
+
+- **Appdata folders** lists folders in the appdata share (default `/mnt/user/appdata`, change it in Settings > Cleanup) that no container maps. Stopped containers count as users. A container that maps a whole parent folder such as `/mnt/user` is listed but does not block anything. Symbolic links and separate mount points are never offered. If Docker is not running nothing is offered.
+- **Safe mode** (default): selected folders are moved into a hidden `.unraid-autoupdater-quarantine` folder inside the same share, so no space is freed until you delete them there. With Safe mode off you can delete for good after a confirmation. *Preview* shows what would happen without changing anything.
+- **Quarantine**: *Restore* puts a folder back and never overwrites; if the place is taken you can restore it as `name-restored`. *Delete* removes it for good.
+- **Saved templates**: Unraid keeps a template for every container you ever created. *Archive* saves a verified backup in the plugin's own folder and removes the template; *Restore* brings it back while the name is free.
+- Not included (compared with Appdata Cleanup Plus): ZFS dataset handling, purge timers, exporting backups and translations.
+
+### Cleanup extras
+
+- **Scan everything** scans appdata, images, volumes and leftover containers in one go and shows the total. Nothing is removed by scanning. The tab badge shows what the last scan found.
+- **Contents** lists what is inside an unused folder; **Never offer** hides a folder for good (undo with the ✕ next to the ignored name). Folders changed in the last 30 days are marked *recently changed*.
+- **Delete quarantined folders after N days** (Settings > Cleanup, off by default) lets the scheduled run delete old quarantine entries for you. **Weekly report** sends one notification when there is something to clean up and the numbers changed; it follows your Docker notification settings and quiet hours.
+- **Volumes**: unused volumes are listed with their size. Unnamed ones are usually leftovers; named ones were made on purpose. Docker refuses to remove a volume that is in use and nothing is forced.
+
+### Plugin branch, force update and settings files (Settings tab, bottom)
+
+- **Plugin branch**: *Stable* is the `main` branch, *Beta* is the `beta` branch (test servers only; a warning and a confirmation box are shown). Switching installs the plugin from that branch right away and keeps your settings, history and webhook. *Check versions* shows what each branch offers.
+- **Force update** reinstalls the plugin from the branch you are on even if the version is the same, for example to repair a broken install.
+- **Save settings to a file** downloads all settings (never the Discord webhook) under the name you choose; the default is `Unraid-Swiss-Manager-Settings-YYYY-MM-DD`. **Load settings from a file** shows what the file contains and asks before it replaces the current settings (a copy of the old ones is kept).
+
+
+## Backups (beta)
+
+The **Backups** tab makes archives of your appdata folders and of the boot drive (USB flash).
+
+- **When:** not on a schedule, every week, or every month (day and time of your choice). Appdata can also be backed up right before updates are installed. That happens once per run and only when an update is really going to be installed. Turn on *Do not install the updates if this backup fails* to hold updates back until a backup works.
+- **Where:** a folder under `/mnt` (for example `/mnt/user/backups`). Files go into `Unraid-Swiss-Manager/appdata` and `Unraid-Swiss-Manager/flash` inside it. The folder must not be inside the data that is backed up.
+- **How many:** keep 1, 2 or 3. After a new backup has finished successfully, older ones beyond that number are deleted. The newest is never deleted, and a failed or low-space backup deletes nothing.
+- **Appdata is not application-consistent.** Containers keep running while their folders are read, so a database can be captured mid-write. Use a plugin that stops containers first for databases. Individual folders can be left out.
+- **Safety:** archives are created private (0600), written under a temporary name and renamed when complete; the boot drive archive is read back to check it. Free space is checked first.
+- **Restore:** each file is a normal `.tar.gz`. Appdata: stop the container, then `tar -xzf appdata-DATE.tar.gz -C /`. Boot drive: unpack onto a freshly prepared USB drive.

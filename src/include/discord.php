@@ -13,7 +13,7 @@ const DAU_DISCORD_EMBEDS_PER_MSG = 10;
 const DAU_DISCORD_CHARS_PER_MSG  = 5600;   // hard limit is 6000 characters across all embeds of a message
 
 function dau_type_label($t) {
-  return ['docker' => 'Docker container', 'plugin' => 'Unraid plugin', 'os' => 'Unraid OS'][$t] ?? $t;
+  return ['docker' => 'Docker container', 'plugin' => 'Unraid plugin', 'os' => 'Unraid OS', 'cleanup' => 'Cleanup', 'backup' => 'Backup'][$t] ?? $t;
 }
 
 /* ---------- transport ---------- */
@@ -151,12 +151,21 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_aborted'      => ['⏹️', 'OS update aborted', 0xE67E22],
     'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
     'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
+    'backup_done'     => ['💾', 'Backup completed', 0x2ECC71],
+    'backup_failed'   => ['❌', 'Backup FAILED', 0xE74C3C],
+    'cleanup_report'  => ['🧹', 'Cleanup: things you can free', 0x3498DB],
+    'major_jump'      => ['🛑', 'Major version update held back', 0xE67E22],
+    'rolled_back'     => ['⏪', 'Rolled back to the earlier image', 0xE67E22],
+    'rollback_failed' => ['❌', 'Rollback failed', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
   $name = dau_clean_text($ev['name'] ?? '', 120);
-  $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type'])), dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name)];
+  $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type']))];
+  if (!in_array($ev['type'], ['cleanup', 'backup'], true)) $f[] = dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name);
   if (isset($ev['installed']) && $ev['installed'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'Previous' : 'Installed', dau_clean_text($ev['installed'], 200));
   if (isset($ev['available']) && $ev['available'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'New' : 'Available', dau_clean_text($ev['available'], 200));
   if (isset($ev['duration'])) $f[] = dau_field('Duration', dau_duration_text($ev['duration']));
+  if (!empty($ev['versions'])) $f[] = dau_field('Version', dau_clean_text($ev['versions'], 120));
+  if (!empty($ev['notes'])) $f[] = dau_field('What changed', "```\n" . str_replace('```', "'''", dau_clean_text($ev['notes'], 600)) . "\n```", false);
   if (!empty($ev['verification'])) $f[] = dau_field('Verification', dau_clean_text($ev['verification'], 300), false);
   if (!empty($ev['stage'])) $f[] = dau_field('Failed at', dau_clean_text($ev['stage'], 100));
   if (!empty($ev['reason'])) $f[] = dau_field($kind === 'available' ? 'Pending because' : 'Reason', dau_clean_text($ev['reason'], 500), false);
@@ -165,6 +174,8 @@ function dau_discord_event_embed(array $ev, $server) {
   if (!empty($ev['retry'])) $f[] = dau_field('Retry', dau_clean_text($ev['retry'], 200), false);
   if (!empty($ev['log'])) $f[] = dau_field('Log', "```\n" . str_replace('```', "'''", dau_clean_text($ev['log'], 600)) . "\n```", false);
   if (!empty($ev['next'])) $f[] = dau_field('Suggested next steps', dau_clean_text($ev['next'], 500), false);
+  $links = dau_action_links($GLOBALS['DAU_CFG_NOW'] ?? dau_load_config(), $ev);
+  if ($links !== '') $f[] = dau_field('Actions', $links, false);
   return dau_discord_brand([
     'title' => dau_clip($style[0] . ' ' . $style[1] . ' — ' . $name, 256),
     'color' => $style[2],
@@ -224,15 +235,15 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 
 function dau_event_toggle($kind) {
   switch ($kind) {
-    case 'updated': case 'os_installed': case 'os_verified': return 'success';
-    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
+    case 'updated': case 'os_installed': case 'os_verified': case 'rolled_back': return 'success';
+    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': case 'rollback_failed': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
 
 function dau_discord_wants(array $dc, array $ev) {
   if (empty($dc['enabled']) || !empty($ev['silent'])) return false;
-  $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$ev['type']] ?? null;
+  $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os', 'cleanup' => 'docker', 'backup' => 'docker'][$ev['type']] ?? null;
   if (!$cat || empty($dc['events'][$cat])) return false;
   if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_workflow_started', 'os_workflow_done', 'os_awaiting', 'os_aborted'], true)) return true;   // a pending reboot must never be missed
   return !empty($dc['types'][dau_event_toggle($ev['kind'])]);
@@ -257,10 +268,11 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
   if (!empty($st['discord']['invalid'])) { $out['error'] = 'webhook was rejected earlier; save the URL again to retry'; return $out; }
   $server = dau_server_name();
   $GLOBALS['DAU_ICON'] = dau_discord_icon($cfg);
+  $GLOBALS['DAU_CFG_NOW'] = $cfg;
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['rollback_failed' => 0, 'major_jump' => 2, 'failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];

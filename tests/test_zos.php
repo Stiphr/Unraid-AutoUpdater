@@ -345,14 +345,14 @@ t('release: version, build, icon and update metadata are consistent', function (
   $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
   $ver = (string)$x['version']; $top = trim(strtok(file_get_contents(__DIR__ . '/../CHANGES.txt'), "\n"));
   eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'unraid-autoupdater');
-  has($plg, "define('DAU_VERSION',   '$ver');"); lacks($plg, 'DAU_BUILD'); lacks($plg, '@@'); ok(preg_match('/^\d{4}\.\d{2}\.\d{2}[a-z]?$/', $ver) === 1, 'date format');
+  has($plg, "define('DAU_VERSION',   '$ver');"); lacks($plg, 'DAU_BUILD'); lacks($plg, '@@'); ok(preg_match('/^\d{4}\.\d{2}\.\d{2}([a-z]|b\d+)?$/', $ver) === 1, 'date format'); $beta = (bool)preg_match('/b\d+$/', $ver);
   eq((string)$x['icon'], 'unraid-autoupdater.png'); has($plg, 'images/unraid-autoupdater.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
-  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg');
+  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/' . ($beta ? 'beta' : 'stable') . '/unraid-autoupdater.plg');
   ok(dau_version_newer($ver, '2026.10.29') && dau_version_newer($ver, '2026.10.28f'), 'newer than the previous releases');
   ok(!dau_version_newer($ver, $ver), 'not newer than itself');
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
   ok($fn >= 15, 'all inline files carry a checksum');
-  has(file_get_contents(__DIR__ . '/../src/UnraidAutoUpdater.page'), 'Icon="unraid-autoupdater.png"');
+  has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'Icon="unraid-autoupdater.png"');
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-autoupdater.png"); has($js, "class: 'brand'");
   ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'dau-name'"), 'logo is left of the title');
 });
@@ -370,10 +370,12 @@ t('release: settings and webhook survive a plugin update', function () {
 t('rename: migration stub and one-time migration from docker.autoupdate', function () {
   $new = dau_plg_parse(file_get_contents(__DIR__ . '/../unraid-autoupdater.plg')); $stub = dau_plg_parse(file_get_contents(__DIR__ . '/../docker.autoupdate.plg'));
   ok($stub !== null, 'stub parses'); eq((string)$stub['name'], 'docker.autoupdate'); eq((string)$new['name'], 'unraid-autoupdater');
-  eq((string)$stub['version'], (string)$new['version'], 'same version'); ok(dau_version_newer((string)$stub['version'], '2026.10.29a'), 'installed copies are offered the stub');
-  eq((string)$stub['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/docker.autoupdate.plg', 'old installs keep finding updates here');
+  $isBeta = (bool)preg_match('/b\d+$/', (string)$new['version']); /* beta builds never touch the stub, which stays on the stable URL */
+  if (!$isBeta) eq((string)$stub['version'], (string)$new['version'], 'same version'); ok(dau_version_newer((string)$stub['version'], '2026.10.29a'), 'installed copies are offered the stub');
+  /* the stub was published under the old repo name; GitHub redirects it, so it is left as published */
+  eq((string)$stub['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/docker.autoupdate.plg', 'old installs keep finding updates here');
   $stubText = file_get_contents(__DIR__ . '/../docker.autoupdate.plg');
-  has($stubText, 'plugin install ' . (string)$new['pluginURL']); has($stubText, 'plugin remove docker.autoupdate.plg'); lacks($stubText, 'rm -rf');
+  has($stubText, 'plugin install https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg'); has($stubText, 'plugin remove docker.autoupdate.plg'); lacks($stubText, 'rm -rf');
   eq(count($stub->FILE), 2, 'install script + harmless remove script');
   /* run the migration block of the new plugin in a sandbox */
   $blk = null; foreach ($new->FILE as $f) if (isset($f['Run']) && strpos((string)$f->INLINE, 'docker.autoupdate') !== false && strpos((string)$f->INLINE, 'DAU_PLUGS') !== false) $blk = (string)$f->INLINE;
@@ -398,7 +400,7 @@ t('rename: no leftovers of the old name in the plugin code or the dashboard', fu
     if (!is_file($f)) continue; $s = file_get_contents($f);
     foreach (['docker.autoupdate', 'docker-autoupdate', 'DockerAutoUpdate', 'Docker Auto Update', 'Unraid Auto Updater', 'DAU_BUILD'] as $old) lacks($s, $old, basename($f));
   }
-  ok(is_file(__DIR__ . '/../src/UnraidAutoUpdater.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
+  ok(is_file(__DIR__ . '/../src/UnraidSwissManager.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
   $css = file_get_contents(__DIR__ . '/../src/assets/app.css'); has($css, '.dau .ver{'); has($css, 'var(--accent)');
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "class: 'ver'"); has($js, "'Plugin version ' + S.ov.version"); lacks($js, 'Build ');
 });

@@ -1,6 +1,51 @@
-###2026.10.31
-- Renamed: the plugin is now called Unraid Swiss Manager, with a new logo. Your settings, schedule and history are untouched.
-- The stable branch is now called stable (it was main). Installed copies keep updating without any action.
+###2026.11.01
+- New: Backups tab. Weekly or monthly backups of your appdata folders and of the boot drive to a folder you choose, optionally just before updates; keep 1, 2 or 3 copies.
+- New: Cleanup tab with a guided Scan, Review, Clean flow for unused appdata folders (restorable quarantine), Docker images, volumes, leftover containers and saved templates; dry run and clear confirmations.
+- New: update dependencies, hold back major-version jumps, skip a version, roll a container back, release notes, quiet hours, statistics, Dashboard tile.
+- New: Settings can be saved to and loaded from a named file; the plugin branch (Stable or Beta) can be switched, with a Force update.
+- Improved: readable status colours in every theme, clearer labels and layouts, phone-friendly screens.
+- Changed: the web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). The plugin keeps its install name, so it updates normally. Update an old bookmark.
+###2026.10.31b7
+- BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
+###2026.10.31b6
+- BETA. Fix: b5 did not include one of its files, so the plugin showed an error (500) after updating. Update again to get it.
+###2026.10.31b5
+- BETA. New Backups tab: back up your appdata folders and the boot drive (USB flash) to a folder you choose.
+- Appdata: weekly or monthly, and optionally right before updates are installed (only when there is something to install; you can choose to hold the updates back if that backup fails). Folders can be left out.
+- Boot drive: weekly or monthly, checked after it is written.
+- Keep 1, 2 or 3 backups. Older ones are deleted only after a new backup has finished, the newest is never deleted, and a failed backup deletes nothing.
+- Each archive is a normal tar.gz, written privately and moved into place only when complete. Results appear in Activity and can notify you.
+###2026.10.31b4
+- The stable branch is now called stable (it was main). The Stable channel in Settings uses it; old links keep working.
+- Renamed: the plugin and its repository are now called Unraid Swiss Manager, with a new logo. Nothing else changes: same settings, same schedule, and the plugin keeps its install name, so existing installs update normally.
+- UI refresh (beta). Cleanup tab: Scan, Review, Clean steps; one "Scan for Cleanup Items" button; category cards; each item shows why it is listed and a status (Eligible, Review first, Protected, In use); "Select all eligible" never picks Review first or protected items; Preview (dry run); confirmation lists what can and cannot be undone; results show cleaned, skipped and failed.
+- Fixed unreadable badges such as "Skipped: stopped" (Unraid page style leaked into them) with measured AA contrast in all themes; badges also carry an icon, not only a colour.
+- Dashboard tile: uses the plugin logo at the right size, no longer shows the Unraid OS version, and shows updates, failures, last check and next run.
+- BETA. Settings > very bottom: choose the plugin branch (Stable or Beta) with a warning when Beta is picked, and a Force update that reinstalls the current branch.
+- Save settings to a file with a name of your choice (default Unraid-AutoUpdater-Settings-YYYY-MM-DD) and load them back from a file, with a summary before they are applied.
+###2026.10.31b3
+- BETA. Cleanup tab improved: one "Scan everything" button with a total of what can be freed, folding sections (empty ones start folded), a badge on the tab, and a "Recent cleanups" list (also in Activity).
+- Appdata: "Contents" shows what is inside a folder, "Never offer" keeps a folder off the list, folders changed in the last 30 days are flagged, and quick selections (all, not changed for 6 months).
+- Optional: delete quarantined folders after N days, and a weekly report (Discord / Unraid notification) of what could be freed. Both are off by default; the report never removes anything.
+- Unused Docker volumes can now be reviewed and removed (never forced) next to images and containers.
+###2026.10.31b2
+- BETA. Cleanup tab now has four parts: Appdata folders, Quarantine, Images and containers, Saved templates.
+- Appdata folders: finds folders in your appdata share that no container (running or stopped) uses, with size, age and a preview. Safe mode (default) moves them to a hidden quarantine folder; deleting for good needs Safe mode off and a confirmation. Symbolic links, separate mount points and folders any container maps are never offered.
+- Quarantine: restore (never overwrites; offers a "-restored" name when the place is taken) or delete for good.
+- Saved templates: archive the saved template of a removed container with a verified backup, and restore it later.
+- New Settings > Cleanup (appdata): which folders to check and Safe mode.
+###2026.10.31b1
+- BETA. Dependency order: containers can be set to update after others (database before app); a dependant is skipped if its dependency failed.
+- Skip this version for a container, plugin or the OS release; it comes back with the next version.
+- Discord action links (Update now / Skip) straight from the notification; set the web GUI address in Settings.
+- Quiet hours: non-urgent notifications are held and sent after the window (failures and rollbacks can still go out).
+- Update statistics over time: 30-day chart, most active and most failing.
+- Dashboard tile with the number of waiting updates (can be turned off in Appearance).
+- One-click rollback for containers to the previous image; the container is pinned and that version skipped until you unpin.
+- Major-version guard for selected containers (e.g. postgres): the update is held until you choose Update anyway.
+- Release notes for plugins and Unraid OS in the same place, and what changed in Discord.
+- Cleanup tab: unused images and leftover containers with a size preview; nothing is removed without confirmation.
+- Mobile friendly layout, light/midnight themes, accent colour and custom CSS.
 ###2026.10.30a
 - Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
 - README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.

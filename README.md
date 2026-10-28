@@ -12,11 +12,14 @@ Keep your Unraid server up to date from one dashboard: Docker containers, plugin
 
 ## Features
 
-- **Docker containers** – global default plus a per-container policy (*Auto update*, *Notify only*, *Ignore*), schedule (daily, weekly, bi-weekly, monthly), delay, maintenance window and optional backup. Updates are verified; the old image is only removed after success.
-- **Plugins** – update checks, notifications and optional automatic installation, per plugin, with safety validation.
+- **Docker containers** – global default plus a per-container policy (*Auto update*, *Notify only*, *Ignore*), schedule (every 6/12 hours, daily, weekly, bi-weekly, monthly), delay, maintenance window and optional safety backup. Updates are verified; the old image is only removed after success. Update order can follow dependencies, major-version jumps (databases) are held back for your approval, you can skip a version, and one click rolls a container back to its previous image.
+- **Plugins** – update checks, notifications and optional automatic installation, per plugin, with safety validation and release notes.
 - **Unraid OS** – checked and **notify only by default**. Automatic install and reboot are opt-in, with a maintenance window, a waiting period and a pre-update workflow (plugins first, health checks, optional confirmation).
-- **Discord** – optional webhook notifications with the Unraid Swiss Manager logo.
-- **History and dashboard** – dark UI that matches Unraid, an activity log and statistics.
+- **Backups** – weekly or monthly backups of your **appdata folders** and of the **boot drive (USB flash)** to a folder you choose, optionally right before updates are installed. Keep 1, 2 or 3 copies: older ones are deleted only after a new backup succeeded, and the newest is never removed.
+- **Cleanup** – guided Scan, Review, Clean for unused appdata folders (moved to a restorable quarantine first), Docker images, volumes, leftover containers and saved templates of removed containers. Every item says why it is listed, protected items cannot be selected, and there is a dry run and a confirmation that says what can be undone.
+- **Discord and Unraid notifications** – optional webhook messages with action links, quiet hours, and notifications for failed backups.
+- **Dashboard tile, history and statistics** – a compact status tile on the Unraid Dashboard, an activity log, readable colours in three themes, and a layout that works on a phone.
+- **Settings you can keep** – save all settings to a named file and load them back, switch between the Stable and Beta plugin branch, or force-reinstall the current one.
 
 ![Unraid Swiss Manager dashboard](assets/dashboard.png)
 
@@ -49,6 +52,6 @@ By default nothing is changed automatically: Docker auto-updates are off until a
 ## Development
 
 ```
-python3 build.py 2026.10.30a  # builds the .plg files from src/
+python3 build.py 2026.11.01   # builds the .plg files from src/
 php tests/run.php             # all tests, fully mocked
 ```
