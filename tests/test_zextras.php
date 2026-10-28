@@ -237,7 +237,7 @@ t('extras: release notes and links in notifications', function () {
   xenv(); $c = ['image_id' => xid('new-db')]; $nt = dau_docker_notes($c); eq($nt['version'], '16.1'); eq($nt['link'], 'https://github.com/acme/thing/releases');
   $cfg = dau_defaults(); $cfg['discord']['ui_url'] = 'http://192.168.50.50';
   $l = dau_action_links($cfg, ['kind' => 'available', 'type' => 'docker', 'name' => 'my app', 'reason' => 'Marked critical: waiting for your approval']);
-  has($l, '[Update now](http://192.168.50.50/Settings/UnraidAutoUpdater?act=update&type=docker&name=my+app)'); has($l, 'act=approve'); has($l, 'Skip this version');
+  has($l, '[Update now](http://192.168.50.50/Settings/UnraidSwissManager?act=update&type=docker&name=my+app)'); has($l, 'act=approve'); has($l, 'Skip this version');
   eq(dau_action_links($cfg, ['kind' => 'updated', 'type' => 'docker', 'name' => 'a']), '', 'only for update-available');
   $cfg['discord']['action_links'] = false; eq(dau_action_links($cfg, ['kind' => 'available', 'type' => 'docker', 'name' => 'a']), '');
   $cfg['discord']['action_links'] = true; $cfg['discord']['ui_url'] = ''; has(dau_action_links($cfg, ['kind' => 'available', 'type' => 'os', 'name' => 'Unraid OS']), 'http://Tower/Settings');

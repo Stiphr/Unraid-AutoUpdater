@@ -2,14 +2,16 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-autoupdater">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.31b6">
+<!ENTITY version "2026.10.31b7">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-autoupdater.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
+###2026.10.31b7
+- BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6
 - BETA. Fix: b5 did not include one of its files, so the plugin showed an error (500) after updating. Update again to get it.
 ###2026.10.31b5
@@ -94,7 +96,7 @@
 - Initial release.
 </CHANGES>
 
-<FILE Name="&emhttp;/UnraidAutoUpdater.page" Mode="0644">
+<FILE Name="&emhttp;/UnraidSwissManager.page" Mode="0644">
 <INLINE><![CDATA[Menu="Utilities"
 Title="Unraid Swiss Manager"
 Icon="unraid-autoupdater.png"
@@ -127,7 +129,7 @@ try {
 <tr><td>
 <img id="dau-w-logo" class="img" src="/plugins/unraid-autoupdater/images/unraid-autoupdater.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
 <div class="section">Unraid Swiss Manager<br><span id="dau-w-sum" class="dau-w">Checking&hellip;</span></div>
-<a href="/Settings/UnraidAutoUpdater" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
+<a href="/Settings/UnraidSwissManager" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
 </td></tr>
 <tr id="dau-r-docker"><td><span class="w25">Docker</span><span id="dau-w-docker">-</span></td></tr>
 <tr id="dau-r-plugins"><td><span class="w25">Plugins</span><span id="dau-w-plugins">-</span></td></tr>
@@ -162,7 +164,7 @@ EOT;
 } catch (Throwable $e) { /* never break the Dashboard */ }
 ?>
 ]]></INLINE>
-<SHA256>d0948c0d8d54834533fdc2761fb979b0e85c6141d2f8eae28b8bbc650afee754</SHA256>
+<SHA256>95b2548d4da807a2e31e12909c501842a738a39bc297f99844315e56f5ecf81e</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/lib.php" Mode="0644">
@@ -180,7 +182,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.31b6');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.31b7');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
@@ -433,7 +435,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>de515b91bbbe4773553fe4fbf995d59d25473957aaaa64e124a411ee04ef327b</SHA256>
+<SHA256>83846da28b9393b79fcb2dd683e6194a6c05a1743fe3d24f591ee2816f850dc4</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -2843,7 +2845,7 @@ function dau_action_links(array $cfg, array $ev) {
   if (empty($cfg['discord']['action_links']) || ($ev['kind'] ?? '') !== 'available') return '';
   $type = $ev['type'] ?? ''; $name = (string)($ev['name'] ?? '');
   if (!in_array($type, ['docker', 'plugin', 'os'], true) || ($type !== 'os' && $name === '')) return '';
-  $base = dau_ui_base($cfg) . '/Settings/UnraidAutoUpdater';
+  $base = dau_ui_base($cfg) . '/Settings/UnraidSwissManager';
   $link = function ($label, $act) use ($base, $type, $name) { return '[' . $label . '](' . $base . '?' . http_build_query(['act' => $act, 'type' => $type, 'name' => $name]) . ')'; };
   $o = [];
   if ($type !== 'os') $o[] = $link('Update now', 'update');
@@ -3084,7 +3086,7 @@ function dau_channel_install($ch, $force = false) {
   } finally { dau_lock_release($lock); }
 }
 ]]></INLINE>
-<SHA256>2a6e0d5683fc870d4bdae19e02cdf71e9e370b426c0695baad8cc48b52d8650a</SHA256>
+<SHA256>374e99d3931511d8f3f340538d2634d8078e80c0e30e043d3da146960fcc48c9</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/appdata.php" Mode="0644">
@@ -3706,10 +3708,10 @@ function dau_job_finish(array &$J) {
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
-    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : (in_array($e['type'], ['cleanup', 'backup'], true) ? '/Settings/UnraidAutoUpdater' : '/Docker')));
+    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : (in_array($e['type'], ['cleanup', 'backup'], true) ? '/Settings/UnraidSwissManager' : '/Docker')));
     $sent++;
   }
-  if ($more) dau_unraid_notify("Unraid Swiss Manager: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
+  if ($more) dau_unraid_notify("Unraid Swiss Manager: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidSwissManager');
   /* Discord (never fails the job) */
   $sumSend['status'] = $sum['status']; $sumSend['trigger'] = $sum['trigger'];
   try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sumSend); }
@@ -3881,7 +3883,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>0fafdacc6fe381b724e4e52f119bbdd1218154f3e410d52bb9b14384645e44f6</SHA256>
+<SHA256>b08c891e093fa3ec35c34062378775555062d7ce0aa21f5324603c75af421366</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -5976,6 +5978,8 @@ QFX7AQyISH/yfr+IDADI8BITQshxUVPVQwAmRGRCVScAHErePwRgQlX3ArhXRH5RKpXuX7JkycSx
 7tvJfb0hfI7KAPz/TFDvWuZkvHcAAAAASUVORK5CYII=' | base64 -d > /tmp/dau-icon.png 2>/dev/null
 if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = "21534bc25167a35036f951c8803762d2ee153621b9f208ce204e93c6bbc9e9d4" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-autoupdater.png; chmod 644 &emhttp;/images/unraid-autoupdater.png; else echo "icon check failed, skipped"; fi
 rm -f /tmp/dau-icon.png
+# the settings page used to be called UnraidAutoUpdater (renamed with the plugin)
+rm -f &emhttp;/UnraidAutoUpdater.page
 </INLINE>
 </FILE>
 

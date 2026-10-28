@@ -294,10 +294,10 @@ function dau_job_finish(array &$J) {
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
-    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : (in_array($e['type'], ['cleanup', 'backup'], true) ? '/Settings/UnraidAutoUpdater' : '/Docker')));
+    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : (in_array($e['type'], ['cleanup', 'backup'], true) ? '/Settings/UnraidSwissManager' : '/Docker')));
     $sent++;
   }
-  if ($more) dau_unraid_notify("Unraid Swiss Manager: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
+  if ($more) dau_unraid_notify("Unraid Swiss Manager: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidSwissManager');
   /* Discord (never fails the job) */
   $sumSend['status'] = $sum['status']; $sumSend['trigger'] = $sum['trigger'];
   try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sumSend); }

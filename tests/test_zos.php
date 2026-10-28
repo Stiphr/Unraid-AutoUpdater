@@ -352,7 +352,7 @@ t('release: version, build, icon and update metadata are consistent', function (
   ok(!dau_version_newer($ver, $ver), 'not newer than itself');
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
   ok($fn >= 15, 'all inline files carry a checksum');
-  has(file_get_contents(__DIR__ . '/../src/UnraidAutoUpdater.page'), 'Icon="unraid-autoupdater.png"');
+  has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'Icon="unraid-autoupdater.png"');
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-autoupdater.png"); has($js, "class: 'brand'");
   ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'dau-name'"), 'logo is left of the title');
 });
@@ -400,7 +400,7 @@ t('rename: no leftovers of the old name in the plugin code or the dashboard', fu
     if (!is_file($f)) continue; $s = file_get_contents($f);
     foreach (['docker.autoupdate', 'docker-autoupdate', 'DockerAutoUpdate', 'Docker Auto Update', 'Unraid Auto Updater', 'DAU_BUILD'] as $old) lacks($s, $old, basename($f));
   }
-  ok(is_file(__DIR__ . '/../src/UnraidAutoUpdater.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
+  ok(is_file(__DIR__ . '/../src/UnraidSwissManager.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
   $css = file_get_contents(__DIR__ . '/../src/assets/app.css'); has($css, '.dau .ver{'); has($css, 'var(--accent)');
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "class: 'ver'"); has($js, "'Plugin version ' + S.ov.version"); lacks($js, 'Build ');
 });

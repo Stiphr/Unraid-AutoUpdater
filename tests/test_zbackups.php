@@ -135,3 +135,9 @@ t('release: every file under src/include is packed into the plugin file', functi
   foreach (glob(__DIR__ . '/../src/include/*.php') as $f) has($plg, 'Name="&emhttp;/include/' . basename($f) . '"', 'not packed');
   foreach (glob(__DIR__ . '/../src/assets/*') as $f) has($plg, '/assets/' . basename($f) . '"', 'not packed');
 });
+
+t('rename: the settings page lives at Settings/UnraidSwissManager and the old page file is removed on update', function () {
+  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg');
+  has($plg, 'launch="Settings/UnraidSwissManager"'); has($plg, 'Name="&emhttp;/UnraidSwissManager.page"'); lacks($plg, 'Name="&emhttp;/UnraidAutoUpdater.page"'); has($plg, 'rm -f &emhttp;/UnraidAutoUpdater.page');
+  foreach (array_merge(glob(__DIR__ . '/../src/*.page'), glob(__DIR__ . '/../src/include/*.php')) as $f) lacks(file_get_contents($f), 'Settings/UnraidAutoUpdater', basename($f));
+});

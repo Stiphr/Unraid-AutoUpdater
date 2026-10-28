@@ -1,3 +1,5 @@
+###2026.10.31b7
+- BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6
 - BETA. Fix: b5 did not include one of its files, so the plugin showed an error (500) after updating. Update again to get it.
 ###2026.10.31b5

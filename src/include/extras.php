@@ -125,7 +125,7 @@ function dau_action_links(array $cfg, array $ev) {
   if (empty($cfg['discord']['action_links']) || ($ev['kind'] ?? '') !== 'available') return '';
   $type = $ev['type'] ?? ''; $name = (string)($ev['name'] ?? '');
   if (!in_array($type, ['docker', 'plugin', 'os'], true) || ($type !== 'os' && $name === '')) return '';
-  $base = dau_ui_base($cfg) . '/Settings/UnraidAutoUpdater';
+  $base = dau_ui_base($cfg) . '/Settings/UnraidSwissManager';
   $link = function ($label, $act) use ($base, $type, $name) { return '[' . $label . '](' . $base . '?' . http_build_query(['act' => $act, 'type' => $type, 'name' => $name]) . ')'; };
   $o = [];
   if ($type !== 'os') $o[] = $link('Update now', 'update');
