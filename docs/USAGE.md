@@ -176,3 +176,9 @@ Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins
 - **Contents** lists what is inside an unused folder; **Never offer** hides a folder for good (undo with the ✕ next to the ignored name). Folders changed in the last 30 days are marked *recently changed*.
 - **Delete quarantined folders after N days** (Settings > Cleanup, off by default) lets the scheduled run delete old quarantine entries for you. **Weekly report** sends one notification when there is something to clean up and the numbers changed; it follows your Docker notification settings and quiet hours.
 - **Volumes**: unused volumes are listed with their size. Unnamed ones are usually leftovers; named ones were made on purpose. Docker refuses to remove a volume that is in use and nothing is forced.
+
+### Plugin branch, force update and settings files (Settings tab, bottom)
+
+- **Plugin branch**: *Stable* is the `main` branch, *Beta* is the `beta` branch (test servers only; a warning and a confirmation box are shown). Switching installs the plugin from that branch right away and keeps your settings, history and webhook. *Check versions* shows what each branch offers.
+- **Force update** reinstalls the plugin from the branch you are on even if the version is the same, for example to repair a broken install.
+- **Save settings to a file** downloads all settings (never the Discord webhook) under the name you choose; the default is `Unraid-AutoUpdater-Settings-YYYY-MM-DD`. **Load settings from a file** shows what the file contains and asks before it replaces the current settings (a copy of the old ones is kept).

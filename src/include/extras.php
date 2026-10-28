@@ -308,3 +308,52 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
   $out['freed_text'] = dau_bytes_text($out['freed']);
   return $out;
 }
+
+/* ---------------- plugin channel (stable / beta) and force update ---------------- */
+
+const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/';
+
+function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'main') . '/unraid-autoupdater.plg' : ''; }
+
+/** Which branch this install follows: read from the installed plugin file's update address. */
+function dau_channel_current() {
+  $f = DAU_PLUGBOOT . '/unraid-autoupdater.plg';
+  $t = is_file($f) ? (string)@file_get_contents($f, false, null, 0, 4096) : '';
+  if (preg_match('#<!ENTITY\s+pluginURL\s+"([^"]+)"#', $t, $m)) return strpos($m[1], '/refs/heads/beta/') !== false ? 'beta' : 'stable';
+  return preg_match('/b\d+$/', DAU_VERSION) ? 'beta' : 'stable';
+}
+
+/** Version offered on each branch (downloads only the plugin file and reads its version). */
+function dau_channel_versions() {
+  $out = [];
+  foreach (['stable', 'beta'] as $ch) {
+    $r = dau_run([dau_bin('curl'), '-fsSL', '--max-time', '20', '--max-filesize', '2000000', dau_channel_url($ch)], 30, null, 2000000);
+    $x = $r['code'] === 0 ? dau_plg_parse($r['out']) : null;
+    $v = $x ? (string)$x['version'] : '';
+    $out[$ch] = preg_match('/^[A-Za-z0-9._+-]{1,40}$/', $v) ? $v : null;
+  }
+  return $out;
+}
+
+/**
+ * Install the plugin file of a branch right now (switch branch, or reinstall the current one = force update).
+ * Only the two fixed addresses above are ever used. Runs in the background job, holds the job lock and leaves a history line.
+ */
+function dau_channel_install($ch, $force = false) {
+  $url = dau_channel_url($ch);
+  if ($url === '') return ['ok' => false, 'error' => 'Unknown channel'];
+  $cur = dau_channel_current();
+  if ($cur === $ch && !$force) return ['ok' => false, 'error' => 'This server already follows that channel. Use Force update to reinstall it.'];
+  $lock = dau_lock_try(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
+  $t0 = dau_now(); $what = $cur === $ch ? 'force update (' . $ch . ')' : $cur . ' -> ' . $ch;
+  try {
+    dau_log('info', 'plugin', DAU_NAME, 'channel', 'start', $what);
+    $r = dau_run([dau_plugin_bin(), 'install', $url], 600);
+    $ok = $r['code'] === 0 && !$r['timeout'];
+    $err = $ok ? '' : dau_clip(dau_redact(trim(preg_replace('/[\r\n]+/', ' ', $r['err'] . ' ' . $r['out']))), 300);
+    dau_history_add(['type' => 'plugin', 'name' => DAU_NAME, 'action' => 'channel', 'result' => $ok ? 'updated' : 'failed', 'started' => $t0, 'finished' => dau_now(), 'trigger' => 'manual',
+      'message' => ucfirst($what), 'error' => $err], (int)(dau_load_config()['history']['max_entries'] ?? 200));
+    dau_log($ok ? 'info' : 'error', 'plugin', DAU_NAME, 'channel', $ok ? 'ok' : 'failed', $what . ($err ? ': ' . $err : ''));
+    return ['ok' => $ok, 'error' => $err];
+  } finally { dau_lock_release($lock); }
+}

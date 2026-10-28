@@ -66,7 +66,7 @@
       api('status').then(function (j) {
         if (!j.run) return;
         var was = S.ov && S.ov.run.running; S.ov.run = j.run;
-        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); load(); }
+        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); if (S.reloadAfter) { setTimeout(function () { location.reload(); }, 1500); return; } load(); }
         else renderRunBar();
       });
     }, 2000);
@@ -783,22 +783,88 @@
         fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
       h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
-      h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'unraid-autoupdater-config.json' }, 'Export settings'),
-        h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
-      h('p', { class: 'muted sm' }, 'Exports never include the Discord webhook.'))));
+      h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: saveSettingsFile }, 'Save settings to a file…'),
+        h('button', { class: 'btn', onclick: importSettings }, 'Load settings from a file…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
+      h('p', { class: 'muted sm' }, 'The file holds every setting, including per-container ones, but never the Discord webhook.'))));
     w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', onclick: function () {
       var cfg = JSON.parse(JSON.stringify(d)); delete cfg.containers; if (url.value) cfg.discord.webhook_url = url.value;
       act('save_config', { config: cfg }, 'Settings saved').then(function (j) { if (j.ok) { S.draft = null; load('settings'); } });
     } }, 'Save settings'), h('button', { class: 'btn', onclick: function () { S.draft = JSON.parse(JSON.stringify(S.ov.config)); render(); } }, 'Discard changes')));
+    w.appendChild(vChannel());
     return w;
+  }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function todayStamp() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  /* a safe file name: letters, digits, space, dot, dash, underscore; the .json ending is added for you */
+  function cleanFileName(n) { n = String(n || '').trim().replace(/\.json$/i, '').replace(/[^A-Za-z0-9 ._-]+/g, '-').replace(/^[.\s-]+/, '').slice(0, 80).replace(/[\s.]+$/, ''); return n; }
+  function saveSettingsFile() {
+    var m = modal('Save settings to a file');
+    var inp = h('input', { type: 'text', value: 'Unraid-AutoUpdater-Settings-' + todayStamp(), maxlength: 80, style: 'width:100%', 'aria-label': 'File name' });
+    var pv = h('div', { class: 'muted sm' });
+    function upd() { var n = cleanFileName(inp.value); pv.textContent = n ? 'Will be saved as: ' + n + '.json (in your browser\'s download folder)' : 'Enter a name'; go.disabled = !n; }
+    var go = h('button', { class: 'btn pri', onclick: function () {
+      var n = cleanFileName(inp.value); if (!n) return;
+      api('export').then(function (j) {
+        if (j.error) { toast(j.error, true); return; }
+        var blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' }), a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = n + '.json'; document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000); m.close(); toast('Saved ' + n + '.json');
+      });
+    } }, 'Save');
+    m.body.appendChild(h('div', { class: 'fld' }, h('label', null, 'File name'), inp, pv, h('span', { class: 'hint' }, 'Leave it as it is to use the default name with today\'s date. The Discord webhook is never included.')));
+    inp.addEventListener('input', upd); inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !go.disabled) go.click(); });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go); upd(); setTimeout(function () { inp.focus(); inp.select(); }, 50);
   }
   function importSettings() {
     var inp = h('input', { type: 'file', accept: 'application/json,.json' });
     inp.addEventListener('change', function () {
       var f = inp.files[0]; if (!f) return; var rd = new FileReader();
-      rd.onload = function () { try { var j = JSON.parse(rd.result); if (confirm('Replace the current settings with this file? A copy of the current settings is kept.')) act('import', { config: j }, 'Imported').then(function () { S.draft = null; load('settings'); }); } catch (e) { toast('That file is not valid JSON.', true); } };
+      rd.onload = function () {
+        var j; try { j = JSON.parse(rd.result); } catch (e) { toast('That file is not valid JSON.', true); return; }
+        var cfg = j && j.config ? j.config : j;
+        if (!cfg || typeof cfg !== 'object' || !(cfg.global || cfg.plugins || cfg.os || cfg.discord)) { toast('That does not look like a settings file from this plugin.', true); return; }
+        var nc = cfg.containers ? Object.keys(cfg.containers).length : 0;
+        var m = modal('Load settings from ' + f.name);
+        m.body.appendChild(h('p', null, 'This replaces the current settings. A copy of the current settings is kept on the server.'));
+        m.body.appendChild(h('div', { class: 'muted sm' }, (j.exported_at ? 'Saved: ' + new Date(j.exported_at).toLocaleString() + ' · ' : '') + (j.plugin_version ? 'plugin version ' + j.plugin_version + ' · ' : '') + nc + ' container setting(s)'));
+        m.body.appendChild(h('p', { class: 'muted sm' }, 'Settings this version does not know are ignored; invalid values are replaced by safe ones. The Discord webhook is not part of the file, so it stays as it is.'));
+        m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
+        m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); act('import', { config: j }, 'Settings loaded').then(function (r) { if (!r.error) { S.draft = null; load('settings'); } }); } }, 'Load settings'));
+      };
       rd.readAsText(f);
     }); inp.click();
+  }
+
+  /* ---------- plugin branch: stable / beta, and force update ---------- */
+  function vChannel() {
+    var cur = (S.ov && S.ov.channel) || 'stable', pick = S.chPick || cur, ok = !!S.chOk;
+    var box = h('div');
+    box.appendChild(h('p', null, 'This server follows the ', h('b', null, cur === 'beta' ? 'Beta' : 'Stable'), ' branch (installed version ', h('b', null, S.ov.version), ').',
+      S.chv ? h('span', { class: 'muted' }, ' Available now: Stable ' + (S.chv.stable || '?') + ' · Beta ' + (S.chv.beta || '?') + '.') : null, ' ',
+      h('button', { class: 'btn sm', onclick: function () { api('channel_check').then(function (j) { if (j.error) { toast(j.error, true); return; } S.chv = j.versions; render(); }); } }, 'Check versions')));
+    var opts = h('div', { class: 'inl' });
+    [['stable', 'Stable (recommended)'], ['beta', 'Beta (test servers only)']].forEach(function (o) {
+      var r = h('input', { type: 'radio', name: 'dau-ch', value: o[0], checked: pick === o[0], onchange: function () { S.chPick = o[0]; S.chOk = false; render(); } });
+      opts.appendChild(h('label', { class: 'switch' }, r, o[1]));
+    });
+    box.appendChild(opts);
+    if (pick === 'beta') {
+      box.appendChild(h('div', { class: 'banner bad' }, h('b', null, 'Warning: '), 'The beta branch is for test servers only. It holds unfinished features and can break your setup, including automatic updates. Do not use it on a server you depend on. Back up your flash drive first. You can go back to Stable here at any time; settings are kept, but settings only the beta understands are ignored by Stable.'));
+      box.appendChild(h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: ok, onchange: function (e) { S.chOk = e.target.checked; render(); } }), 'I understand and want to use the beta branch on this test server'));
+    }
+    var busy = S.ov.run.running;
+    function go(ch, force) {
+      var m = modal(force ? 'Force update from the ' + (ch === 'beta' ? 'Beta' : 'Stable') + ' branch?' : 'Switch to the ' + (ch === 'beta' ? 'Beta' : 'Stable') + ' branch?');
+      m.body.appendChild(h('p', null, force ? 'The plugin is reinstalled from its ' + (ch === 'beta' ? 'beta' : 'stable') + ' branch even if the version is the same. Your settings are kept.' : 'The plugin is installed from the ' + (ch === 'beta' ? 'beta' : 'stable') + ' branch now. Your settings, history and Discord webhook are kept.'));
+      m.body.appendChild(h('p', { class: 'muted sm' }, 'The page reloads when it is done. A job that is already running blocks this.'));
+      m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
+      m.foot.appendChild(h('button', { class: 'btn danger', onclick: function () { m.close(); S.reloadAfter = true; runJob('channel', [], 'Installing…', { channel: ch, confirm: '1', beta_ok: ch === 'beta' ? '1' : '', force: force ? '1' : '' }); } }, force ? 'Force update' : 'Switch'));
+    }
+    box.appendChild(h('div', { class: 'actions' },
+      h('button', { class: 'btn pri', disabled: busy || pick === cur || (pick === 'beta' && !ok), onclick: function () { go(pick, false); } }, 'Switch branch…'),
+      h('button', { class: 'btn danger', disabled: busy, title: 'Reinstall the plugin from the branch it follows now', onclick: function () { go(cur, true); } }, 'Force update…')));
+    box.appendChild(h('p', { class: 'muted sm' }, 'Force update reinstalls the current branch even when Unraid says the plugin is up to date, for example to repair a broken install.'));
+    return section('Plugin branch and force update', box);
   }
 
   /* ---------- Activity ---------- */

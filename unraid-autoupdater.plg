@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-autoupdater">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.31b3">
+<!ENTITY version "2026.10.31b4">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/beta/unraid-autoupdater.plg">
@@ -10,6 +10,9 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
+###2026.10.31b4
+- BETA. Settings > very bottom: choose the plugin branch (Stable or Beta) with a warning when Beta is picked, and a Force update that reinstalls the current branch.
+- Save settings to a file with a name of your choice (default Unraid-AutoUpdater-Settings-<date>) and load them back from a file, with a summary before they are applied.
 ###2026.10.31b3
 - BETA. Cleanup tab improved: one "Scan everything" button with a total of what can be freed, folding sections (empty ones start folded), a badge on the tab, and a "Recent cleanups" list (also in Activity).
 - Appdata: "Contents" shows what is inside a folder, "Never offer" keeps a folder off the list, folders changed in the last 30 days are flagged, and quick selections (all, not changed for 6 months).
@@ -157,7 +160,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.31b3');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.31b4');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid AutoUpdater');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
@@ -410,7 +413,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>1f7534196fa4aa6c3720db5574e194b08550b5ba663d97e97e56e02cf8c00941</SHA256>
+<SHA256>e50973e7801190a161dbf5e463345fa9981de0e13dab32e78a46b592c62dea53</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -2824,8 +2827,57 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
   $out['freed_text'] = dau_bytes_text($out['freed']);
   return $out;
 }
+
+/* ---------------- plugin channel (stable / beta) and force update ---------------- */
+
+const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/';
+
+function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'main') . '/unraid-autoupdater.plg' : ''; }
+
+/** Which branch this install follows: read from the installed plugin file's update address. */
+function dau_channel_current() {
+  $f = DAU_PLUGBOOT . '/unraid-autoupdater.plg';
+  $t = is_file($f) ? (string)@file_get_contents($f, false, null, 0, 4096) : '';
+  if (preg_match('#<!ENTITY\s+pluginURL\s+"([^"]+)"#', $t, $m)) return strpos($m[1], '/refs/heads/beta/') !== false ? 'beta' : 'stable';
+  return preg_match('/b\d+$/', DAU_VERSION) ? 'beta' : 'stable';
+}
+
+/** Version offered on each branch (downloads only the plugin file and reads its version). */
+function dau_channel_versions() {
+  $out = [];
+  foreach (['stable', 'beta'] as $ch) {
+    $r = dau_run([dau_bin('curl'), '-fsSL', '--max-time', '20', '--max-filesize', '2000000', dau_channel_url($ch)], 30, null, 2000000);
+    $x = $r['code'] === 0 ? dau_plg_parse($r['out']) : null;
+    $v = $x ? (string)$x['version'] : '';
+    $out[$ch] = preg_match('/^[A-Za-z0-9._+-]{1,40}$/', $v) ? $v : null;
+  }
+  return $out;
+}
+
+/**
+ * Install the plugin file of a branch right now (switch branch, or reinstall the current one = force update).
+ * Only the two fixed addresses above are ever used. Runs in the background job, holds the job lock and leaves a history line.
+ */
+function dau_channel_install($ch, $force = false) {
+  $url = dau_channel_url($ch);
+  if ($url === '') return ['ok' => false, 'error' => 'Unknown channel'];
+  $cur = dau_channel_current();
+  if ($cur === $ch && !$force) return ['ok' => false, 'error' => 'This server already follows that channel. Use Force update to reinstall it.'];
+  $lock = dau_lock_try(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
+  $t0 = dau_now(); $what = $cur === $ch ? 'force update (' . $ch . ')' : $cur . ' -> ' . $ch;
+  try {
+    dau_log('info', 'plugin', DAU_NAME, 'channel', 'start', $what);
+    $r = dau_run([dau_plugin_bin(), 'install', $url], 600);
+    $ok = $r['code'] === 0 && !$r['timeout'];
+    $err = $ok ? '' : dau_clip(dau_redact(trim(preg_replace('/[\r\n]+/', ' ', $r['err'] . ' ' . $r['out']))), 300);
+    dau_history_add(['type' => 'plugin', 'name' => DAU_NAME, 'action' => 'channel', 'result' => $ok ? 'updated' : 'failed', 'started' => $t0, 'finished' => dau_now(), 'trigger' => 'manual',
+      'message' => ucfirst($what), 'error' => $err], (int)(dau_load_config()['history']['max_entries'] ?? 200));
+    dau_log($ok ? 'info' : 'error', 'plugin', DAU_NAME, 'channel', $ok ? 'ok' : 'failed', $what . ($err ? ': ' . $err : ''));
+    return ['ok' => $ok, 'error' => $err];
+  } finally { dau_lock_release($lock); }
+}
 ]]></INLINE>
-<SHA256>1df35cd42fdcf0b3900d04dca2f1dba111d467d4c60471ab14b61af77ec86584</SHA256>
+<SHA256>0110e3b0fca4bc099a560e058502975cf59db5126870414f1c88e34f43f3b286</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/appdata.php" Mode="0644">
@@ -3629,7 +3681,7 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek', 'channel_check'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
@@ -3709,7 +3761,7 @@ switch ($action) {
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
-      'tick_installed' => is_file(DAU_CRON),
+      'tick_installed' => is_file(DAU_CRON), 'channel' => dau_channel_current(),
     ]);
   }
 
@@ -3744,6 +3796,7 @@ switch ($action) {
   case 'appdata_scan': { out(dau_appdata_scan()); }
   case 'quarantine_list': { out(dau_quarantine_list()); }
   case 'tpl_scan': { out(dau_tpl_scan()); }
+  case 'channel_check': { out(['ok' => true, 'current' => dau_channel_current(), 'versions' => dau_channel_versions(), 'installed' => DAU_VERSION]); }
   case 'appdata_peek': { out(dau_appdata_peek((string)($_POST['id'] ?? $_GET['id'] ?? ''))); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
@@ -3834,6 +3887,13 @@ switch ($action) {
       if (!$ok) fail('Invalid names');
       $args = ['--update-' . $what . '=' . implode(',', $ok)];
       if ($what === 'docker' && ($_POST['allow_major'] ?? '') === '1') $args[] = '--allow-major=' . implode(',', $ok);
+    } elseif ($what === 'channel') {
+      $ch = (string)($_POST['channel'] ?? ''); if (!in_array($ch, ['stable', 'beta'], true)) fail('Unknown channel');
+      if (($_POST['confirm'] ?? '') !== '1') fail('Changing the plugin branch needs an explicit confirmation.');
+      if ($ch === 'beta' && ($_POST['beta_ok'] ?? '') !== '1') fail('The beta branch needs the test-server warning to be accepted.');
+      $force = ($_POST['force'] ?? '') === '1';
+      if ($ch === dau_channel_current() && !$force) fail('This server already follows that channel. Use Force update to reinstall it.');
+      $args = ['--channel=' . $ch]; if ($force) $args[] = '--force';
     } elseif ($what === 'rollback') {
       $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
       if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');
@@ -3971,7 +4031,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>3db067c392d70e7a638eb026449833bac713fe8533abb18fbd3c315f34f390e8</SHA256>
+<SHA256>414c9d135814a95e49ab339bd1deca2e98341ab6ffe5ea592bb6a91f17254ebf</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -3982,6 +4042,7 @@ switch ($action) {
  *   --check                   refresh Docker/plugin/OS update information, update nothing
  *   --update-docker=a,b       update these containers now (manual: policy, delay and window are bypassed)
  *   --allow-major=a,b         with --update-docker: also allow a major-version jump for these containers
+ *   --channel=stable|beta     install the plugin from that branch now (--force reinstalls the branch it is already on)
  *   --rollback=name           go back to the image before the container's last update
  *   --update-plugins=a.plg,b  update these plugins now (after the usual safety validation)
  *   --os-check                check for an Unraid OS update (notify only)
@@ -3994,7 +4055,7 @@ require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
-$o = getopt('', ['tick', 'check', 'update-docker:', 'allow-major:', 'rollback:', 'update-plugins:', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
+$o = getopt('', ['tick', 'check', 'update-docker:', 'allow-major:', 'rollback:', 'update-plugins:', 'channel:', 'force', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
 $list = function ($k) use ($o) { return isset($o[$k]) ? array_values(array_filter(array_map('trim', explode(',', (string)$o[$k])))) : []; };
 
 if (isset($o['install']))   { dau_install(); exit(0); }
@@ -4006,13 +4067,14 @@ $flag = function ($k) use ($o) { return isset($o[$k]) ? ($o[$k] === '1') : null;
 if (isset($o['os-confirm']))        exit(dau_job_main('os_confirm'));
 if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' => false, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
 if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
+if (isset($o['channel']))        { $r = dau_channel_install((string)$o['channel'], isset($o['force'])); exit(!empty($r['ok']) ? 0 : 1); }
 if (isset($o['rollback']))       exit(dau_job_main('rollback', ['name' => dau_valid_name((string)$o['rollback']) ? (string)$o['rollback'] : '']));
 if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name')), 'allow_major' => array_values(array_filter($list('allow-major'), 'dau_valid_name'))]));
 if (isset($o['update-plugins'])) exit(dau_job_main('plugins', ['names' => array_values(array_filter($list('update-plugins'), 'dau_valid_plg'))]));
 fwrite(STDERR, "usage: run.php --tick | --check | --update-docker=a,b | --update-plugins=a.plg | --os-check | --os-install | --os-install-reboot | --install | --uninstall\n");
 exit(64);
 ]]></INLINE>
-<SHA256>90a86ecd84ed1fe3a9e90c6d2e3a4da8ca72eee37057e5a1b1750a545f3ba3ed</SHA256>
+<SHA256>e76d676c73c42542312e3b80482027da480e5a090552b76e979283de0fb6fb7a</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.css" Mode="0644">
@@ -4221,7 +4283,7 @@ exit(64);
       api('status').then(function (j) {
         if (!j.run) return;
         var was = S.ov && S.ov.run.running; S.ov.run = j.run;
-        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); load(); }
+        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); if (S.reloadAfter) { setTimeout(function () { location.reload(); }, 1500); return; } load(); }
         else renderRunBar();
       });
     }, 2000);
@@ -4938,22 +5000,88 @@ exit(64);
         fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
       h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
-      h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'unraid-autoupdater-config.json' }, 'Export settings'),
-        h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
-      h('p', { class: 'muted sm' }, 'Exports never include the Discord webhook.'))));
+      h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: saveSettingsFile }, 'Save settings to a file…'),
+        h('button', { class: 'btn', onclick: importSettings }, 'Load settings from a file…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
+      h('p', { class: 'muted sm' }, 'The file holds every setting, including per-container ones, but never the Discord webhook.'))));
     w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', onclick: function () {
       var cfg = JSON.parse(JSON.stringify(d)); delete cfg.containers; if (url.value) cfg.discord.webhook_url = url.value;
       act('save_config', { config: cfg }, 'Settings saved').then(function (j) { if (j.ok) { S.draft = null; load('settings'); } });
     } }, 'Save settings'), h('button', { class: 'btn', onclick: function () { S.draft = JSON.parse(JSON.stringify(S.ov.config)); render(); } }, 'Discard changes')));
+    w.appendChild(vChannel());
     return w;
+  }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function todayStamp() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  /* a safe file name: letters, digits, space, dot, dash, underscore; the .json ending is added for you */
+  function cleanFileName(n) { n = String(n || '').trim().replace(/\.json$/i, '').replace(/[^A-Za-z0-9 ._-]+/g, '-').replace(/^[.\s-]+/, '').slice(0, 80).replace(/[\s.]+$/, ''); return n; }
+  function saveSettingsFile() {
+    var m = modal('Save settings to a file');
+    var inp = h('input', { type: 'text', value: 'Unraid-AutoUpdater-Settings-' + todayStamp(), maxlength: 80, style: 'width:100%', 'aria-label': 'File name' });
+    var pv = h('div', { class: 'muted sm' });
+    function upd() { var n = cleanFileName(inp.value); pv.textContent = n ? 'Will be saved as: ' + n + '.json (in your browser\'s download folder)' : 'Enter a name'; go.disabled = !n; }
+    var go = h('button', { class: 'btn pri', onclick: function () {
+      var n = cleanFileName(inp.value); if (!n) return;
+      api('export').then(function (j) {
+        if (j.error) { toast(j.error, true); return; }
+        var blob = new Blob([JSON.stringify(j, null, 2)], { type: 'application/json' }), a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = n + '.json'; document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000); m.close(); toast('Saved ' + n + '.json');
+      });
+    } }, 'Save');
+    m.body.appendChild(h('div', { class: 'fld' }, h('label', null, 'File name'), inp, pv, h('span', { class: 'hint' }, 'Leave it as it is to use the default name with today\'s date. The Discord webhook is never included.')));
+    inp.addEventListener('input', upd); inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !go.disabled) go.click(); });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go); upd(); setTimeout(function () { inp.focus(); inp.select(); }, 50);
   }
   function importSettings() {
     var inp = h('input', { type: 'file', accept: 'application/json,.json' });
     inp.addEventListener('change', function () {
       var f = inp.files[0]; if (!f) return; var rd = new FileReader();
-      rd.onload = function () { try { var j = JSON.parse(rd.result); if (confirm('Replace the current settings with this file? A copy of the current settings is kept.')) act('import', { config: j }, 'Imported').then(function () { S.draft = null; load('settings'); }); } catch (e) { toast('That file is not valid JSON.', true); } };
+      rd.onload = function () {
+        var j; try { j = JSON.parse(rd.result); } catch (e) { toast('That file is not valid JSON.', true); return; }
+        var cfg = j && j.config ? j.config : j;
+        if (!cfg || typeof cfg !== 'object' || !(cfg.global || cfg.plugins || cfg.os || cfg.discord)) { toast('That does not look like a settings file from this plugin.', true); return; }
+        var nc = cfg.containers ? Object.keys(cfg.containers).length : 0;
+        var m = modal('Load settings from ' + f.name);
+        m.body.appendChild(h('p', null, 'This replaces the current settings. A copy of the current settings is kept on the server.'));
+        m.body.appendChild(h('div', { class: 'muted sm' }, (j.exported_at ? 'Saved: ' + new Date(j.exported_at).toLocaleString() + ' · ' : '') + (j.plugin_version ? 'plugin version ' + j.plugin_version + ' · ' : '') + nc + ' container setting(s)'));
+        m.body.appendChild(h('p', { class: 'muted sm' }, 'Settings this version does not know are ignored; invalid values are replaced by safe ones. The Discord webhook is not part of the file, so it stays as it is.'));
+        m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
+        m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); act('import', { config: j }, 'Settings loaded').then(function (r) { if (!r.error) { S.draft = null; load('settings'); } }); } }, 'Load settings'));
+      };
       rd.readAsText(f);
     }); inp.click();
+  }
+
+  /* ---------- plugin branch: stable / beta, and force update ---------- */
+  function vChannel() {
+    var cur = (S.ov && S.ov.channel) || 'stable', pick = S.chPick || cur, ok = !!S.chOk;
+    var box = h('div');
+    box.appendChild(h('p', null, 'This server follows the ', h('b', null, cur === 'beta' ? 'Beta' : 'Stable'), ' branch (installed version ', h('b', null, S.ov.version), ').',
+      S.chv ? h('span', { class: 'muted' }, ' Available now: Stable ' + (S.chv.stable || '?') + ' · Beta ' + (S.chv.beta || '?') + '.') : null, ' ',
+      h('button', { class: 'btn sm', onclick: function () { api('channel_check').then(function (j) { if (j.error) { toast(j.error, true); return; } S.chv = j.versions; render(); }); } }, 'Check versions')));
+    var opts = h('div', { class: 'inl' });
+    [['stable', 'Stable (recommended)'], ['beta', 'Beta (test servers only)']].forEach(function (o) {
+      var r = h('input', { type: 'radio', name: 'dau-ch', value: o[0], checked: pick === o[0], onchange: function () { S.chPick = o[0]; S.chOk = false; render(); } });
+      opts.appendChild(h('label', { class: 'switch' }, r, o[1]));
+    });
+    box.appendChild(opts);
+    if (pick === 'beta') {
+      box.appendChild(h('div', { class: 'banner bad' }, h('b', null, 'Warning: '), 'The beta branch is for test servers only. It holds unfinished features and can break your setup, including automatic updates. Do not use it on a server you depend on. Back up your flash drive first. You can go back to Stable here at any time; settings are kept, but settings only the beta understands are ignored by Stable.'));
+      box.appendChild(h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: ok, onchange: function (e) { S.chOk = e.target.checked; render(); } }), 'I understand and want to use the beta branch on this test server'));
+    }
+    var busy = S.ov.run.running;
+    function go(ch, force) {
+      var m = modal(force ? 'Force update from the ' + (ch === 'beta' ? 'Beta' : 'Stable') + ' branch?' : 'Switch to the ' + (ch === 'beta' ? 'Beta' : 'Stable') + ' branch?');
+      m.body.appendChild(h('p', null, force ? 'The plugin is reinstalled from its ' + (ch === 'beta' ? 'beta' : 'stable') + ' branch even if the version is the same. Your settings are kept.' : 'The plugin is installed from the ' + (ch === 'beta' ? 'beta' : 'stable') + ' branch now. Your settings, history and Discord webhook are kept.'));
+      m.body.appendChild(h('p', { class: 'muted sm' }, 'The page reloads when it is done. A job that is already running blocks this.'));
+      m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
+      m.foot.appendChild(h('button', { class: 'btn danger', onclick: function () { m.close(); S.reloadAfter = true; runJob('channel', [], 'Installing…', { channel: ch, confirm: '1', beta_ok: ch === 'beta' ? '1' : '', force: force ? '1' : '' }); } }, force ? 'Force update' : 'Switch'));
+    }
+    box.appendChild(h('div', { class: 'actions' },
+      h('button', { class: 'btn pri', disabled: busy || pick === cur || (pick === 'beta' && !ok), onclick: function () { go(pick, false); } }, 'Switch branch…'),
+      h('button', { class: 'btn danger', disabled: busy, title: 'Reinstall the plugin from the branch it follows now', onclick: function () { go(cur, true); } }, 'Force update…')));
+    box.appendChild(h('p', { class: 'muted sm' }, 'Force update reinstalls the current branch even when Unraid says the plugin is up to date, for example to repair a broken install.'));
+    return section('Plugin branch and force update', box);
   }
 
   /* ---------- Activity ---------- */
@@ -4979,7 +5107,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>08b771e60c5b6445fbe38e4797b9741dac5bc53d6015caaa6251dfc53e2fb44d</SHA256>
+<SHA256>29d217a540f1922ba935f19c3ea714810ba1a50d077a46ba3f869e42affecb17</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

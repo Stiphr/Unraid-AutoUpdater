@@ -10,7 +10,7 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek', 'channel_check'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
@@ -90,7 +90,7 @@ switch ($action) {
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
-      'tick_installed' => is_file(DAU_CRON),
+      'tick_installed' => is_file(DAU_CRON), 'channel' => dau_channel_current(),
     ]);
   }
 
@@ -125,6 +125,7 @@ switch ($action) {
   case 'appdata_scan': { out(dau_appdata_scan()); }
   case 'quarantine_list': { out(dau_quarantine_list()); }
   case 'tpl_scan': { out(dau_tpl_scan()); }
+  case 'channel_check': { out(['ok' => true, 'current' => dau_channel_current(), 'versions' => dau_channel_versions(), 'installed' => DAU_VERSION]); }
   case 'appdata_peek': { out(dau_appdata_peek((string)($_POST['id'] ?? $_GET['id'] ?? ''))); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
@@ -215,6 +216,13 @@ switch ($action) {
       if (!$ok) fail('Invalid names');
       $args = ['--update-' . $what . '=' . implode(',', $ok)];
       if ($what === 'docker' && ($_POST['allow_major'] ?? '') === '1') $args[] = '--allow-major=' . implode(',', $ok);
+    } elseif ($what === 'channel') {
+      $ch = (string)($_POST['channel'] ?? ''); if (!in_array($ch, ['stable', 'beta'], true)) fail('Unknown channel');
+      if (($_POST['confirm'] ?? '') !== '1') fail('Changing the plugin branch needs an explicit confirmation.');
+      if ($ch === 'beta' && ($_POST['beta_ok'] ?? '') !== '1') fail('The beta branch needs the test-server warning to be accepted.');
+      $force = ($_POST['force'] ?? '') === '1';
+      if ($ch === dau_channel_current() && !$force) fail('This server already follows that channel. Use Force update to reinstall it.');
+      $args = ['--channel=' . $ch]; if ($force) $args[] = '--force';
     } elseif ($what === 'rollback') {
       $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
       if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');
