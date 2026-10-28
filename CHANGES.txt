@@ -1,3 +1,12 @@
+###2026.10.29
+- Now called "Unraid Auto Updater", release build v1.0.0 (shown in the page, in Discord messages and in the README).
+- Unraid OS: automatic install and optional automatic reboot. DEFAULT IS UNCHANGED: check and notify only. Install modes need your explicit confirmation, a maintenance window and a waiting period; stable releases only unless you allow more; a reboot is postponed during a parity check or rebuild; one automatic attempt per version; verified after the reboot.
+- Manual "Install update" / "Install and reboot" / "Reboot now" buttons on the Unraid OS tab (with a confirmation).
+- Discord messages now use the name "Unraid Auto Updater" and an orange-on-grey icon as avatar and header; you can set your own image URL in Settings.
+###2026.10.28f
+- Fix: plugin and OS update checks failed to read the version because Unraid prints progress and hook lines around it; the version is now read from the downloaded plugin file.
+###2026.10.28e
+- Fix: updates now replace the installed files (Unraid only overwrites files that carry a checksum).
 ###2026.10.28d
 - Fix: requests are sent form-encoded (multipart uploads hang on Unraid's web server), which is what kept the page on "Loading".
 ###2026.10.28c

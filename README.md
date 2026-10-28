@@ -1,11 +1,11 @@
-# Unraid AutoUpdater (Docker Auto Update)
+# Unraid Auto Updater (build v1.0.0)
 
 An update manager for Unraid: Docker containers, Unraid plugins and Unraid OS update detection, with scheduling, safety checks, history and Discord notifications. It only uses Unraid's own update mechanisms; it never bypasses Unraid's checks.
 
 **Install / update URL**
 `https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg`
 
-Open it from **Plugins** (click the plugin icon) or **Settings → User Utilities → Docker Auto Update**.
+Open it from **Plugins** (click the plugin icon) or **Settings → User Utilities → Unraid Auto Updater**.
 
 ## What is on and what is off (defaults)
 
@@ -15,7 +15,7 @@ Open it from **Plugins** (click the plugin icon) or **Settings → User Utilitie
 | New containers | Policy *Ignore* (nothing happens until you choose) |
 | Plugin update checks + notifications | On (report only) |
 | **Automatic plugin installation** | **Off** (global switch, then per plugin) |
-| Unraid OS update check | On, **notify only** (never installs, never reboots) |
+| Unraid OS update check | On, **notify only**. Automatic install / reboot are opt-in and confirmed in the UI |
 | Discord | Off until you add a webhook |
 | Backups before update | Off |
 | Health verification, disk check, old-image cleanup | On |
@@ -71,11 +71,30 @@ This plugin never updates itself automatically. No automatic rollback: on failur
 
 ## Unraid OS
 
-Detection and notification only, using `plugin check unRAIDServer.plg`. Notifies once per version, notes withdrawn releases and failed checks. To install, use **Tools → Update OS**. The plugin never installs an OS update and never reboots.
+**Default: check and notify only.** The check uses `plugin check unRAIDServer.plg`; each version is announced once, withdrawn releases and failed checks are reported.
+
+Two opt-in modes (Settings → Unraid OS → *When an update is found*; each needs a confirmation box, and a mode without a matching confirmation is ignored, also if the settings file is edited by hand):
+
+| Mode | What happens |
+|---|---|
+| Check and notify only (default) | Nothing is installed, nothing is rebooted. |
+| Install updates, I reboot myself | The update is installed; it becomes active when you reboot. |
+| Install updates and reboot automatically | As above, then the server reboots by itself. |
+
+Safeguards for the automatic modes:
+- only inside the OS maintenance window (default Sunday 03:00-05:00; required), and only after the waiting period (default 7 days after the release was first seen);
+- stable releases only (`-rc`, beta, next are skipped) unless you turn that off;
+- a fresh check right before installing, the same plugin safety validation as plugins (same source URL, https, no new download hosts, compatible), and at least 600 MB free on the flash drive;
+- installed with Unraid's own `plugin update unRAIDServer.plg`; the install is verified (version and boot files) before any reboot;
+- the reboot (stock `/sbin/reboot -n`, the command the Reboot button uses) is postponed while a parity check, sync or rebuild is running or the array is in an unusual state, retried every 30 minutes inside the window, and happens at most once per version;
+- notifications (Unraid + Discord) are sent before the reboot; after the reboot the running version is compared with the expected one and the result is recorded (history, notification, Discord);
+- one automatic attempt per version: a failed install is not retried by itself and never reboots.
+
+There is no automatic rollback. Unraid keeps the previous release on the flash drive: **Tools → Update OS → Restore**. The Unraid OS tab also has manual *Install update*, *Install and reboot* and *Reboot now* buttons (each with a confirmation).
 
 ## Discord
 
-Settings → Discord: enable, paste the webhook, **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
+Settings → Discord: enable, paste the webhook (messages are sent as **Unraid Auto Updater** with an orange-on-grey icon as avatar and header; set *Icon image URL* to use your own https image), **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
 
 ## Scheduling
 

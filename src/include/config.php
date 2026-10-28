@@ -1,5 +1,5 @@
 <?php
-/* Docker Auto Update - configuration: defaults, validation, v1 -> v2 migration, secrets. */
+/* Unraid Auto Updater - configuration: defaults, validation, v1 -> v2 migration, secrets. */
 
 define('DAU_CFG_VERSION', 2);
 
@@ -58,6 +58,12 @@ function dau_defaults() {
     'os' => $sched + [
       'check_enabled' => true,
       'time'          => '05:30',
+      /* OS updates are NEVER installed unless mode is changed AND confirmed. Default: check and notify only. */
+      'mode'          => 'notify',      // notify | install | install_reboot
+      'confirmed'     => '',            // the install mode the person explicitly confirmed in the UI; a mode without a matching confirmation is ignored
+      'delay_days'    => 7,             // wait this long after a release is first seen
+      'stable_only'   => true,          // never auto-install -rc / beta / next releases
+      'window'        => ['enabled' => true, 'days' => [0], 'start' => '03:00', 'end' => '05:00'],
     ],
     'discord' => [
       'enabled'    => false,
@@ -65,6 +71,7 @@ function dau_defaults() {
       'types'      => ['success' => true, 'failed' => true, 'available' => true, 'summary' => true],
       'batching'   => 'combine',        // combine | separate
       'max_messages' => 5,
+      'icon_url'   => '',               // optional https image for the webhook avatar; empty = bundled default
     ],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
@@ -104,6 +111,7 @@ function dau_clean_value($spec, $v, $cur) {
     case 'path': // absolute path under /mnt, no traversal, no control characters
       if ($v === '' || $v === null) return '';
       return dau_valid_dest($v) ? rtrim($v, '/') : $cur;
+    case 'icon':  return ($v === '' || $v === null) ? '' : (dau_icon_url_valid($v) ? $v : $cur);
     case 'obj':   return is_array($v) ? dau_apply_spec(is_array($cur) ? $cur : [], $v, $spec[1]) : $cur;
     case 'obj_or_null':
       if ($v === null) return null;
@@ -155,7 +163,17 @@ function dau_plugins_spec() {
   ];
 }
 
-function dau_os_spec() { return dau_sched_spec() + ['check_enabled' => ['bool']]; }
+function dau_os_spec() {
+  return dau_sched_spec() + [
+    'check_enabled' => ['bool'], 'mode' => ['enum', ['notify', 'install', 'install_reboot']], 'confirmed' => ['enum', ['', 'install', 'install_reboot']],
+    'delay_days' => ['int', 0, 90], 'stable_only' => ['bool'], 'window' => ['obj', dau_window_spec()],
+  ];
+}
+
+/** https only, no credentials, no whitespace or quotes: used for the Discord avatar. */
+function dau_icon_url_valid($u) {
+  return is_string($u) && strlen($u) <= 300 && preg_match('#^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~%/+-]*(\?[A-Za-z0-9._~%=&+-]*)?$#', $u) === 1;
+}
 
 function dau_discord_spec() {
   return [
@@ -164,6 +182,7 @@ function dau_discord_spec() {
     'types'   => ['obj', ['success' => ['bool'], 'failed' => ['bool'], 'available' => ['bool'], 'summary' => ['bool']]],
     'batching' => ['enum', ['combine', 'separate']],
     'max_messages' => ['int', 1, 20],
+    'icon_url' => ['icon'],
   ];
 }
 
@@ -171,7 +190,12 @@ function dau_discord_spec() {
 function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['global']) && is_array($in['global'])) $cur['global'] = dau_apply_spec($cur['global'], $in['global'], dau_global_spec());
   if (isset($in['plugins']) && is_array($in['plugins'])) $cur['plugins'] = dau_apply_spec($cur['plugins'], $in['plugins'], dau_plugins_spec());
-  if (isset($in['os']) && is_array($in['os'])) $cur['os'] = dau_apply_spec($cur['os'], $in['os'], dau_os_spec());
+  if (isset($in['os']) && is_array($in['os'])) {
+    $cur['os'] = dau_apply_spec($cur['os'], $in['os'], dau_os_spec());
+    /* An install mode only counts when the person confirmed exactly that mode. Anything else falls back to notify-only. */
+    if ($cur['os']['mode'] !== 'notify' && $cur['os']['confirmed'] !== $cur['os']['mode']) $cur['os']['mode'] = 'notify';
+    if ($cur['os']['mode'] === 'notify') $cur['os']['confirmed'] = '';
+  }
   if (isset($in['discord']) && is_array($in['discord'])) $cur['discord'] = dau_apply_spec($cur['discord'], $in['discord'], dau_discord_spec());
   if (isset($in['notify_unraid']) && is_array($in['notify_unraid'])) {
     $cur['notify_unraid'] = dau_apply_spec($cur['notify_unraid'], $in['notify_unraid'], ['docker' => ['bool'], 'plugins' => ['bool'], 'os' => ['bool']]);

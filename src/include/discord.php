@@ -1,12 +1,14 @@
 <?php
 /*
- * Docker Auto Update - Discord webhook notifications.
+ * Unraid Auto Updater - Discord webhook notifications.
  *  - The URL is read from secrets.json only at send time; it is never logged, never returned by the API and is
  *    scrubbed from every message by dau_redact().
  *  - Only https://discord.com/api/webhooks/... style URLs are ever contacted (see dau_webhook_valid()).
  *  - Certificates are always verified. There is no option to turn that off.
  */
 
+/* Default avatar: an original icon (orange glyph on grey) published in this repository. Replace it in Settings with any https image. */
+const DAU_DEFAULT_ICON = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/main/assets/icon.png';
 const DAU_DISCORD_EMBEDS_PER_MSG = 10;
 const DAU_DISCORD_CHARS_PER_MSG  = 5600;   // hard limit is 6000 characters across all embeds of a message
 
@@ -24,7 +26,7 @@ function dau_http_post($url, $body, $timeout = 10) {
   }
   $res = ['code' => 0, 'headers' => [], 'body' => '', 'error' => ''];
   $ca = is_file('/etc/ssl/certs/ca-certificates.crt') ? '/etc/ssl/certs/ca-certificates.crt' : null;
-  $ua = 'UnraidAutoUpdater/' . DAU_VERSION;
+  $ua = 'UnraidAutoUpdater/' . DAU_BUILD;
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
     $opts = [
@@ -98,7 +100,7 @@ function dau_discord_post($url, array $payload) {
 /* ---------- embeds ---------- */
 
 function dau_embed_size(array $e) {
-  $n = strlen($e['title'] ?? '') + strlen($e['description'] ?? '') + strlen($e['footer']['text'] ?? '');
+  $n = strlen($e['title'] ?? '') + strlen($e['description'] ?? '') + strlen($e['footer']['text'] ?? '') + strlen($e['author']['name'] ?? '');
   foreach (($e['fields'] ?? []) as $f) $n += strlen($f['name']) + strlen($f['value']);
   return $n;
 }
@@ -109,6 +111,20 @@ function dau_field($name, $value, $inline = true) {
 }
 
 function dau_clean_text($s, $max) { return dau_clip(dau_redact((string)$s), $max); }
+
+/** Icon used for the webhook avatar and the embed header: the configured https URL, else the bundled default. */
+function dau_discord_icon(array $cfg = null) {
+  $u = $cfg['discord']['icon_url'] ?? '';
+  return dau_icon_url_valid($u) ? $u : DAU_DEFAULT_ICON;
+}
+
+/** Brand fields shared by every embed (author line with the icon, footer with build). */
+function dau_discord_brand(array $e, $extraFooter = '') {
+  $icon = $GLOBALS['DAU_ICON'] ?? DAU_DEFAULT_ICON;
+  $e['author'] = ['name' => DAU_NAME, 'icon_url' => $icon];
+  $e['footer'] = ['text' => DAU_NAME . ' ' . DAU_BUILD . $extraFooter, 'icon_url' => $icon];
+  return $e;
+}
 
 /** Embed for one event. Never includes secrets (values pass through dau_redact). */
 function dau_discord_event_embed(array $ev, $server) {
@@ -124,11 +140,17 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_withdrawn'    => ['ℹ️', 'OS update no longer offered', 0x3498DB],
     'os_check_failed' => ['⚠️', 'OS update check failed', 0xE67E22],
     'os_installed'    => ['✅', 'Unraid OS updated', 0x2ECC71],
+    'os_staged'       => ['📦', 'OS update installed, reboot needed', 0xF1C40F],
+    'os_rebooting'    => ['🔄', 'Rebooting to finish the OS update', 0xE67E22],
+    'os_reboot_blocked' => ['⚠️', 'Reboot postponed', 0xE67E22],
+    'os_install_failed' => ['❌', 'OS update failed', 0xE74C3C],
+    'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
+    'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
   $name = dau_clean_text($ev['name'] ?? '', 120);
   $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type'])), dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name)];
-  if (isset($ev['installed']) && $ev['installed'] !== '') $f[] = dau_field($kind === 'updated' || $kind === 'os_installed' ? 'Previous' : 'Installed', dau_clean_text($ev['installed'], 200));
-  if (isset($ev['available']) && $ev['available'] !== '') $f[] = dau_field($kind === 'updated' || $kind === 'os_installed' ? 'New' : 'Available', dau_clean_text($ev['available'], 200));
+  if (isset($ev['installed']) && $ev['installed'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'Previous' : 'Installed', dau_clean_text($ev['installed'], 200));
+  if (isset($ev['available']) && $ev['available'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'New' : 'Available', dau_clean_text($ev['available'], 200));
   if (isset($ev['duration'])) $f[] = dau_field('Duration', dau_duration_text($ev['duration']));
   if (!empty($ev['verification'])) $f[] = dau_field('Verification', dau_clean_text($ev['verification'], 300), false);
   if (!empty($ev['stage'])) $f[] = dau_field('Failed at', dau_clean_text($ev['stage'], 100));
@@ -137,13 +159,12 @@ function dau_discord_event_embed(array $ev, $server) {
   if (!empty($ev['retry'])) $f[] = dau_field('Retry', dau_clean_text($ev['retry'], 200), false);
   if (!empty($ev['log'])) $f[] = dau_field('Log', "```\n" . str_replace('```', "'''", dau_clean_text($ev['log'], 600)) . "\n```", false);
   if (!empty($ev['next'])) $f[] = dau_field('Suggested next steps', dau_clean_text($ev['next'], 500), false);
-  return [
+  return dau_discord_brand([
     'title' => dau_clip($style[0] . ' ' . $style[1] . ' — ' . $name, 256),
     'color' => $style[2],
     'fields' => array_slice($f, 0, 25),
     'timestamp' => dau_ts_iso($ev['ts'] ?? dau_now()),
-    'footer' => ['text' => 'Unraid AutoUpdater ' . DAU_VERSION],
-  ];
+  ]);
 }
 
 function dau_duration_text($s) {
@@ -167,19 +188,18 @@ function dau_discord_summary_embed(array $sum, $server) {
   if (isset($sum['os'])) {
     $o = $sum['os'];
     $lines[] = "**Unraid OS**\n- Update available: " . (($o['available'] ?? null) === null ? 'Unknown' : ($o['available'] ? 'Yes' . (!empty($o['version']) ? ' (' . dau_clean_text($o['version'], 40) . ')' : '') : 'No'))
-             . "\n- Installed automatically: No";
+             . "\n- Installed automatically: " . (!empty($o['installed']) ? 'Yes' : 'No');
   }
   $status = $sum['status'] ?? 'ok';
   $text = ['ok' => 'Completed', 'warnings' => 'Completed with warnings', 'failed' => 'Completed with failures'][$status] ?? 'Completed';
   $color = ['ok' => 0x2ECC71, 'warnings' => 0xF1C40F, 'failed' => 0xE74C3C][$status] ?? 0x3498DB;
   $lines[] = '**Status:** ' . $text;
-  return [
-    'title' => 'UNRAID AUTOUPDATER — UPDATE SUMMARY',
+  return dau_discord_brand([
+    'title' => 'UNRAID AUTO UPDATER — UPDATE SUMMARY',
     'description' => dau_clip("**Server:** " . dau_clean_text($server, 64) . "\n\n" . implode("\n\n", $lines), 4000),
     'color' => $color,
     'timestamp' => dau_ts_iso(dau_now()),
-    'footer' => ['text' => 'Unraid AutoUpdater ' . DAU_VERSION . (!empty($sum['trigger']) ? ' · ' . $sum['trigger'] . ' run' : '')],
-  ];
+  ], !empty($sum['trigger']) ? ' · ' . $sum['trigger'] . ' run' : '');
 }
 
 /** Split embeds into messages that respect Discord's limits (10 embeds, ~6000 characters). */
@@ -198,8 +218,8 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 
 function dau_event_toggle($kind) {
   switch ($kind) {
-    case 'updated': case 'os_installed': return 'success';
-    case 'failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': return 'failed';
+    case 'updated': case 'os_installed': case 'os_verified': return 'success';
+    case 'failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
@@ -208,6 +228,7 @@ function dau_discord_wants(array $dc, array $ev) {
   if (empty($dc['enabled']) || !empty($ev['silent'])) return false;
   $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$ev['type']] ?? null;
   if (!$cat || empty($dc['events'][$cat])) return false;
+  if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked'], true)) return true;   // a pending reboot must never be missed
   return !empty($dc['types'][dau_event_toggle($ev['kind'])]);
 }
 
@@ -229,10 +250,11 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
   if (!dau_webhook_valid($url)) { $out['error'] = 'no valid webhook URL saved'; return $out; }
   if (!empty($st['discord']['invalid'])) { $out['error'] = 'webhook was rejected earlier; save the URL again to retry'; return $out; }
   $server = dau_server_name();
+  $GLOBALS['DAU_ICON'] = dau_discord_icon($cfg);
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['failed' => 0, 'retry_exhausted' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];
@@ -247,7 +269,7 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
   if (count($msgs) > $max) { foreach (array_slice($msgs, $max) as $m) $dropped += count($m); $msgs = array_slice($msgs, 0, $max); }
 
   foreach ($msgs as $i => $m) {
-    $payload = ['username' => 'Unraid AutoUpdater', 'embeds' => $m, 'allowed_mentions' => ['parse' => []]];
+    $payload = ['username' => DAU_NAME, 'avatar_url' => $GLOBALS['DAU_ICON'], 'embeds' => $m, 'allowed_mentions' => ['parse' => []]];
     if ($dropped && $i === count($msgs) - 1) $payload['content'] = "+$dropped more notification(s) were not sent to stay under the message limit. See the plugin log.";
     $r = dau_discord_post($url, $payload);
     $st['discord']['last_attempt'] = dau_now();
@@ -268,8 +290,10 @@ function dau_discord_test(array &$st, $urlOverride = null) {
   if (!dau_webhook_valid($url)) return ['ok' => false, 'error' => 'That is not a valid Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>).'];
   $server = dau_server_name();
   $e = ['title' => '🧪 Test message', 'color' => 0x3498DB, 'description' => "Webhook is working for **" . dau_clean_text($server, 64) . "**.\nNo update was installed.",
-        'timestamp' => dau_ts_iso(dau_now()), 'footer' => ['text' => 'Unraid AutoUpdater ' . DAU_VERSION]];
-  $r = dau_discord_post($url, ['username' => 'Unraid AutoUpdater', 'embeds' => [$e], 'allowed_mentions' => ['parse' => []]]);
+        'timestamp' => dau_ts_iso(dau_now())];
+  $GLOBALS['DAU_ICON'] = dau_discord_icon(dau_load_config());
+  $e = dau_discord_brand($e);
+  $r = dau_discord_post($url, ['username' => DAU_NAME, 'avatar_url' => $GLOBALS['DAU_ICON'], 'embeds' => [$e], 'allowed_mentions' => ['parse' => []]]);
   $st['discord']['last_attempt'] = dau_now();
   if ($r['ok']) { $st['discord']['last_ok'] = dau_now(); $st['discord']['last_error'] = ''; $st['discord']['invalid'] = false; return ['ok' => true, 'error' => '']; }
   $st['discord']['last_error'] = $r['error'];

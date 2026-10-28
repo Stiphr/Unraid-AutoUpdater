@@ -1,5 +1,5 @@
 Menu="Utilities"
-Title="Docker Auto Update"
+Title="Unraid Auto Updater"
 Icon="fa-refresh"
 ---
 <?php

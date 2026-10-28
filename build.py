@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Builds docker.autoupdate.plg from src/ (every file is inlined, as Unraid plugins require).
-Usage: python3 build.py [VERSION]      default version = today's date, e.g. 2026.10.28b
+Usage: python3 build.py [VERSION] [BUILD]      default version = today's date, e.g. 2026.10.28b
 """
-import sys, re, pathlib, datetime
+import sys, re, pathlib, datetime, hashlib
 
 root = pathlib.Path(__file__).parent
 src = root / 'src'
 version = sys.argv[1] if len(sys.argv) > 1 else datetime.date.today().strftime('%Y.%m.%d')
+build = sys.argv[2] if len(sys.argv) > 2 else 'v1.0.0'
 files = [
     ('DockerAutoUpdate.page', '0644'),
     ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
@@ -37,8 +38,12 @@ for rel, mode in files:
     assert ']]>' not in text, rel
     if rel == 'include/lib.php':
         assert '@@VERSION@@' in text
-        text = text.replace('@@VERSION@@', version)
-    out.append('<FILE Name="&emhttp;/%s" Mode="%s">\n<INLINE><![CDATA[%s]]></INLINE>\n</FILE>\n' % (rel, mode, text))
+        text = text.replace('@@VERSION@@', version).replace('@@BUILD@@', build)
+    # Unraid never overwrites an existing file on update unless a hash is given and differs, so every file carries one.
+    # The plugin manager writes trim(INLINE) + newline, so hash exactly that.
+    written = text.strip(" \t\n\r\0\x0b") + "\n"
+    sha = hashlib.sha256(written.encode()).hexdigest()
+    out.append('<FILE Name="&emhttp;/%s" Mode="%s">\n<INLINE><![CDATA[%s]]></INLINE>\n<SHA256>%s</SHA256>\n</FILE>\n' % (rel, mode, text, sha))
 
 out.append("""<FILE Run="/bin/bash">
 <INLINE>
@@ -48,8 +53,8 @@ chmod 755 &emhttp;/scripts/run.php
 /usr/bin/php &emhttp;/scripts/run.php --install
 echo ""
 echo "----------------------------------------------------"
-echo " Docker Auto Update &version; installed"
-echo " Open it from Settings > User Utilities > Docker Auto Update"
+echo " Unraid Auto Updater &version; installed"
+echo " Open it from Settings > User Utilities > Unraid Auto Updater"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>
@@ -62,7 +67,7 @@ rm -f &flash;/docker-autoupdate.cron
 /usr/local/sbin/update_cron 2>/dev/null
 rm -rf &emhttp;
 rm -f /var/run/docker-autoupdate.lock /var/run/docker-autoupdate.progress /var/run/docker-autoupdate.stop
-echo "Docker Auto Update removed. Settings, history and backups were kept in &flash;"
+echo "Unraid Auto Updater removed. Settings, history and backups were kept in &flash;"
 </INLINE>
 </FILE>
 

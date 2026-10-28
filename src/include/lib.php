@@ -1,6 +1,6 @@
 <?php
 /*
- * Docker Auto Update - core helpers.
+ * Unraid Auto Updater - core helpers.
  * Written for PHP 7.4+ (Unraid 6.9 and later): no match, str_contains, nullsafe or named arguments.
  *
  * Test seams (in-process only, never read from the environment or the web):
@@ -12,7 +12,9 @@
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '@@VERSION@@');
+define('DAU_VERSION',   '@@VERSION@@');   // plugin file version (date based; Unraid compares it as a string)
+define('DAU_BUILD',     '@@BUILD@@');     // release label shown to people
+define('DAU_NAME',      'Unraid Auto Updater');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/docker.autoupdate');
 define('DAU_DIR',       '/boot/config/plugins/docker.autoupdate');
 define('DAU_CFG',       DAU_DIR . '/config.json');
@@ -36,6 +38,8 @@ define('DAU_PLUGTMP',   '/tmp/plugins');
 define('DAU_PLUGBOOT',  '/boot/config/plugins');
 define('DAU_OSVERFILE', '/etc/unraid-version');
 define('DAU_VARINI',    '/var/local/emhttp/var.ini');
+define('DAU_BOOT',      '/boot');
+define('DAU_REBOOT',    '/sbin/reboot');
 define('DAU_SELF_PLG',  'docker.autoupdate.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
@@ -245,7 +249,7 @@ function dau_os_version() {
 /** Send a native Unraid notification (the bell menu / email / agents configured in Notification Settings). */
 function dau_unraid_notify($subject, $desc, $importance = 'normal', $link = '/Docker') {
   if (!is_file(DAU_NOTIFY)) return;
-  dau_run([DAU_NOTIFY, '-e', 'Docker Auto Update', '-s', dau_clip(dau_redact($subject), 120),
+  dau_run([DAU_NOTIFY, '-e', DAU_NAME, '-s', dau_clip(dau_redact($subject), 120),
            '-d', dau_clip(dau_redact($desc), 500), '-i', $importance, '-l', $link], 30);
 }
 
