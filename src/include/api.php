@@ -1,6 +1,6 @@
 <?php
-/* Unraid Auto Updater - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
-require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
+/* Unraid AutoUpdater - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
+require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -69,7 +69,7 @@ switch ($action) {
     $rows = api_docker_rows($cfg, $st); $prow = api_plugin_rows($cfg, $st);
     $cnt = function ($r, $f) { return count(array_filter($r ?? [], $f)); };
     out([
-      'config' => api_config_view($cfg), 'config_status' => $s, 'run' => dau_run_info(), 'now' => dau_now(), 'version' => DAU_VERSION, 'build' => DAU_BUILD, 'name' => DAU_NAME,
+      'config' => api_config_view($cfg), 'config_status' => $s, 'run' => dau_run_info(), 'now' => dau_now(), 'version' => DAU_VERSION, 'name' => DAU_NAME,
       'docker_up' => $rows !== null,
       'cards' => [
         'containers' => count($rows ?? []), 'docker_updates' => $cnt($rows, function ($r) { return $r['update'] === true; }),
@@ -116,7 +116,7 @@ switch ($action) {
   }
 
   case 'export': {
-    header('Content-Disposition: attachment; filename="docker-autoupdate-config.json"');
+    header('Content-Disposition: attachment; filename="unraid-autoupdater-config.json"');
     echo json_encode(dau_export_config(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES); exit;
   }
 

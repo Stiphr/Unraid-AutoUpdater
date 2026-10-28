@@ -16,7 +16,7 @@ $GLOBALS['T'] = ['pass' => 0, 'fail' => 0, 'names' => [], 'current' => ''];
 
 /*
  * A real Unraid server has the flash drive mounted at /boot and the stock web GUI installed. The tests would wipe
- * /boot/config/plugins/docker.autoupdate and /var/log/plugins, so refuse in that case unless this machine has
+ * /boot/config/plugins/unraid-autoupdater and /var/log/plugins, so refuse in that case unless this machine has
  * already been used for tests (marker file written by reset_env()).
  */
 function dau_test_guard() {
@@ -33,12 +33,12 @@ dau_test_guard();
 
 function reset_env() {
   @file_put_contents('/tmp/.dau-test-ok', "created by the plugin test harness\n");
-  foreach (['/boot/config/plugins/docker.autoupdate', '/boot/config/plugins/dockerMan', '/var/log/plugins', '/tmp/plugins'] as $d) {
+  foreach (['/boot/config/plugins/unraid-autoupdater', '/boot/config/plugins/dockerMan', '/var/log/plugins', '/tmp/plugins'] as $d) {
     if (is_dir($d)) dau_test_rm($d);
   }
-  foreach (glob('/var/log/docker-autoupdate.log*') as $f) @unlink($f);
-  foreach (['/var/run/docker-autoupdate.lock', '/var/run/docker-autoupdate.progress', '/var/run/docker-autoupdate.stop', '/var/lib/docker/unraid-update-status.json', '/etc/unraid-version', '/var/local/emhttp/var.ini'] as $f) @unlink($f);
-  foreach (['/boot/config/plugins/docker.autoupdate', '/boot/config/plugins/dockerMan/templates-user', '/var/log/plugins', '/tmp/plugins', '/var/run', '/var/lib/docker', '/var/local/emhttp', '/etc'] as $d) @mkdir($d, 0755, true);
+  foreach (glob('/var/log/unraid-autoupdater.log*') as $f) @unlink($f);
+  foreach (['/var/run/unraid-autoupdater.lock', '/var/run/unraid-autoupdater.progress', '/var/run/unraid-autoupdater.stop', '/var/lib/docker/unraid-update-status.json', '/etc/unraid-version', '/var/local/emhttp/var.ini'] as $f) @unlink($f);
+  foreach (['/boot/config/plugins/unraid-autoupdater', '/boot/config/plugins/dockerMan/templates-user', '/var/log/plugins', '/tmp/plugins', '/var/run', '/var/lib/docker', '/var/local/emhttp', '/etc'] as $d) @mkdir($d, 0755, true);
   file_put_contents('/etc/unraid-version', "version=\"7.3.4\"\n");
   file_put_contents('/var/local/emhttp/var.ini', "NAME=\"Tower\"\n");
   unset($GLOBALS['DAU_EXEC_MOCK'], $GLOBALS['DAU_HTTP_MOCK'], $GLOBALS['DAU_SPAWN_MOCK']);

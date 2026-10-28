@@ -5,13 +5,13 @@ This document records what the existing plugin did, which native Unraid mechanis
 
 ## 1. Existing plugin (v2026.10.28a), as found in the repository
 
-The repository contained only `docker.autoupdate.plg` (self-contained, files inlined) and `LICENSE`.
+The repository contained only `unraid-autoupdater.plg` (self-contained, files inlined) and `LICENSE`.
 
 | Area | What existed |
 |---|---|
 | Layout | `.page` (Settings > User Utilities), `include/lib.php`, `include/api.php`, `scripts/run.php`, `assets/app.{css,js}` |
-| Config | `/boot/config/plugins/docker.autoupdate/config.json` (`global` + `containers{auto,notify,schedule}`) |
-| Scheduling | One cron line per distinct schedule slot (`run.php --scheduled --slot=KEY`) in `docker-autoupdate.cron` |
+| Config | `/boot/config/plugins/unraid-autoupdater/config.json` (`global` + `containers{auto,notify,schedule}`) |
+| Scheduling | One cron line per distinct schedule slot (`run.php --scheduled --slot=KEY`) in `unraid-autoupdater.cron` |
 | Docker | Containers listed from `docker inspect`; update flag from Unraid's `unraid-update-status.json`; update via `update_container` |
 | Extras | Unraid notifications, history (100 entries), log, per-container schedule/notify, bi-weekly gating, lock file |
 

@@ -1,13 +1,24 @@
-# Unraid Auto Updater (build v1.0.0)
+# Unraid AutoUpdater
 
 The logo (`assets/icon.png`) is shown beside the title on the dashboard, as the plugin icon on the Plugins page, and as the Discord webhook avatar.
 
 An update manager for Unraid: Docker containers, Unraid plugins and Unraid OS update detection, with scheduling, safety checks, history and Discord notifications. It only uses Unraid's own update mechanisms; it never bypasses Unraid's checks.
 
-**Install / update URL**
-`https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg`
+## ⚠️ Disclaimer – please read before installing
 
-Open it from **Plugins** (click the plugin icon) or **Settings → User Utilities → Unraid Auto Updater**.
+This plugin was written by me with the help of AI assistants (Claude and ChatGPT). It has had only limited testing and is provided **"as is", without warranty of any kind**. It can update Docker containers and plugins and, if you enable it, install Unraid OS updates and reboot your server.
+
+**Use it at your own risk.** I accept no responsibility or liability for data loss, downtime, or any other damage resulting from its use. Before installing, back up your flash drive and important data, and review the settings before turning on any automatic action.
+
+## Install
+
+Plugins → Install Plugin, then paste:
+
+`https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg`
+
+Updates appear on the Plugins page like any other plugin. **Coming from "Docker Auto Update" (docker.autoupdate)?** Just update it from the Plugins page: it installs Unraid AutoUpdater, keeps your settings, history and webhook, and removes the old entry. A copy of the old settings folder stays in `/boot/config/plugins/docker.autoupdate.migrated`.
+
+Open it from **Plugins** (click the plugin icon) or **Settings → User Utilities → Unraid AutoUpdater**.
 
 ## What is on and what is off (defaults)
 
@@ -66,7 +77,7 @@ Uses Unraid's `plugin check` and `plugin update`. Per plugin: Auto / Notify / Ig
 - same plugin name and source URL, announced version = downloaded version, newer than installed;
 - compatible with this Unraid version (min/max);
 - **no new download host** compared with the installed version (otherwise it is blocked for manual review);
-- the file's SHA-256 is re-checked right before install; a copy of the old `.plg` is kept (last 3) in `/boot/config/plugins/docker.autoupdate/plugin-recovery`;
+- the file's SHA-256 is re-checked right before install; a copy of the old `.plg` is kept (last 3) in `/boot/config/plugins/unraid-autoupdater/plugin-recovery`;
 - afterwards the installed file must report the new version.
 
 This plugin never updates itself automatically. No automatic rollback: on failure you get recovery guidance.
@@ -122,15 +133,15 @@ There is no automatic rollback. Unraid keeps the previous release on the flash d
 
 ## Discord
 
-Settings → Discord: enable, paste the webhook (messages are sent as **Unraid Auto Updater** with an orange-on-grey icon as avatar and header; set *Icon image URL* to use your own https image), **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
+Settings → Discord: enable, paste the webhook (messages are sent as **Unraid AutoUpdater** with an orange-on-grey icon as avatar and header; set *Icon image URL* to use your own https image), **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
 
 ## Scheduling
 
-One dispatcher runs every 5 minutes (`/boot/config/plugins/docker.autoupdate/docker-autoupdate.cron`, registered through Unraid's `update_cron`, rebuilt at every boot). A schedule that was due while the server was off still runs if it is at most 6 hours late, otherwise it waits for the next occurrence. Newly created schedules do not run retroactively. Bi-weekly means at least 12 days between runs. One lock prevents overlapping jobs; **Stop** ends a job after the current step. A job interrupted by a reboot is recorded as *interrupted* and is not blindly resumed. Times use the server's time zone.
+One dispatcher runs every 5 minutes (`/boot/config/plugins/unraid-autoupdater/unraid-autoupdater.cron`, registered through Unraid's `update_cron`, rebuilt at every boot). A schedule that was due while the server was off still runs if it is at most 6 hours late, otherwise it waits for the next occurrence. Newly created schedules do not run retroactively. Bi-weekly means at least 12 days between runs. One lock prevents overlapping jobs; **Stop** ends a job after the current step. A job interrupted by a reboot is recorded as *interrupted* and is not blindly resumed. Times use the server's time zone.
 
 ## Data
 
-`/boot/config/plugins/docker.autoupdate/`: `config.json`, `secrets.json`, `state.json`, `history.json` (bounded), `plugin-recovery/`. Log: `/var/log/docker-autoupdate.log` (rotated, structured `key=value`). Settings can be exported/imported (without the webhook).
+`/boot/config/plugins/unraid-autoupdater/`: `config.json`, `secrets.json`, `state.json`, `history.json` (bounded), `plugin-recovery/`. Log: `/var/log/unraid-autoupdater.log` (rotated, structured `key=value`). Settings can be exported/imported (without the webhook).
 
 ## Upgrading from an earlier version
 
@@ -155,12 +166,12 @@ Activity tab shows history and the log. *Docker service is not running* banner: 
 
 ## Removal
 
-Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/docker.autoupdate/` and can be deleted manually.
+Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/unraid-autoupdater/` and can be deleted manually.
 
 ## Development
 
 ```
-python3 build.py 2026.10.28b     # builds docker.autoupdate.plg from src/
+python3 build.py 2026.10.30     # builds unraid-autoupdater.plg (and the migration stub docker.autoupdate.plg) from src/
 php tests/run.php                # all tests, everything mocked (never run on a real server)
 php tests/run.php docker         # only files matching "docker"
 ```

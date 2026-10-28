@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - command line runner.
+ * Unraid AutoUpdater - command line runner.
  *   --tick                    cron dispatcher: runs whatever is due (called every 5 minutes)
  *   --check                   refresh Docker/plugin/OS update information, update nothing
  *   --update-docker=a,b       update these containers now (manual: policy, delay and window are bypassed)
@@ -11,7 +11,7 @@
  *   --install / --uninstall   boot-time setup / removal
  */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
+require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 

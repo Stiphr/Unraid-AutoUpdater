@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - core helpers.
+ * Unraid AutoUpdater - core helpers.
  * Written for PHP 7.4+ (Unraid 6.9 and later): no match, str_contains, nullsafe or named arguments.
  *
  * Test seams (in-process only, never read from the environment or the web):
@@ -12,21 +12,20 @@
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '@@VERSION@@');   // plugin file version (date based; Unraid compares it as a string)
-define('DAU_BUILD',     '@@BUILD@@');     // release label shown to people
-define('DAU_NAME',      'Unraid Auto Updater');
-define('DAU_ROOT',      '/usr/local/emhttp/plugins/docker.autoupdate');
-define('DAU_DIR',       '/boot/config/plugins/docker.autoupdate');
+define('DAU_VERSION',   '@@VERSION@@');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_NAME',      'Unraid AutoUpdater');
+define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
+define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
 define('DAU_CFG',       DAU_DIR . '/config.json');
 define('DAU_SECRETS',   DAU_DIR . '/secrets.json');
 define('DAU_STATE',     DAU_DIR . '/state.json');
 define('DAU_HIST',      DAU_DIR . '/history.json');
-define('DAU_CRON',      DAU_DIR . '/docker-autoupdate.cron');
+define('DAU_CRON',      DAU_DIR . '/unraid-autoupdater.cron');
 define('DAU_RECOVERY',  DAU_DIR . '/plugin-recovery');
-define('DAU_LOG',       '/var/log/docker-autoupdate.log');
-define('DAU_LOCK',      '/var/run/docker-autoupdate.lock');
-define('DAU_PROGRESS',  '/var/run/docker-autoupdate.progress');
-define('DAU_STOPFLAG',  '/var/run/docker-autoupdate.stop');
+define('DAU_LOG',       '/var/log/unraid-autoupdater.log');
+define('DAU_LOCK',      '/var/run/unraid-autoupdater.lock');
+define('DAU_PROGRESS',  '/var/run/unraid-autoupdater.progress');
+define('DAU_STOPFLAG',  '/var/run/unraid-autoupdater.stop');
 define('DAU_PHP',       '/usr/bin/php');
 define('DAU_UPDSTATUS', '/var/lib/docker/unraid-update-status.json');
 define('DAU_DM',        '/usr/local/emhttp/plugins/dynamix.docker.manager');
@@ -40,7 +39,7 @@ define('DAU_OSVERFILE', '/etc/unraid-version');
 define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
-define('DAU_SELF_PLG',  'docker.autoupdate.plg');
+define('DAU_SELF_PLG',  'unraid-autoupdater.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
 

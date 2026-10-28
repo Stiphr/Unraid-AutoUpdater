@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - pre-OS maintenance workflow.
+ * Unraid AutoUpdater - pre-OS maintenance workflow.
  * Before an Unraid OS update is installed (automatically or from the UI) the plugins - and, only if enabled, the Docker
  * containers - are brought up to date, the result is verified and the system is re-checked. The OS install runs only when
  * every REQUIRED step succeeded. It reuses dau_job_plugins() / dau_job_docker() (no second updater) and never reboots by itself.
@@ -116,7 +116,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
   if ($needConfirm) {
     $os['workflow'] = ['state' => 'awaiting_confirmation', 'version' => $latest, 'started' => dau_now(), 'reboot' => !empty($opt['reboot']), 'manual' => false];
     $rep['result'] = 'waiting'; $os['last_report'] = $rep;
-    $J['events'][] = dau_ev('os', 'Unraid OS', 'os_awaiting', ['installed' => $inst, 'available' => $latest, 'detail' => dau_os_report_text($rep), 'next' => 'Open Unraid Auto Updater > Unraid OS and choose Confirm or Abort. Nothing has been installed.']);
+    $J['events'][] = dau_ev('os', 'Unraid OS', 'os_awaiting', ['installed' => $inst, 'available' => $latest, 'detail' => dau_os_report_text($rep), 'next' => 'Open Unraid AutoUpdater > Unraid OS and choose Confirm or Abort. Nothing has been installed.']);
     dau_os_wf_history($J, 'waiting', 'Prerequisites passed; waiting for the confirmation to install ' . $latest . '.', $started);
     dau_log('info', 'os', 'Unraid OS', 'prerequisites', 'waiting', 'waiting for confirmation');
     dau_state_save($J['st']);
