@@ -104,7 +104,8 @@ function dau_job_docker(array &$J, array $opts) {
 
 function dau_job_plugins(array &$J, array $opts) {
   $cfg = $J['cfg']; $pc = $cfg['plugins']; $now = dau_now();
-  $manual = !empty($opts['manual']); $names = $opts['names'] ?? null;
+  $pre = $opts['pre'] ?? null;      // pre-OS workflow: 'auto' = only plugins whose policy is auto, 'all' = every plugin that is not ignored; delay/window/master switch are bypassed
+  $manual = !empty($opts['manual']) || $pre !== null; $names = $opts['names'] ?? null;
   dau_phase('Checking plugins');
   $inst = dau_plugins_installed();
   $chk = dau_plugins_check_all($cfg, $inst);
@@ -118,6 +119,7 @@ function dau_job_plugins(array &$J, array $opts) {
   foreach ($chk['avail'] as $f => $latest) {
     if ($names !== null && !in_array($f, $names, true)) continue;
     $p = $inst[$f]; $policy = dau_plugin_policy($cfg, $f);
+    if ($pre !== null && ($p['self'] || $policy === 'ignore' || ($pre === 'auto' && $policy !== 'auto'))) continue;
     $ev = dau_plugin_eval($cfg, $J['st'], $p, $latest, $now, $manual);
     if ($ev['state'] === 'self' && !$manual) { /* still announce */ }
     if ($policy !== 'ignore' || $manual) {
@@ -170,9 +172,13 @@ function dau_job_os(array &$J, array $opts = []) {
   $J['st']['os']['deferred_at'] = 0;
   if (empty($opts['install']) || !$chk['ok']) return;
   $reboot = $manual ? !empty($opts['reboot']) : ($cfg['os']['mode'] === 'install_reboot');
+  if (!empty($opts['skip_pre']) && is_array($J['st']['os']['workflow'] ?? null)) $reboot = !empty($J['st']['os']['workflow']['reboot']);
   $e = dau_os_eval($cfg, $J['st'], $now, $manual);
   $latest = (string)$J['st']['os']['available'];
+  if (!empty($opts['skip_pre']) && $e['state'] === 'awaiting_confirmation') $e['state'] = 'ready';
   if ($e['state'] === 'ready') {
+    $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
+    if ($w !== 'proceed') return;
     dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS']);
     dau_mark_current($J['st'], 'os', 'Unraid OS', dau_now());
     $res = dau_os_install($cfg, $latest);
@@ -226,13 +232,13 @@ function dau_job_os(array &$J, array $opts = []) {
 function dau_job_finish(array &$J) {
   $cfg = $J['cfg']; $sum = $J['sum']; $ev = $J['events'];
   $failed = $sum['docker']['failed'] + $sum['plugins']['failed'];
-  foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified'], true)) $failed++;
+  foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified', 'os_prereq_failed'], true)) $failed++;
   $sum['status'] = $failed ? 'failed' : (($sum['docker']['skipped'] + $sum['plugins']['skipped']) ? 'warnings' : 'ok');
   $sum['trigger'] = $J['trigger'];
   /* Unraid's own notification center */
   $nu = $cfg['notify_unraid']; $sent = 0; $more = 0;
   foreach ($ev as $e) {
-    $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified'], true);   // reboots and failed installs are never silent
+    $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified', 'os_awaiting', 'os_prereq_failed', 'os_aborted'], true);   // reboots and failed installs are never silent
     if (!empty($e['silent']) || !empty($e['silent_native']) || (!$important && empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$e['type']]]))) continue;
     if ($sent >= 8) { $more++; continue; }
     $label = dau_type_label($e['type']) . ' ' . $e['name'];
@@ -240,7 +246,8 @@ function dau_job_finish(array &$J) {
             'retry_exhausted' => ['update failed, retries used up', 'alert'], 'blocked' => ['update not applied', 'warning'], 'skipped' => ['update skipped', 'normal'],
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
-            'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -272,6 +279,13 @@ function dau_job_main($action, array $o = []) {
     $max = $cfg['history']['max_entries'];
     $rec = dau_recover_interrupted($st, $max);
     $now = dau_now();
+    /* a pre-OS workflow whose job died (power loss, kill) is recorded as interrupted; a paused one expires */
+    $wf = $st['os']['workflow'] ?? null;
+    if (is_array($wf) && (($wf['state'] ?? '') === 'running' || $now - (int)($wf['started'] ?? 0) > DAU_WORKFLOW_TTL)) {
+      dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => ($wf['state'] ?? '') === 'running' ? 'interrupted' : 'aborted', 'started' => (int)$wf['started'], 'finished' => $now, 'trigger' => 'recovery',
+        'error' => ($wf['state'] ?? '') === 'running' ? 'The pre-OS workflow was interrupted. Nothing was installed; the next run starts from a fresh check.' : 'The confirmation for the OS update was not given within 24 hours.'], $max);
+      $st['os']['workflow'] = null; dau_state_save($st);
+    }
     $J = dau_job_new($action === 'tick' ? 'scheduled' : 'manual', $cfg, $st);
     /* result of an OS update that was waiting for a reboot (verified at boot, announced here once the network is up) */
     $announced = false;
@@ -312,7 +326,9 @@ function dau_job_main($action, array $o = []) {
     } elseif ($action === 'os') {
       dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'os_install') {
-      dau_job_os($J, ['manual' => true, 'install' => true, 'reboot' => !empty($o['reboot'])]);
+      dau_job_os($J, ['manual' => true, 'install' => true, 'reboot' => !empty($o['reboot']), 'pre_plugins' => $o['pre_plugins'] ?? null, 'pre_docker' => $o['pre_docker'] ?? null]);
+    } elseif ($action === 'os_confirm') {
+      dau_job_os($J, ['manual' => true, 'install' => true, 'skip_pre' => true]);
     }
     dau_job_finish($J);
     dau_progress(['running' => false, 'ts' => dau_now(), 'phase' => !empty($J['reboot']) ? 'Rebooting' : 'Done']);

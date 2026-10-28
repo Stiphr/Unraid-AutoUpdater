@@ -1,3 +1,7 @@
+###2026.10.29a
+- Pre-OS maintenance workflow: before an Unraid OS update is installed, plugins (and optionally Docker containers) are updated, the result is verified and the system is re-checked. The OS update only proceeds if the required steps succeeded; optional confirmation step, abort at any time, notifications on the dashboard, Unraid and Discord. Docker updates before the OS are OFF by default.
+- The logo is shown beside the title on the dashboard and as the plugin's icon on the Plugins page (installed locally, restored at every boot).
+- The Unraid OS tab shows the components that were updated, skipped or failed, and has Confirm / Abort buttons.
 ###2026.10.29
 - Now called "Unraid Auto Updater", release build v1.0.0 (shown in the page, in Discord messages and in the README).
 - Unraid OS: automatic install and optional automatic reboot. DEFAULT IS UNCHANGED: check and notify only. Install modes need your explicit confirmation, a maintenance window and a waiting period; stable releases only unless you allow more; a reboot is postponed during a parity check or rebuild; one automatic attempt per version; verified after the reboot.

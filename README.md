@@ -1,5 +1,7 @@
 # Unraid Auto Updater (build v1.0.0)
 
+The logo (`assets/icon.png`) is shown beside the title on the dashboard, as the plugin icon on the Plugins page, and as the Discord webhook avatar.
+
 An update manager for Unraid: Docker containers, Unraid plugins and Unraid OS update detection, with scheduling, safety checks, history and Discord notifications. It only uses Unraid's own update mechanisms; it never bypasses Unraid's checks.
 
 **Install / update URL**
@@ -89,6 +91,32 @@ Safeguards for the automatic modes:
 - the reboot (stock `/sbin/reboot -n`, the command the Reboot button uses) is postponed while a parity check, sync or rebuild is running or the array is in an unusual state, retried every 30 minutes inside the window, and happens at most once per version;
 - notifications (Unraid + Discord) are sent before the reboot; after the reboot the running version is compared with the expected one and the result is recorded (history, notification, Discord);
 - one automatic attempt per version: a failed install is not retried by itself and never reboots.
+
+### Pre-OS maintenance workflow
+
+An OS install (automatic, or from the buttons on the Unraid OS tab) can be preceded by a controlled maintenance run. It reuses the normal plugin and Docker updaters (same safety checks, history and notifications), it is not a second updater:
+
+1. a fresh OS check finds the release;
+2. *(optional notice)* "pre-OS maintenance started" (Unraid + Discord);
+3. **plugins** are updated first (only plugins whose policy is *Auto update*, or every non-ignored plugin if you choose; the plugin safety validation still applies; this plugin never updates itself);
+4. **Docker containers** are updated next, only if enabled (only containers set to *Auto update*; *critical* containers are never included);
+5. the results are checked: required steps must have succeeded, then the system is re-checked (array state, free space on the flash drive, all plugin files readable, Docker responding if it was used);
+6. *(optional)* the workflow pauses and waits for your **Confirm** (or **Abort**) on the Unraid OS tab, for up to 24 hours;
+7. only then the OS update is installed (and the server rebooted if, and only if, you chose that mode or button).
+
+Any failed required step, failed system check or abort stops the workflow before the OS is touched, records the reason (history, dashboard, Unraid notification, Discord) and lists what was updated, skipped or failed. A job that dies midway is recorded as *interrupted* and never resumed blindly. One lock prevents overlapping jobs. The OS tab dialog lets you tick or untick the plugin/Docker steps for a manual install.
+
+| Setting (Settings → Unraid OS → Before an OS update) | Default |
+|---|---|
+| Update plugins before the OS update | On |
+| Require successful plugin updates | On |
+| Which plugins | Only those set to Auto update |
+| Update Docker containers before the OS update | **Off** |
+| Require successful Docker updates | On (applies only when Docker updates are on) |
+| Ask for confirmation before the OS is installed | Off (an automatic mode is already confirmed once in Settings; manual installs show a confirmation dialog) |
+| Notify when the workflow starts | On |
+
+The workflow only ever runs as part of an OS install, which itself is opt-in; in the default *notify only* mode nothing changes.
 
 There is no automatic rollback. Unraid keeps the previous release on the flash drive: **Tools → Update OS → Restore**. The Unraid OS tab also has manual *Install update*, *Install and reboot* and *Reboot now* buttons (each with a confirmation).
 

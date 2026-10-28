@@ -64,6 +64,7 @@ function dau_defaults() {
       'delay_days'    => 7,             // wait this long after a release is first seen
       'stable_only'   => true,          // never auto-install -rc / beta / next releases
       'window'        => ['enabled' => true, 'days' => [0], 'start' => '03:00', 'end' => '05:00'],
+      'pre'           => ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto'],   // pre-OS workflow, see workflow.php
     ],
     'discord' => [
       'enabled'    => false,
@@ -167,6 +168,7 @@ function dau_os_spec() {
   return dau_sched_spec() + [
     'check_enabled' => ['bool'], 'mode' => ['enum', ['notify', 'install', 'install_reboot']], 'confirmed' => ['enum', ['', 'install', 'install_reboot']],
     'delay_days' => ['int', 0, 90], 'stable_only' => ['bool'], 'window' => ['obj', dau_window_spec()],
+    'pre' => ['obj', ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]]],
   ];
 }
 

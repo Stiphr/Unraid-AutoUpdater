@@ -2,14 +2,18 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.29">
+<!ENTITY version "2026.10.29a">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/DockerAutoUpdate" min="6.9.0" icon="refresh">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/DockerAutoUpdate" min="6.9.0" icon="docker.autoupdate.png">
 
 <CHANGES>
+###2026.10.29a
+- Pre-OS maintenance workflow: before an Unraid OS update is installed, plugins (and optionally Docker containers) are updated, the result is verified and the system is re-checked. The OS update only proceeds if the required steps succeeded; optional confirmation step, abort at any time, notifications on the dashboard, Unraid and Discord. Docker updates before the OS are OFF by default.
+- The logo is shown beside the title on the dashboard and as the plugin's icon on the Plugins page (installed locally, restored at every boot).
+- The Unraid OS tab shows the components that were updated, skipped or failed, and has Confirm / Abort buttons.
 ###2026.10.29
 - Now called "Unraid Auto Updater", release build v1.0.0 (shown in the page, in Discord messages and in the README).
 - Unraid OS: automatic install and optional automatic reboot. DEFAULT IS UNCHANGED: check and notify only. Install modes need your explicit confirmation, a maintenance window and a waiting period; stable releases only unless you allow more; a reboot is postponed during a parity check or rebuild; one automatic attempt per version; verified after the reboot.
@@ -47,17 +51,17 @@
 <FILE Name="&emhttp;/DockerAutoUpdate.page" Mode="0644">
 <INLINE><![CDATA[Menu="Utilities"
 Title="Unraid Auto Updater"
-Icon="fa-refresh"
+Icon="docker.autoupdate.png"
 ---
 <?php
 $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/assets/app.js');
 ?>
 <link rel="stylesheet" href="/plugins/docker.autoupdate/assets/app.css<?=$dau_v?>">
 <div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
-<script>window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
+<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/images/docker.autoupdate.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
 <script src="/plugins/docker.autoupdate/assets/app.js<?=$dau_v?>"></script>
 ]]></INLINE>
-<SHA256>962e6c449f8b56461fb5ae8d44eb582324081b261560ba6e1a062ffd4ee78a80</SHA256>
+<SHA256>e5467ffdcda48ecf70487da50993208b99a516b344c0b1abfa07676a748d2acf</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/lib.php" Mode="0644">
@@ -75,7 +79,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/as
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.29');   // plugin file version (date based; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.29a');   // plugin file version (date based; Unraid compares it as a string)
 define('DAU_BUILD',     'v1.0.0');     // release label shown to people
 define('DAU_NAME',      'Unraid Auto Updater');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/docker.autoupdate');
@@ -323,13 +327,13 @@ function dau_valid_plg($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A
 
 } // DAU_LIB_LOADED
 
-foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'jobs'] as $__m) {
+foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'workflow', 'jobs'] as $__m) {
   $__f = __DIR__ . '/' . $__m . '.php';
   if (is_file($__f)) require_once $__f;
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>c0e2d3324aaf9c18eb4d54d081d358fad3752da2b9fc040cabad8bcb6025abed</SHA256>
+<SHA256>f74cf308674619e3a17f57d082bc6f54a3622ca668ec676aba65e11701705c61</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -399,6 +403,7 @@ function dau_defaults() {
       'delay_days'    => 7,             // wait this long after a release is first seen
       'stable_only'   => true,          // never auto-install -rc / beta / next releases
       'window'        => ['enabled' => true, 'days' => [0], 'start' => '03:00', 'end' => '05:00'],
+      'pre'           => ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto'],   // pre-OS workflow, see workflow.php
     ],
     'discord' => [
       'enabled'    => false,
@@ -502,6 +507,7 @@ function dau_os_spec() {
   return dau_sched_spec() + [
     'check_enabled' => ['bool'], 'mode' => ['enum', ['notify', 'install', 'install_reboot']], 'confirmed' => ['enum', ['', 'install', 'install_reboot']],
     'delay_days' => ['int', 0, 90], 'stable_only' => ['bool'], 'window' => ['obj', dau_window_spec()],
+    'pre' => ['obj', ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]]],
   ];
 }
 
@@ -667,7 +673,7 @@ function dau_export_config() {
   return ['exported_at' => dau_ts_iso(dau_now()), 'plugin_version' => DAU_VERSION, 'secrets_included' => false, 'config' => $cfg];
 }
 ]]></INLINE>
-<SHA256>d4919a3b68cc6208bb9539b43aaedd8913fdac7962ebd7d1a0d0d830679364e7</SHA256>
+<SHA256>14246b0d543c8ca828353d4b187ae345c57c5855704c9ad60c954c06c8ab1dde</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/schedule.php" Mode="0644">
@@ -865,7 +871,9 @@ function dau_state_defaults() {
                   'pending' => null,        // ['from','to','at','reboot'] installed, waiting for a reboot
                   'attempted' => null,      // ['version','result','reason','at']: one automatic attempt per version
                   'rebooted_for' => '',     // target version an automatic reboot was already started for
-                  'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null],
+                  'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null,
+                  'workflow' => null,       // pre-OS workflow in progress / waiting for a confirmation (see workflow.php)
+                  'last_report' => null],
     'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat],
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];
@@ -1000,7 +1008,7 @@ function dau_recover_interrupted(array &$st, $max) {
   return $c;
 }
 ]]></INLINE>
-<SHA256>52e69d7b6f0af03a4cf8a6c951208915f0d2b46e275b11e7ae37a68667d93931</SHA256>
+<SHA256>7496ecf0ea383e60252e8c91635f5c4be5806162a82f03bf7f84633e65ac1349</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/discord.php" Mode="0644">
@@ -1150,6 +1158,11 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_rebooting'    => ['🔄', 'Rebooting to finish the OS update', 0xE67E22],
     'os_reboot_blocked' => ['⚠️', 'Reboot postponed', 0xE67E22],
     'os_install_failed' => ['❌', 'OS update failed', 0xE74C3C],
+    'os_workflow_started' => ['🧰', 'Pre-OS maintenance started', 0x3498DB],
+    'os_workflow_done' => ['✅', 'Pre-OS checks passed', 0x2ECC71],
+    'os_awaiting'     => ['⏸️', 'OS update waiting for your confirmation', 0xF1C40F],
+    'os_prereq_failed' => ['❌', 'OS update stopped: a prerequisite failed', 0xE74C3C],
+    'os_aborted'      => ['⏹️', 'OS update aborted', 0xE67E22],
     'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
     'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
@@ -1161,6 +1174,7 @@ function dau_discord_event_embed(array $ev, $server) {
   if (!empty($ev['verification'])) $f[] = dau_field('Verification', dau_clean_text($ev['verification'], 300), false);
   if (!empty($ev['stage'])) $f[] = dau_field('Failed at', dau_clean_text($ev['stage'], 100));
   if (!empty($ev['reason'])) $f[] = dau_field($kind === 'available' ? 'Pending because' : 'Reason', dau_clean_text($ev['reason'], 500), false);
+  if (!empty($ev['detail'])) $f[] = dau_field('Components', "```\n" . str_replace('```', "'''", dau_clean_text($ev['detail'], 700)) . "\n```", false);
   if (!empty($ev['error'])) $f[] = dau_field('Error', "```\n" . str_replace('```', "'''", dau_clean_text($ev['error'], 700)) . "\n```", false);
   if (!empty($ev['retry'])) $f[] = dau_field('Retry', dau_clean_text($ev['retry'], 200), false);
   if (!empty($ev['log'])) $f[] = dau_field('Log', "```\n" . str_replace('```', "'''", dau_clean_text($ev['log'], 600)) . "\n```", false);
@@ -1225,7 +1239,7 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 function dau_event_toggle($kind) {
   switch ($kind) {
     case 'updated': case 'os_installed': case 'os_verified': return 'success';
-    case 'failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
+    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
@@ -1234,7 +1248,7 @@ function dau_discord_wants(array $dc, array $ev) {
   if (empty($dc['enabled']) || !empty($ev['silent'])) return false;
   $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$ev['type']] ?? null;
   if (!$cat || empty($dc['events'][$cat])) return false;
-  if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked'], true)) return true;   // a pending reboot must never be missed
+  if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_workflow_started', 'os_workflow_done', 'os_awaiting', 'os_aborted'], true)) return true;   // a pending reboot must never be missed
   return !empty($dc['types'][dau_event_toggle($ev['kind'])]);
 }
 
@@ -1260,7 +1274,7 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];
@@ -1307,7 +1321,7 @@ function dau_discord_test(array &$st, $urlOverride = null) {
   return ['ok' => false, 'error' => $r['error']];
 }
 ]]></INLINE>
-<SHA256>c9cdf1a13af6958ce585d885f582363b963e4b27c82bcbd7f52a40a48617f67c</SHA256>
+<SHA256>d5f3d3eb0df64b6303cfe485a0c3765e94865f5b6e4a897b65c429777947bc6a</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/backup.php" Mode="0644">
@@ -2081,7 +2095,7 @@ function dau_os_plugin_entry() {
 
 /**
  * What would happen to the available OS version right now?
- * state: up_to_date | notify_only | not_confirmed | prerelease | blocked | waiting_delay | window_closed | staged | ready
+ * state: up_to_date | awaiting_confirmation | notify_only | not_confirmed | prerelease | blocked | waiting_delay | window_closed | staged | ready
  */
 function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   $o = $cfg['os']; $os = $st['os'];
@@ -2089,6 +2103,8 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   if ($latest === null || $latest === '') return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   $pend = $os['pending'] ?? null;
   if (is_array($pend) && ($pend['to'] ?? '') === $latest) return ['state' => 'staged', 'reason' => 'Installed, waiting for a reboot.', 'eta' => null];
+  $wf = $os['workflow'] ?? null;
+  if (is_array($wf) && ($wf['state'] ?? '') === 'awaiting_confirmation' && ($wf['version'] ?? '') === $latest) return ['state' => 'awaiting_confirmation', 'reason' => 'Prerequisites passed; waiting for your confirmation.', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
   if ($o['mode'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Automatic installation is off (notify only).', 'eta' => null];
   if ($o['confirmed'] !== $o['mode']) return ['state' => 'not_confirmed', 'reason' => 'The automatic mode was not confirmed.', 'eta' => null];
@@ -2171,7 +2187,154 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>bce2fe27d49a021e30ec39f540a24ecd28e5166bf9eb56a9302f076b893675b7</SHA256>
+<SHA256>fd63438529643482fce7242220c7a4d5303b272acc5c2ecbeaec28ad28ec4278</SHA256>
+</FILE>
+
+<FILE Name="&emhttp;/include/workflow.php" Mode="0644">
+<INLINE><![CDATA[<?php
+/*
+ * Unraid Auto Updater - pre-OS maintenance workflow.
+ * Before an Unraid OS update is installed (automatically or from the UI) the plugins - and, only if enabled, the Docker
+ * containers - are brought up to date, the result is verified and the system is re-checked. The OS install runs only when
+ * every REQUIRED step succeeded. It reuses dau_job_plugins() / dau_job_docker() (no second updater) and never reboots by itself.
+ *
+ * state.os.workflow: null | {state: running|awaiting_confirmation, version, started, reboot, manual}
+ * state.os.last_report: the outcome of the latest run (shown in the UI, sent to Discord).
+ */
+
+const DAU_WORKFLOW_TTL = 86400;   // a paused workflow waits this long for a confirmation
+
+function dau_os_pre_defaults() {
+  return ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto'];
+}
+
+function dau_os_pre_spec() {
+  return ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]];
+}
+
+/** Containers the workflow may update: policy "auto", has an update, not "critical" (those always need an explicit approval). */
+function dau_os_pre_containers(array $cfg) {
+  $out = [];
+  foreach ((dau_containers() ?? []) as $c) {
+    $cc = dau_container_cfg($cfg, $c['name']);
+    if ($c['update'] !== true || !$c['managed'] || $cc['policy'] !== 'auto' || !empty($cc['critical'])) continue;
+    if (!empty($cfg['global']['skip_stopped']) && $c['state'] !== 'running') continue;
+    $out[] = $c['name'];
+  }
+  return $out;
+}
+
+/** Re-check the system after the updates. Returns ['ok'=>bool,'issues'=>[string]]. */
+function dau_os_health(array $cfg, $needDocker) {
+  $issues = [];
+  $a = dau_os_array_state();
+  if (!$a['ok']) $issues[] = 'The array state could not be read.';
+  elseif (!in_array($a['state'], ['STARTED', 'STOPPED'], true)) $issues[] = 'The array is in state ' . $a['state'] . '.';
+  $free = dau_os_boot_free_mb();
+  if ($free < 600) $issues[] = 'Only ' . $free . ' MB free on the flash drive (600 MB needed).';
+  foreach (dau_plugins_installed() as $f => $p) if ($p['version'] === '') $issues[] = "Plugin $f could not be read after the updates.";
+  if ($needDocker && dau_containers() === null) $issues[] = 'The Docker service is not responding.';
+  if (dau_stop_requested()) $issues[] = 'Stopped by the user.';
+  return ['ok' => !$issues, 'issues' => $issues];
+}
+
+function dau_os_wf_history(array $J, $result, $detail, $started) {
+  dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => $result, 'started' => $started, 'finished' => dau_now(), 'trigger' => $J['trigger'],
+    'error' => $result === 'failed' || $result === 'aborted' ? $detail : '', 'message' => $result === 'ok' || $result === 'waiting' ? $detail : ''], $J['cfg']['history']['max_entries']);
+}
+
+/**
+ * Run the prerequisites. opt: manual, reboot, plugins/docker (null = use settings), skip_pre (already done, only re-check).
+ * Returns 'proceed' (install now), 'wait' (paused for a confirmation) or 'stop' (the OS update must not continue).
+ */
+function dau_os_workflow(array &$J, $latest, array $opt) {
+  $cfg = $J['cfg']; $pre = $cfg['os']['pre']; $started = dau_now();
+  $manual = !empty($opt['manual']);
+  $wantP = !empty($opt['skip_pre']) ? false : ($opt['plugins'] ?? $pre['plugins']);
+  $wantD = !empty($opt['skip_pre']) ? false : ($opt['docker'] ?? $pre['docker']);
+  $needConfirm = !$manual && !empty($pre['confirm']) && empty($opt['skip_pre']);
+  if (!$wantP && !$wantD && !$needConfirm && empty($opt['skip_pre'])) return 'proceed';       // nothing configured: classic behaviour
+
+  $inst = $J['st']['os']['installed'] ?? dau_os_version();
+  $os =& $J['st']['os'];
+  $os['workflow'] = ['state' => 'running', 'version' => $latest, 'started' => $started, 'reboot' => !empty($opt['reboot']), 'manual' => $manual];
+  dau_state_save($J['st']);
+  if ($pre['notify'] && empty($opt['skip_pre'])) {
+    $steps = array_filter([$wantP ? 'plugins' : null, $wantD ? 'Docker containers' : null]);
+    $J['events'][] = dau_ev('os', 'Unraid OS', 'os_workflow_started', ['installed' => $inst, 'available' => $latest, 'reason' => 'Updating ' . ($steps ? implode(' and then ', $steps) : 'nothing') . ' first, then re-checking the system.']);
+  }
+  $rep = ['version' => $latest, 'at' => $started, 'result' => 'ok', 'plugins' => null, 'docker' => null, 'health' => null, 'issues' => []];
+  $fail = function ($result, $why) use (&$J, &$rep, $latest, $manual, $started, $inst) {
+    $J['st']['os']['workflow'] = null;
+    $rep['result'] = $result; $rep['issues'][] = $why; $J['st']['os']['last_report'] = $rep;
+    if ($result === 'failed' && !$manual) $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'failed', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
+    if ($result === 'failed') dau_stats_record($J['st'], 'os', false, 0);
+    $J['events'][] = dau_ev('os', 'Unraid OS', $result === 'aborted' ? 'os_aborted' : 'os_prereq_failed', ['installed' => $inst, 'available' => $latest, 'error' => $result === 'failed' ? $why : '', 'reason' => $result === 'aborted' ? $why : '',
+      'detail' => dau_os_report_text($rep), 'next' => 'The Unraid OS update was NOT installed. Fix the problem and start it again from the Unraid OS tab' . ($manual ? '.' : ' (an automatic attempt is made once per version).')]);
+    dau_os_wf_history($J, $result, $why, $started);
+    dau_log($result === 'failed' ? 'error' : 'warn', 'os', 'Unraid OS', 'prerequisites', $result, $why);
+    dau_state_save($J['st']);
+    return 'stop';
+  };
+
+  if ($wantP) {
+    dau_phase('Before the OS update: updating plugins');
+    $b = $J['sum']['plugins'];
+    dau_job_plugins($J, ['update' => true, 'pre' => $pre['scope']]);
+    $a = $J['sum']['plugins'];
+    $rep['plugins'] = ['updated' => $a['updated'] - $b['updated'], 'failed' => $a['failed'] - $b['failed'], 'skipped' => $a['skipped'] - $b['skipped']];
+    if (dau_stop_requested()) return $fail('aborted', 'Aborted by the user during the plugin updates.');
+    if ($rep['plugins']['failed'] > 0 && !empty($pre['require_plugins'])) return $fail('failed', $rep['plugins']['failed'] . ' plugin update(s) failed and successful plugin updates are required.');
+  }
+  if ($wantD) {
+    dau_phase('Before the OS update: updating Docker containers');
+    $names = dau_os_pre_containers($cfg);
+    $rep['docker'] = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'selected' => count($names)];
+    if ($names) {
+      $b = $J['sum']['docker'];
+      dau_job_docker($J, ['names' => $names, 'update' => true, 'manual' => true]);
+      $a = $J['sum']['docker'];
+      $rep['docker'] = ['updated' => $a['updated'] - $b['updated'], 'failed' => $a['failed'] - $b['failed'], 'skipped' => $a['skipped'] - $b['skipped'], 'selected' => count($names)];
+    }
+    if (dau_stop_requested()) return $fail('aborted', 'Aborted by the user during the Docker updates.');
+    if ($rep['docker']['failed'] > 0 && !empty($pre['require_docker'])) return $fail('failed', $rep['docker']['failed'] . ' container update(s) failed and successful Docker updates are required.');
+  }
+  dau_phase('Before the OS update: checking the system');
+  $h = dau_os_health($cfg, $wantD);
+  $rep['health'] = $h['ok'] ? 'ok' : 'failed'; $rep['issues'] = $h['issues'];
+  if (!$h['ok']) {
+    if (dau_stop_requested()) return $fail('aborted', 'Aborted by the user.');
+    return $fail('failed', 'System check failed: ' . implode(' ', $h['issues']));
+  }
+  if ($needConfirm) {
+    $os['workflow'] = ['state' => 'awaiting_confirmation', 'version' => $latest, 'started' => dau_now(), 'reboot' => !empty($opt['reboot']), 'manual' => false];
+    $rep['result'] = 'waiting'; $os['last_report'] = $rep;
+    $J['events'][] = dau_ev('os', 'Unraid OS', 'os_awaiting', ['installed' => $inst, 'available' => $latest, 'detail' => dau_os_report_text($rep), 'next' => 'Open Unraid Auto Updater > Unraid OS and choose Confirm or Abort. Nothing has been installed.']);
+    dau_os_wf_history($J, 'waiting', 'Prerequisites passed; waiting for the confirmation to install ' . $latest . '.', $started);
+    dau_log('info', 'os', 'Unraid OS', 'prerequisites', 'waiting', 'waiting for confirmation');
+    dau_state_save($J['st']);
+    return 'wait';
+  }
+  $os['workflow'] = null; $os['last_report'] = $rep;
+  if (empty($opt['skip_pre'])) {
+    $J['events'][] = dau_ev('os', 'Unraid OS', 'os_workflow_done', ['installed' => $inst, 'available' => $latest, 'detail' => dau_os_report_text($rep), 'reason' => 'All required steps passed; installing the OS update now.']);
+    dau_os_wf_history($J, 'ok', dau_os_report_text($rep), $started);
+  }
+  dau_log('info', 'os', 'Unraid OS', 'prerequisites', 'ok', dau_os_report_text($rep));
+  dau_state_save($J['st']);
+  return 'proceed';
+}
+
+/** One readable block: what was updated, skipped or failed. */
+function dau_os_report_text(array $r) {
+  $line = function ($label, $x) { return $x === null ? "$label: not part of this workflow" : "$label: " . (int)$x['updated'] . ' updated, ' . (int)$x['failed'] . ' failed, ' . (int)$x['skipped'] . ' skipped'; };
+  $t = $line('Plugins', $r['plugins']) . "\n" . $line('Docker', $r['docker']);
+  if ($r['health'] !== null) $t .= "\nSystem check: " . $r['health'];
+  if (!empty($r['issues'])) $t .= "\nIssues: " . implode(' ', $r['issues']);
+  return $t;
+}
+]]></INLINE>
+<SHA256>9939aac5df42e097adaef45bcc8b270f115ccfcf17a7c5c74b5c4fbef2bfbd37</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/jobs.php" Mode="0644">
@@ -2281,7 +2444,8 @@ function dau_job_docker(array &$J, array $opts) {
 
 function dau_job_plugins(array &$J, array $opts) {
   $cfg = $J['cfg']; $pc = $cfg['plugins']; $now = dau_now();
-  $manual = !empty($opts['manual']); $names = $opts['names'] ?? null;
+  $pre = $opts['pre'] ?? null;      // pre-OS workflow: 'auto' = only plugins whose policy is auto, 'all' = every plugin that is not ignored; delay/window/master switch are bypassed
+  $manual = !empty($opts['manual']) || $pre !== null; $names = $opts['names'] ?? null;
   dau_phase('Checking plugins');
   $inst = dau_plugins_installed();
   $chk = dau_plugins_check_all($cfg, $inst);
@@ -2295,6 +2459,7 @@ function dau_job_plugins(array &$J, array $opts) {
   foreach ($chk['avail'] as $f => $latest) {
     if ($names !== null && !in_array($f, $names, true)) continue;
     $p = $inst[$f]; $policy = dau_plugin_policy($cfg, $f);
+    if ($pre !== null && ($p['self'] || $policy === 'ignore' || ($pre === 'auto' && $policy !== 'auto'))) continue;
     $ev = dau_plugin_eval($cfg, $J['st'], $p, $latest, $now, $manual);
     if ($ev['state'] === 'self' && !$manual) { /* still announce */ }
     if ($policy !== 'ignore' || $manual) {
@@ -2347,9 +2512,13 @@ function dau_job_os(array &$J, array $opts = []) {
   $J['st']['os']['deferred_at'] = 0;
   if (empty($opts['install']) || !$chk['ok']) return;
   $reboot = $manual ? !empty($opts['reboot']) : ($cfg['os']['mode'] === 'install_reboot');
+  if (!empty($opts['skip_pre']) && is_array($J['st']['os']['workflow'] ?? null)) $reboot = !empty($J['st']['os']['workflow']['reboot']);
   $e = dau_os_eval($cfg, $J['st'], $now, $manual);
   $latest = (string)$J['st']['os']['available'];
+  if (!empty($opts['skip_pre']) && $e['state'] === 'awaiting_confirmation') $e['state'] = 'ready';
   if ($e['state'] === 'ready') {
+    $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
+    if ($w !== 'proceed') return;
     dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS']);
     dau_mark_current($J['st'], 'os', 'Unraid OS', dau_now());
     $res = dau_os_install($cfg, $latest);
@@ -2403,13 +2572,13 @@ function dau_job_os(array &$J, array $opts = []) {
 function dau_job_finish(array &$J) {
   $cfg = $J['cfg']; $sum = $J['sum']; $ev = $J['events'];
   $failed = $sum['docker']['failed'] + $sum['plugins']['failed'];
-  foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified'], true)) $failed++;
+  foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified', 'os_prereq_failed'], true)) $failed++;
   $sum['status'] = $failed ? 'failed' : (($sum['docker']['skipped'] + $sum['plugins']['skipped']) ? 'warnings' : 'ok');
   $sum['trigger'] = $J['trigger'];
   /* Unraid's own notification center */
   $nu = $cfg['notify_unraid']; $sent = 0; $more = 0;
   foreach ($ev as $e) {
-    $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified'], true);   // reboots and failed installs are never silent
+    $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified', 'os_awaiting', 'os_prereq_failed', 'os_aborted'], true);   // reboots and failed installs are never silent
     if (!empty($e['silent']) || !empty($e['silent_native']) || (!$important && empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$e['type']]]))) continue;
     if ($sent >= 8) { $more++; continue; }
     $label = dau_type_label($e['type']) . ' ' . $e['name'];
@@ -2417,7 +2586,8 @@ function dau_job_finish(array &$J) {
             'retry_exhausted' => ['update failed, retries used up', 'alert'], 'blocked' => ['update not applied', 'warning'], 'skipped' => ['update skipped', 'normal'],
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
-            'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -2449,6 +2619,13 @@ function dau_job_main($action, array $o = []) {
     $max = $cfg['history']['max_entries'];
     $rec = dau_recover_interrupted($st, $max);
     $now = dau_now();
+    /* a pre-OS workflow whose job died (power loss, kill) is recorded as interrupted; a paused one expires */
+    $wf = $st['os']['workflow'] ?? null;
+    if (is_array($wf) && (($wf['state'] ?? '') === 'running' || $now - (int)($wf['started'] ?? 0) > DAU_WORKFLOW_TTL)) {
+      dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => ($wf['state'] ?? '') === 'running' ? 'interrupted' : 'aborted', 'started' => (int)$wf['started'], 'finished' => $now, 'trigger' => 'recovery',
+        'error' => ($wf['state'] ?? '') === 'running' ? 'The pre-OS workflow was interrupted. Nothing was installed; the next run starts from a fresh check.' : 'The confirmation for the OS update was not given within 24 hours.'], $max);
+      $st['os']['workflow'] = null; dau_state_save($st);
+    }
     $J = dau_job_new($action === 'tick' ? 'scheduled' : 'manual', $cfg, $st);
     /* result of an OS update that was waiting for a reboot (verified at boot, announced here once the network is up) */
     $announced = false;
@@ -2489,7 +2666,9 @@ function dau_job_main($action, array $o = []) {
     } elseif ($action === 'os') {
       dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'os_install') {
-      dau_job_os($J, ['manual' => true, 'install' => true, 'reboot' => !empty($o['reboot'])]);
+      dau_job_os($J, ['manual' => true, 'install' => true, 'reboot' => !empty($o['reboot']), 'pre_plugins' => $o['pre_plugins'] ?? null, 'pre_docker' => $o['pre_docker'] ?? null]);
+    } elseif ($action === 'os_confirm') {
+      dau_job_os($J, ['manual' => true, 'install' => true, 'skip_pre' => true]);
     }
     dau_job_finish($J);
     dau_progress(['running' => false, 'ts' => dau_now(), 'phase' => !empty($J['reboot']) ? 'Rebooting' : 'Done']);
@@ -2549,7 +2728,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>c5d6d317b571407ddf0d4aeacaa2fead03437d3229d5bb7e8d14a9f8367a4a1a</SHA256>
+<SHA256>bc97ca2344e47fe49f754ef5c1ed547a133615a447e17e86f399b296ffac1a69</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -2648,7 +2827,8 @@ switch ($action) {
     $av = $st['os']['available'];
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
-         'pending' => $st['os']['pending']]);
+         'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
+         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
   }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
@@ -2725,6 +2905,13 @@ switch ($action) {
     elseif ($what === 'os_install') {
       if (($_POST['confirm'] ?? '') !== '1') fail('Installing an OS update needs an explicit confirmation.');
       $args = [!empty($_POST['reboot']) && $_POST['reboot'] === '1' ? '--os-install-reboot' : '--os-install'];
+      foreach (['pre_plugins' => '--pre-plugins=', 'pre_docker' => '--pre-docker='] as $k => $flag) if (isset($_POST[$k]) && in_array($_POST[$k], ['0', '1'], true)) $args[] = $flag . $_POST[$k];
+    }
+    elseif ($what === 'os_confirm') {
+      if (($_POST['confirm'] ?? '') !== '1') fail('Installing an OS update needs an explicit confirmation.');
+      $st = dau_state_load(); $wf = $st['os']['workflow'] ?? null;
+      if (!is_array($wf) || ($wf['state'] ?? '') !== 'awaiting_confirmation') fail('No OS update is waiting for a confirmation.');
+      $args = ['--os-confirm'];
     }
     elseif ($what === 'docker' || $what === 'plugins') {
       $names = $json('names'); if (!$names) fail('Nothing selected');
@@ -2734,6 +2921,17 @@ switch ($action) {
     } else fail('Unknown job');
     if (!dau_spawn($args)) fail('Another job is already running.', 409);
     out(['ok' => true]);
+  }
+
+  case 'os_abort': {
+    /* abort the pre-OS workflow: a running job stops after its current step, a paused one is cancelled here */
+    if (dau_run_info()['running']) { @touch(DAU_STOPFLAG); out(['ok' => true, 'running' => true]); }
+    $st = dau_state_load(); $wf = $st['os']['workflow'] ?? null;
+    if (is_array($wf)) {
+      dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => 'aborted', 'started' => (int)$wf['started'], 'finished' => dau_now(), 'trigger' => 'manual', 'error' => 'Aborted by the user. Nothing was installed.'], dau_load_config()['history']['max_entries']);
+      $st['os']['workflow'] = null; dau_state_save($st);
+    }
+    out(['ok' => true, 'running' => false]);
   }
 
   case 'stop': { @touch(DAU_STOPFLAG); out(['ok' => true]); }
@@ -2759,7 +2957,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>1a32eb9aed20a1fe663eef494c5ba72b4620edfb76c2a457be3be6a1cd47bff9</SHA256>
+<SHA256>fecaad2e9ef0da5ebab21a95fdea3b05b54ec7586e85bd212960e73955fbb70d</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -2771,7 +2969,8 @@ switch ($action) {
  *   --update-docker=a,b       update these containers now (manual: policy, delay and window are bypassed)
  *   --update-plugins=a.plg,b  update these plugins now (after the usual safety validation)
  *   --os-check                check for an Unraid OS update (notify only)
- *   --os-install[-reboot]     install the available Unraid OS update now (manual; optionally reboot afterwards)
+ *   --os-install[-reboot]     install the available Unraid OS update now (manual; optionally reboot afterwards); --pre-plugins=0|1 --pre-docker=0|1 override the pre-OS steps
+ *   --os-confirm              continue an OS update that is waiting for its confirmation
  *   --install / --uninstall   boot-time setup / removal
  */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -2779,7 +2978,7 @@ require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
-$o = getopt('', ['tick', 'check', 'update-docker:', 'update-plugins:', 'os-check', 'os-install', 'os-install-reboot', 'install', 'uninstall']);
+$o = getopt('', ['tick', 'check', 'update-docker:', 'update-plugins:', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
 $list = function ($k) use ($o) { return isset($o[$k]) ? array_values(array_filter(array_map('trim', explode(',', (string)$o[$k])))) : []; };
 
 if (isset($o['install']))   { dau_install(); exit(0); }
@@ -2787,14 +2986,16 @@ if (isset($o['uninstall'])) { dau_uninstall(); exit(0); }
 if (isset($o['tick']))      exit(dau_job_main('tick'));
 if (isset($o['check']))     exit(dau_job_main('check'));
 if (isset($o['os-check']))  exit(dau_job_main('os'));
-if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' => false]));
-if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true]));
+$flag = function ($k) use ($o) { return isset($o[$k]) ? ($o[$k] === '1') : null; };     // absent = use the setting
+if (isset($o['os-confirm']))        exit(dau_job_main('os_confirm'));
+if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' => false, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
+if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
 if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name'))]));
 if (isset($o['update-plugins'])) exit(dau_job_main('plugins', ['names' => array_values(array_filter($list('update-plugins'), 'dau_valid_plg'))]));
 fwrite(STDERR, "usage: run.php --tick | --check | --update-docker=a,b | --update-plugins=a.plg | --os-check | --os-install | --os-install-reboot | --install | --uninstall\n");
 exit(64);
 ]]></INLINE>
-<SHA256>e233b6354bb4f3c783581a5e5f9c052fa26aea4c68350cb0737a62182c24eb18</SHA256>
+<SHA256>eb70c9279eb1d99ba30ab8cf34ad88c5e953dab574e8c8c5ab22cd5e46f0b679</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.css" Mode="0644">
@@ -2805,6 +3006,8 @@ exit(64);
 .dau .grow{flex:1 1 auto;min-width:0}.dau .muted{color:var(--muted)}.dau .sm{font-size:12.5px}.dau b{font-weight:600;color:var(--text)}
 .dau-loading{padding:40px;text-align:center;color:var(--muted)}
 .dau .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.dau .brand{display:flex;align-items:center;gap:12px;min-width:0}.dau .logo{width:40px;height:40px;border-radius:9px;flex:none;display:block}
+@media (max-width:600px){.dau .logo{width:32px;height:32px}.dau .title{font-size:17px}}
 .dau .title{font-size:20px;font-weight:600;letter-spacing:.02em}
 .dau .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dau .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
@@ -2861,7 +3064,7 @@ exit(64);
   .dau .drawer td{padding:0!important}
 }
 ]]></INLINE>
-<SHA256>be044581fa9dce06eb14b9e1f06e9c4b35377b074cb5c0b4e93efd7bfd231269</SHA256>
+<SHA256>9976a0f8d3029c3203ef8c5b2b554d0f23a14326d68dd9da93b574fe4b917c94</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.js" Mode="0644">
@@ -2958,7 +3161,7 @@ exit(64);
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
-    root.appendChild(h('div', { class: 'head' }, h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active'))),
+    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/docker.autoupdate/images/docker.autoupdate.png' + (window.DAU_IMGV || ''), alt: '', width: 40, height: 40, onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
@@ -3156,7 +3359,7 @@ exit(64);
 
   /* ---------- OS ---------- */
   var OSSTATE = { up_to_date: ['Up to date', 'ok'], notify_only: ['Notify only', ''], not_confirmed: ['Not confirmed', 'warn'], prerelease: ['Pre-release: manual only', 'warn'], blocked: ['Blocked', 'bad'],
-    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], ready: ['Ready', 'ok'] };
+    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
   function confirmOsInstall(reboot) {
     var o = S.os.os, m = modal(reboot ? 'Install Unraid ' + o.available + ' and reboot now?' : 'Install Unraid ' + o.available + ' now?');
     m.body.appendChild(h('p', null, 'Installed: ' + (S.os.installed || '?') + '  →  ' + o.available));
@@ -3164,9 +3367,25 @@ exit(64);
     m.body.appendChild(h('p', { class: 'muted' }, 'Read the release notes first and make sure you have a recent flash drive backup.' + (S.os.stable === false ? ' This is a PRE-RELEASE.' : '')));
     var rb = S.os.reboot, ar = S.os.array;
     if (reboot && rb && !rb.ok) m.body.appendChild(h('div', { class: 'banner bad' }, 'A reboot would be postponed right now: ' + rb.reason));
+    var pre = S.os.pre || {}, pp = null, pd = null;
+    if (!o.pending) {
+      pp = h('input', { type: 'checkbox', checked: !!pre.plugins }); pd = h('input', { type: 'checkbox', checked: !!pre.docker });
+      m.body.appendChild(h('div', { class: 'panel' }, h('b', null, 'Before the OS update'),
+        h('label', { class: 'switch' }, pp, 'Update plugins first (only those set to Auto update, safety-checked as usual)'),
+        h('label', { class: 'switch' }, pd, 'Update Docker containers first (' + (S.os.pre_containers || 0) + ' set to Auto update, critical ones excluded)'),
+        h('div', { class: 'muted sm' }, 'The OS update only starts if the required steps succeeded and the system check passes. You can abort at any time before the install.')));
+    }
     var cb = h('input', { type: 'checkbox' });
     m.body.appendChild(h('label', { class: 'switch' }, cb, 'I have read this and want to continue'));
-    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('os_install', [], 'OS update started', { confirm: '1', reboot: reboot ? '1' : '0' }); } }, reboot ? 'Install and reboot' : 'Install');
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); var x = { confirm: '1', reboot: reboot ? '1' : '0' }; if (pp) { x.pre_plugins = pp.checked ? '1' : '0'; x.pre_docker = pd.checked ? '1' : '0'; } runJob('os_install', [], 'OS update started', x); } }, reboot ? 'Install and reboot' : 'Install');
+    cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+  function confirmWorkflow(wf) {
+    var m = modal('Install Unraid ' + wf.version + (wf.reboot ? ' and reboot?' : '?'));
+    m.body.appendChild(h('p', { class: 'muted' }, 'The prerequisites passed. This installs the OS update through Unraid\'s own installer' + (wf.reboot ? ' and then REBOOTS the server (never during a parity check).' : '; it becomes active when you reboot.') + ' The previous release stays on the flash drive.'));
+    var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I want to continue'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('os_confirm', [], 'OS update started', { confirm: '1' }); } }, 'Install');
     cb.addEventListener('change', function () { go.disabled = !cb.checked; });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
@@ -3176,6 +3395,16 @@ exit(64);
     var o = S.os.os, mode = S.os.mode, es = S.os.eval || { state: 'up_to_date', reason: '' }, st = OSSTATE[es.state] || [es.state, ''];
     var modeText = { notify: 'Check and notify only. Nothing is installed and the server is never rebooted.', install: 'Install automatically, then wait for you to reboot.', install_reboot: 'Install automatically and reboot automatically (inside the maintenance window, never during a parity check).' }[mode] || '';
     w.appendChild(h('div', { class: 'banner' + (mode === 'notify' ? '' : ' warn') }, h('b', null, 'Mode: '), modeText, ' Change it in Settings.'));
+    var wf = S.os.workflow, rp = S.os.report;
+    if (wf && wf.state === 'awaiting_confirmation') {
+      w.appendChild(h('div', { class: 'banner warn' }, h('b', null, 'Ready to install Unraid ' + wf.version + '. '), 'The plugins were updated and the system check passed. Nothing has been installed yet.',
+        h('div', { class: 'actions' }, h('button', { class: 'btn pri', disabled: S.ov.run.running, onclick: function () { confirmWorkflow(wf); } }, wf.reboot ? 'Confirm: install and reboot…' : 'Confirm: install…'),
+          h('button', { class: 'btn', onclick: function () { act('os_abort', {}, 'Workflow cancelled. Nothing was installed.').then(function () { load('os'); }); } }, 'Abort'))));
+    } else if (wf && wf.state === 'running') {
+      w.appendChild(h('div', { class: 'banner' }, 'Pre-OS maintenance is running (plugins, then Docker if enabled). The OS update starts only if it succeeds. ', h('button', { class: 'btn sm danger', onclick: function () { act('os_abort', {}, 'Abort requested: stops after the current step. Nothing will be installed.'); } }, 'Abort')));
+    }
+    if (rp) w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Last pre-OS workflow'), h('div', { class: 'inl' }, h('span', { class: 'badge ' + ({ ok: 'ok', failed: 'bad', aborted: 'warn', waiting: 'warn' }[rp.result] || '') }, rp.result === 'ok' ? 'passed' : rp.result), h('span', { class: 'muted' }, 'for ' + rp.version + ' · ' + when(rp.at))),
+      h('pre', { class: 'log' }, 'Plugins: ' + (rp.plugins ? rp.plugins.updated + ' updated, ' + rp.plugins.failed + ' failed, ' + rp.plugins.skipped + ' skipped' : 'not part of this workflow') + '\nDocker: ' + (rp.docker ? rp.docker.updated + ' updated, ' + rp.docker.failed + ' failed, ' + rp.docker.skipped + ' skipped' : 'not part of this workflow') + (rp.health ? '\nSystem check: ' + rp.health : '') + (rp.issues && rp.issues.length ? '\nIssues: ' + rp.issues.join(' ') : ''))));
     if (o.pending) w.appendChild(h('div', { class: 'banner warn' }, 'Unraid ' + o.pending.to + ' is installed and waiting for a reboot (installed ' + when(o.pending.at) + '). After the reboot this plugin checks that the new release is running.'));
     w.appendChild(h('div', { class: 'cards' }, card('Installed', S.os.installed || '?'), card('Available', o.available || 'None', o.available ? 'since ' + when(o.first_seen) + (S.os.stable === false ? ' · pre-release' : '') : 'Up to date', o.available ? 'hot' : ''), card('Last check', ago(o.last_check), o.last_error ? 'Failed: ' + o.last_error : 'OK', o.last_error ? 'bad' : '')));
     if (o.available) {
@@ -3248,7 +3477,13 @@ exit(64);
     w.appendChild(section('Unraid OS', h('div', null,
       h('div', { class: 'grid2' },
         h('div', null, fSwitch('Check for OS updates on a schedule', 'os.check_enabled', 'Needed for everything below.'), fSched('Schedule', 'os'), osModeField()),
-        h('div', null, fNum('Wait after a release appears', 'os.delay_days', 0, 90, 'Counted from when the release was first seen. Applies to automatic installs only.', 'days'), fSwitch('Stable releases only', 'os.stable_only', 'Never install -rc, beta or next releases automatically.'), fWindow('Maintenance window (required for automatic installs)', 'os.window'))))));
+        h('div', null, fNum('Wait after a release appears', 'os.delay_days', 0, 90, 'Counted from when the release was first seen. Applies to automatic installs only.', 'days'), fSwitch('Stable releases only', 'os.stable_only', 'Never install -rc, beta or next releases automatically.'), fWindow('Maintenance window (required for automatic installs)', 'os.window'))),
+      h('h4', null, 'Before an OS update (pre-OS maintenance)'),
+      h('div', { class: 'grid2' },
+        h('div', null, fSwitch('Update plugins before the OS update', 'os.pre.plugins', 'Only plugins set to Auto update (or every non-ignored plugin, below). Each update is safety-checked.'), fSwitch('Require successful plugin updates', 'os.pre.require_plugins', 'If a plugin update fails, the OS update is NOT installed.'),
+          (function () { var s = h('select', { onchange: function () { d.os.pre.scope = s.value; } }, h('option', { value: 'auto' }, 'Only plugins set to Auto update'), h('option', { value: 'all' }, 'Every plugin that is not ignored')); s.value = d.os.pre.scope; return h('div', { class: 'fld' }, h('label', null, 'Which plugins'), s); })()),
+        h('div', null, fSwitch('Update Docker containers before the OS update', 'os.pre.docker', 'OFF by default. Only containers set to Auto update; critical containers are never included.'), fSwitch('Require successful Docker updates', 'os.pre.require_docker', 'If a container update fails, the OS update is NOT installed.'),
+          fSwitch('Ask for confirmation before the OS is installed', 'os.pre.confirm', 'The workflow pauses after the prerequisites and waits for you (Unraid OS tab). Manual installs are already confirmed.'), fSwitch('Notify when the workflow starts', 'os.pre.notify'))))));
     var dc = S.ov.config.discord;
     var url = h('input', { type: 'password', placeholder: dc.webhook_set ? 'A webhook is saved (hidden). Paste a new one to replace it.' : 'https://discord.com/api/webhooks/…', style: 'width:100%;max-width:520px', autocomplete: 'off' });
     var ev = function (k, l) { return fSwitch(l, 'discord.events.' + k); }, ty = function (k, l) { return fSwitch(l, 'discord.types.' + k); };
@@ -3305,7 +3540,516 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); });
 })();
 ]]></INLINE>
-<SHA256>02293b1d6259da524f077976f07935113a2827e2f794cd341b404f11a2fc9001</SHA256>
+<SHA256>5d92e33483f47386a4de445bf8d74787752e8e1615a0abe917eb312fa8fa31c9</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+mkdir -p &emhttp;/images
+echo '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' | base64 -d > /tmp/dau-icon.png 2>/dev/null
+if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = "d309e698009737841953395dac307dd1c5ad1bd8a415ef3353e413b0e350d6b4" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/docker.autoupdate.png; chmod 644 &emhttp;/images/docker.autoupdate.png; else echo "icon check failed, skipped"; fi
+rm -f /tmp/dau-icon.png
+</INLINE>
 </FILE>
 
 <FILE Run="/bin/bash">

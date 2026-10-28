@@ -94,7 +94,7 @@ function dau_os_plugin_entry() {
 
 /**
  * What would happen to the available OS version right now?
- * state: up_to_date | notify_only | not_confirmed | prerelease | blocked | waiting_delay | window_closed | staged | ready
+ * state: up_to_date | awaiting_confirmation | notify_only | not_confirmed | prerelease | blocked | waiting_delay | window_closed | staged | ready
  */
 function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   $o = $cfg['os']; $os = $st['os'];
@@ -102,6 +102,8 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   if ($latest === null || $latest === '') return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   $pend = $os['pending'] ?? null;
   if (is_array($pend) && ($pend['to'] ?? '') === $latest) return ['state' => 'staged', 'reason' => 'Installed, waiting for a reboot.', 'eta' => null];
+  $wf = $os['workflow'] ?? null;
+  if (is_array($wf) && ($wf['state'] ?? '') === 'awaiting_confirmation' && ($wf['version'] ?? '') === $latest) return ['state' => 'awaiting_confirmation', 'reason' => 'Prerequisites passed; waiting for your confirmation.', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
   if ($o['mode'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Automatic installation is off (notify only).', 'eta' => null];
   if ($o['confirmed'] !== $o['mode']) return ['state' => 'not_confirmed', 'reason' => 'The automatic mode was not confirmed.', 'eta' => null];
