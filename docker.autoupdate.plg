@@ -2,19 +2,19 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.11.02">
+<!ENTITY version "2026.11.03">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/docker.autoupdate.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="refresh">
 
 <CHANGES>
-###2026.11.02
-- Renamed: this plugin is now called Unraid Swiss Manager (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
+###2026.11.03
+- Renamed: Docker Auto Update is now Unraid Swiss Manager (unraid-swiss-manager). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
 </CHANGES>
 
 <FILE Run="/bin/bash">
 <INLINE><![CDATA[echo "Docker Auto Update is now Unraid Swiss Manager. Installing the new plugin..."
-/usr/local/sbin/plugin install https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg
+/usr/local/sbin/plugin install https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-swiss-manager.plg
 # this entry is registered by the update that is running right now, so it is removed a moment later
 nohup setsid bash -c 'sleep 20; /usr/local/sbin/plugin remove docker.autoupdate.plg' > /dev/null 2>&1 &
 echo "The old docker.autoupdate entry will disappear in a few seconds."

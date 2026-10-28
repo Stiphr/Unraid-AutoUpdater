@@ -26,7 +26,7 @@ function dau_http_post($url, $body, $timeout = 10) {
   }
   $res = ['code' => 0, 'headers' => [], 'body' => '', 'error' => ''];
   $ca = is_file('/etc/ssl/certs/ca-certificates.crt') ? '/etc/ssl/certs/ca-certificates.crt' : null;
-  $ua = 'UnraidAutoUpdater/' . DAU_VERSION;
+  $ua = 'UnraidSwissManager/' . DAU_VERSION;
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
     $opts = [
