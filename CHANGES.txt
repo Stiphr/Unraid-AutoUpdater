@@ -1,0 +1,19 @@
+###2026.10.28b
+- Update manager: per-container policies (auto / notify only / ignore), update delay tracked per image digest, maintenance window, critical containers that need your approval.
+- Update preview with confirmation before manual (bulk) updates.
+- Post-update verification (image, running state, health) with clear results; a container without a health check is not treated as a failure.
+- Bounded retries for temporary pull errors only; old image removed only after a verified update (no more broad prune).
+- Optional pre-update backups (config / image / appdata) with retention.
+- Unraid plugin updates: detection, policies, delay, validation, recovery copy. Automatic installation is OFF by default.
+- Unraid OS update detection and notification only (never installs or reboots).
+- Discord webhook notifications (test button, per-category and per-type toggles, summary, rate-limit aware).
+- New dashboard: overview, Docker table, Plugins table, Unraid OS, Settings, Activity.
+- One dispatcher replaces one cron line per schedule; history, statistics, rotated log, export/import of settings.
+- Settings from earlier versions are migrated automatically (a backup config.v1.backup.json is kept).
+###2026.10.28a
+- Per-container schedules (Daily / Weekly / Bi-weekly / Monthly) with the global schedule as the default.
+- Per-container notification toggle, one notification per container update.
+- Dark grey UI matching the Unraid theme.
+- Plugin icon on the Plugins page now opens the settings page; update check via GitHub.
+###2026.10.28
+- Initial release.

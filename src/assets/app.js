@@ -1,0 +1,389 @@
+/* Docker Auto Update UI. Plain JS, no libraries; every string is inserted as text (never as HTML). */
+(function () {
+  'use strict';
+  var API = '/plugins/docker.autoupdate/include/api.php';
+  var root = document.getElementById('dau');
+  var S = { tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
+  var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var FREQ = [['6h', 'Every 6 hours'], ['12h', 'Every 12 hours'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every two weeks'], ['monthly', 'Monthly']];
+  var POL = [['auto', 'Auto update'], ['notify', 'Notify only'], ['ignore', 'Ignore']];
+  var DELAYS = [[0, 'Immediately'], [24, '24 hours'], [72, '3 days'], [168, '7 days']];
+  var STATE = {
+    external: ['Not managed by Unraid', ''], unknown: ['Status unknown', ''], up_to_date: ['Up to date', 'ok'], ignored: ['Ignored', ''], notify_only: ['Update available', 'acc'],
+    stopped: ['Skipped: stopped', 'warn'], approval: ['Needs your approval', 'warn'], no_identity: ['Waiting: digest unknown', 'warn'], waiting_delay: ['Waiting for delay', 'warn'],
+    retry_wait: ['Retry scheduled', 'warn'], retry_exhausted: ['Retries used up', 'bad'], window_closed: ['Waiting for window', 'warn'], ready: ['Ready to update', 'acc'],
+    blocked: ['Blocked', 'bad'], self: ['This plugin', '']
+  };
+
+  function h(tag, p) {
+    var e = document.createElement(tag); p = p || {};
+    for (var k in p) {
+      if (k === 'class') e.className = p[k];
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), p[k]);
+      else if (k === 'value') e.value = p[k];
+      else if (k === 'checked' || k === 'disabled' || k === 'selected') e[k] = !!p[k];
+      else if (p[k] !== null && p[k] !== undefined && p[k] !== false) e.setAttribute(k, p[k]);
+    }
+    for (var i = 2; i < arguments.length; i++) add(e, arguments[i]);
+    return e;
+  }
+  function add(e, c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(function (x) { add(e, x); }); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); }
+  function ago(ts) { if (!ts) return 'never'; var s = Math.max(0, S.ov ? S.ov.now - ts : Date.now() / 1000 - ts); if (s < 90) return 'just now'; if (s < 5400) return Math.round(s / 60) + ' min ago'; if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' d ago'; }
+  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
+  function dur(s) { s = Math.round(s || 0); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'; }
+  function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : '') }, msg); root.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
+
+  function api(action, data, post) {
+    var fd = new FormData(); fd.append('action', action);
+    if (post) fd.append('csrf_token', window.DAU_CSRF || '');
+    for (var k in (data || {})) fd.append(k, typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k]);
+    return fetch(API, { method: post ? 'POST' : 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
+      return r.json().catch(function () { return { error: 'Unexpected response (' + r.status + ')' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'Request failed (' + r.status + ')'; return j; });
+    }).catch(function () { return { error: 'Could not reach the server.' }; });
+  }
+  function act(action, data, okMsg) { return api(action, data, true).then(function (j) { if (j.error) toast(j.error, true); else if (okMsg) toast(okMsg); return j; }); }
+
+  /* ---------- loading ---------- */
+  function load(which) {
+    var jobs = [];
+    var want = which || S.tab;
+    jobs.push(api('overview').then(function (j) { if (!j.error) { S.ov = j; if (!S.draft) S.draft = JSON.parse(JSON.stringify(j.config)); } else S.err = j.error; }));
+    if (want === 'docker') jobs.push(api('docker').then(function (j) { S.docker = j; }));
+    if (want === 'plugins') jobs.push(api('plugins').then(function (j) { S.plugins = j; }));
+    if (want === 'os') jobs.push(api('os').then(function (j) { S.os = j; }));
+    if (want === 'activity') { jobs.push(api('history').then(function (j) { S.hist = j.rows || []; })); jobs.push(api('log').then(function (j) { S.log = j.log || ''; })); }
+    return Promise.all(jobs).then(render);
+  }
+  function startPoll() {
+    if (S.poll) return;
+    S.poll = setInterval(function () {
+      api('status').then(function (j) {
+        if (!j.run) return;
+        var was = S.ov && S.ov.run.running; S.ov.run = j.run;
+        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); load(); }
+        else renderRunBar();
+      });
+    }, 2000);
+  }
+  function runJob(what, names, okMsg) {
+    return act('run', { what: what, names: names || [] }, okMsg || 'Started.').then(function (j) {
+      if (j.ok) { S.ov.run = { running: true, progress: { phase: 'Starting' } }; render(); startPoll(); }
+    });
+  }
+
+  /* ---------- shell ---------- */
+  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['settings', 'Settings'], ['activity', 'Activity']];
+  var runBar = h('div');
+  function renderRunBar() {
+    clear(runBar);
+    var r = S.ov && S.ov.run; if (!r || !r.running) return;
+    var p = r.progress || {};
+    runBar.appendChild(h('div', { class: 'banner' }, h('div', { class: 'inl' }, h('b', null, 'Working: '), h('span', { class: 'grow' }, (p.phase || 'Running') + (p.total ? ' (' + (p.done || 0) + '/' + p.total + ')' : '')),
+      h('button', { class: 'btn sm danger', onclick: function () { act('stop', {}, 'Stop requested: the job ends after the current step.'); } }, 'Stop after current step')), h('div', { class: 'progress' }, h('i'))));
+  }
+  function render() {
+    clear(root);
+    if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
+    var c = S.ov.cards, busy = S.ov.run.running;
+    root.appendChild(h('div', { class: 'head' }, h('div', null, h('div', { class: 'title' }, 'Docker Auto Update'), h('div', { class: 'muted sm' }, 'Version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active'))),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
+    if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
+    if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
+    root.appendChild(runBar); renderRunBar();
+    var tabs = h('div', { class: 'tabs' });
+    TABS.forEach(function (t) {
+      var n = t[0] === 'docker' ? c.docker_updates : t[0] === 'plugins' ? c.plugin_updates : t[0] === 'os' && c.os_available ? 1 : 0;
+      tabs.appendChild(h('button', { class: 'tab' + (S.tab === t[0] ? ' on' : ''), onclick: function () { S.tab = t[0]; load(t[0]); } }, t[1], n ? h('span', { class: 'n' }, n) : null));
+    });
+    root.appendChild(tabs);
+    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, settings: vSettings, activity: vActivity }[S.tab]();
+    root.appendChild(body);
+  }
+
+  /* ---------- overview ---------- */
+  function card(k, v, s, cls) { return h('div', { class: 'card ' + (cls || '') }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), h('div', { class: 's' }, s || '')); }
+  function vOverview() {
+    var c = S.ov.cards, w = h('div');
+    w.appendChild(h('div', { class: 'cards' },
+      card('Containers', c.containers, c.docker_auto + ' auto-update'),
+      card('Docker updates', c.docker_updates, 'available now', c.docker_updates ? 'hot' : ''),
+      card('Plugins', c.plugins, c.plugin_updates + ' with updates', c.plugin_updates ? 'hot' : ''),
+      card('Unraid OS', c.os_installed || '?', c.os_available ? 'Update available: ' + c.os_available : (c.os_error ? 'Check failed' : 'Up to date'), c.os_available ? 'hot' : ''),
+      card('Recent failures', c.failures, 'in the last 20 actions', c.failures ? 'bad' : ''),
+      card('Last run', ago(c.last_run), c.last_result && c.last_result.status ? 'Result: ' + c.last_result.status : '')));
+    var nx = h('div');
+    if (!c.next.length) nx.appendChild(h('div', { class: 'muted' }, 'Nothing is scheduled. Turn on a schedule in Settings, or set a container to "Auto update".'));
+    c.next.forEach(function (n) { nx.appendChild(h('div', { class: 'inl' }, h('b', null, n.label), h('span', { class: 'muted' }, n.text + (n.count > 1 || n.label === 'Docker' ? ' · ' + n.count + ' container(s)' : '')), h('span', { class: 'grow' }), h('span', null, n.next ? when(n.next) : '-'))); });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Next scheduled checks'), nx));
+    var st = S.ov.stats;
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Statistics'), h('div', { class: 'grid2' }, ['docker', 'plugin'].map(function (t) {
+      var x = (st.by_type || {})[t] || {}; return h('div', null, h('b', null, t === 'docker' ? 'Docker' : 'Plugins'), h('div', { class: 'muted sm' }, (x.ok || 0) + ' updated · ' + (x.failed || 0) + ' failed · average ' + dur(x.avg_duration || 0)));
+    }))));
+    var d = S.ov.discord, cfg = S.ov.config.discord;
+    if (cfg.enabled) w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Discord'), h('div', { class: d.invalid || d.last_error ? 'badge bad' : 'badge ok' }, d.invalid ? 'Webhook rejected: save it again' : d.last_error ? 'Last send failed' : 'Connected'), h('span', { class: 'muted sm' }, ' last success: ' + ago(d.last_ok) + (d.last_error ? ' · ' + d.last_error : ''))));
+    w.appendChild(h('div', { class: 'muted sm' }, 'Checked: Docker ' + ago(S.ov.checked.docker) + ' · Plugins ' + ago(S.ov.checked.plugins) + ' · OS ' + ago(S.ov.checked.os)));
+    return w;
+  }
+
+  /* ---------- Docker ---------- */
+  function polSel(val, cb, allowDefault) {
+    var s = h('select', { onchange: function () { cb(s.value); } });
+    POL.forEach(function (p) { s.appendChild(h('option', { value: p[0], selected: p[0] === val }, p[1])); });
+    return s;
+  }
+  function shortState(r) {
+    var st = STATE[r.state] || [r.state, ''];
+    return h('span', { class: 'badge ' + st[1], title: r.reason || '' }, st[0]);
+  }
+  function rowMatches(r) {
+    if (S.q && (r.name + ' ' + r.image).toLowerCase().indexOf(S.q.toLowerCase()) < 0) return false;
+    switch (S.filter) {
+      case 'updates': return r.update === true;
+      case 'auto': return r.cfg.policy === 'auto'; case 'notify': return r.cfg.policy === 'notify'; case 'ignore': return r.cfg.policy === 'ignore';
+      case 'critical': return !!r.cfg.critical;
+      case 'problems': return r.last && r.last.result === 'failed' || r.state === 'retry_exhausted' || r.state === 'blocked';
+      case 'running': return r.run_state === 'running';
+    }
+    return true;
+  }
+  function vDocker() {
+    var w = h('div');
+    if (!S.docker) { w.appendChild(h('div', { class: 'dau-loading' }, 'Loading containers')); return w; }
+    var rows = S.docker.rows.filter(rowMatches);
+    var key = { name: function (r) { return r.name.toLowerCase(); }, update: function (r) { return r.update === true ? 0 : 1; }, policy: function (r) { return r.cfg.policy; }, state: function (r) { return r.state; }, last: function (r) { return -((r.last && r.last.ts) || 0); } }[S.sort];
+    rows.sort(function (a, b) { var x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+    var names = rows.map(function (r) { return r.name; }), selNames = names.filter(function (n) { return S.sel[n]; });
+    var q = h('input', { type: 'search', placeholder: 'Search…', value: S.q, oninput: function () { S.q = q.value; var p = q.selectionStart; render(); var n = root.querySelector('input[type=search]'); if (n) { n.focus(); n.setSelectionRange(p, p); } } });
+    var f = h('select', { onchange: function () { S.filter = f.value; render(); } }); [['all', 'All'], ['updates', 'Update available'], ['auto', 'Auto update'], ['notify', 'Notify only'], ['ignore', 'Ignored'], ['critical', 'Critical'], ['problems', 'Problems']].forEach(function (o) { f.appendChild(h('option', { value: o[0], selected: o[0] === S.filter }, o[1])); });
+    var so = h('select', { onchange: function () { S.sort = so.value; render(); } }); [['name', 'Sort: name'], ['update', 'Sort: updates first'], ['policy', 'Sort: policy'], ['state', 'Sort: status'], ['last', 'Sort: last update']].forEach(function (o) { so.appendChild(h('option', { value: o[0], selected: o[0] === S.sort }, o[1])); });
+    var bulk = h('select', { disabled: !selNames.length, onchange: function () { if (!bulk.value) return; var v = bulk.value; act('set_container', { names: selNames, data: { policy: v } }, 'Policy set for ' + selNames.length + ' container(s)').then(function () { load('docker'); }); } },
+      h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
+    var upd = h('button', { class: 'btn pri', disabled: S.ov.run.running || !selNames.length, onclick: function () { previewUpdate(selNames); } }, 'Update selected…');
+    var all = h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { previewUpdate(S.docker.rows.filter(function (r) { return r.update === true && r.managed; }).map(function (r) { return r.name; })); } }, 'Update all pending…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all));
+    var t = h('table', { class: 'resp' });
+    var all_cb = h('input', { type: 'checkbox', checked: names.length && selNames.length === names.length, onchange: function () { names.forEach(function (n) { S.sel[n] = all_cb.checked; }); render(); } });
+    t.appendChild(h('thead', null, h('tr', null, h('th', null, all_cb), h('th', null, 'Container'), h('th', null, 'Status'), h('th', null, 'Image'), h('th', null, 'Policy'), h('th', null, 'Schedule / delay'), h('th', null, 'Last update'), h('th', null, ''))));
+    var tb = h('tbody'); t.appendChild(tb);
+    if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: 8, class: 'muted' }, S.docker.docker_up ? 'No containers match.' : 'Docker is not running.')));
+    rows.forEach(function (r) {
+      var open = !!S.open[r.name];
+      tb.appendChild(h('tr', { class: 'row' + (open ? ' open' : '') },
+        h('td', null, h('input', { type: 'checkbox', checked: !!S.sel[r.name], onchange: function (e) { S.sel[r.name] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Container' }, r.icon && /^https?:\/\//.test(r.icon) ? h('img', { class: 'ico', src: r.icon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null, h('span', { class: 'nm' }, r.name), h('div', { class: 'img' }, r.run_state || '')),
+        h('td', { 'data-l': 'Status' }, shortState(r), r.cfg.critical ? h('span', { class: 'badge warn', title: 'Needs manual approval' }, ' critical') : null, r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null),
+        h('td', { 'data-l': 'Image' }, h('div', { class: 'img muted sm' }, r.image), r.update === true ? h('div', { class: 'digest' }, (r.local || '').slice(7, 19) + ' → ' + (r.remote || '').slice(7, 19)) : null),
+        h('td', { 'data-l': 'Policy' }, r.managed ? polSel(r.cfg.policy, function (v) { act('set_container', { names: [r.name], data: { policy: v } }).then(function () { load('docker'); }); }) : h('span', { class: 'muted' }, '-')),
+        h('td', { 'data-l': 'Schedule' }, h('div', { class: 'sm' }, r.schedule_text || 'Default schedule'), h('div', { class: 'muted sm' }, 'Delay: ' + (r.delay_hours ? r.delay_hours + ' h' : 'none'))),
+        h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts), r.last.verification ? ' · ' + r.last.verification.result : '')) : h('span', { class: 'muted' }, '-')),
+        h('td', null, h('div', { class: 'inl' },
+          r.update === true && r.managed ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { previewUpdate([r.name]); } }, 'Update') : null,
+          r.state === 'approval' ? h('button', { class: 'btn sm', onclick: function () { act('approve', { name: r.name }, 'Approved this image for ' + r.name).then(function () { load('docker'); }); } }, 'Approve') : null,
+          h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings')))));
+      if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
+    });
+    w.appendChild(t);
+    return w;
+  }
+  function containerDrawer(r) {
+    var c = JSON.parse(JSON.stringify(r.cfg)), own = !!c.schedule; if (!c.schedule) c.schedule = { frequency: 'daily', time: '04:00', weekday: 0, monthday: 1 };
+    var inner = h('div', { class: 'in' });
+    var del = h('select'); del.appendChild(h('option', { value: '' , selected: c.delay_hours === null }, 'Use global default'));
+    DELAYS.forEach(function (d) { del.appendChild(h('option', { value: d[0], selected: c.delay_hours === d[0] }, d[1])); });
+    var cust = h('input', { type: 'number', min: 0, max: 720, placeholder: 'custom h', style: 'width:90px', value: c.delay_hours !== null && !DELAYS.some(function (d) { return d[0] === c.delay_hours; }) ? c.delay_hours : '' });
+    var notify = h('input', { type: 'checkbox', checked: c.notify }), crit = h('input', { type: 'checkbox', checked: c.critical }), bk = h('input', { type: 'checkbox', checked: c.backup });
+    var ownCb = h('input', { type: 'checkbox', checked: own });
+    var sch = schedFields(c.schedule, true);
+    inner.appendChild(h('div', null, h('label', { class: 'switch' }, notify, 'Send notifications for this container'), h('label', { class: 'switch' }, crit, 'Critical: always ask me before updating'), h('label', { class: 'switch' }, bk, 'Back up before updating (needs backups enabled in Settings)')));
+    inner.appendChild(h('div', null, h('div', { class: 'fld' }, h('label', null, 'Wait after a new image appears'), h('div', { class: 'inl' }, del, cust), h('span', { class: 'hint' }, 'Counted from when this image was first seen, and not restarted by repeated checks.'))));
+    inner.appendChild(h('div', null, h('label', { class: 'switch' }, ownCb, 'Use its own schedule'), h('div', { style: own ? '' : 'opacity:.5;pointer-events:none', id: 'own-' + r.name }, sch.el)));
+    ownCb.addEventListener('change', function () { var e = inner.querySelector('[id="own-' + r.name + '"]'); e.style.opacity = ownCb.checked ? 1 : .5; e.style.pointerEvents = ownCb.checked ? 'auto' : 'none'; });
+    inner.appendChild(h('div', null, h('button', { class: 'btn pri', onclick: function () {
+      var d = cust.value !== '' ? parseInt(cust.value, 10) : (del.value === '' ? null : parseInt(del.value, 10));
+      act('set_container', { names: [r.name], data: { notify: notify.checked, critical: crit.checked, backup: bk.checked, delay_hours: d, schedule: ownCb.checked ? sch.get() : null } }, 'Saved ' + r.name).then(function () { S.open[r.name] = false; load('docker'); });
+    } }, 'Save'), ' ', h('button', { class: 'btn', onclick: function () { S.open[r.name] = false; render(); } }, 'Cancel')));
+    return inner;
+  }
+  function schedFields(o, compact) {
+    var fr = h('select'); FREQ.forEach(function (f) { fr.appendChild(h('option', { value: f[0], selected: o.frequency === f[0] }, f[1])); });
+    var tm = h('input', { type: 'time', value: o.time || '04:00' });
+    var wd = h('select'); DAYS.forEach(function (d, i) { wd.appendChild(h('option', { value: i, selected: +o.weekday === i }, d)); });
+    var md = h('select'); for (var i = 1; i <= 28; i++) md.appendChild(h('option', { value: i, selected: +o.monthday === i }, 'Day ' + i));
+    var wr = h('span', null, wd), mr = h('span', null, md), hr = h('span', { class: 'muted sm' }, 'starting at the time on the left');
+    function sync() { wr.style.display = (fr.value === 'weekly' || fr.value === 'biweekly') ? '' : 'none'; mr.style.display = fr.value === 'monthly' ? '' : 'none'; }
+    fr.addEventListener('change', sync); sync();
+    return { el: h('div', { class: 'inl' }, fr, wr, mr, tm), get: function () { return { frequency: fr.value, time: tm.value || '04:00', weekday: +wd.value, monthday: +md.value }; } };
+  }
+
+  /* ---------- update preview ---------- */
+  function previewUpdate(names) {
+    if (!names.length) { toast('Nothing to update.'); return; }
+    api('preview', { names: names.join(',') }).then(function (j) {
+      if (j.error) { toast(j.error, true); return; }
+      if (!j.rows.length) { toast('None of these containers has an update.'); return; }
+      var m = modal('Update ' + j.rows.length + ' container(s)?');
+      m.body.appendChild(h('p', { class: 'muted' }, 'Each container is stopped, recreated from its Unraid template with the new image, and started again. Short downtime is expected.' + (j.verify ? ' Afterwards its health is checked.' : '')));
+      var t = h('table'); t.appendChild(h('thead', null, h('tr', null, h('th', null, 'Container'), h('th', null, 'Current → new'), h('th', null, 'Notes'))));
+      var tb = h('tbody'); j.rows.forEach(function (r) {
+        tb.appendChild(h('tr', null, h('td', null, r.name, h('div', { class: 'muted sm' }, r.image)), h('td', { class: 'digest' }, r.current.slice(7) + ' → ' + r.new.slice(7)),
+          h('td', null, !r.managed ? h('span', { class: 'badge bad' }, 'cannot be updated here') : null, r.critical ? h('span', { class: 'badge warn' }, 'critical') : null, r.backup ? h('span', { class: 'badge' }, 'backup first') : null, 'will restart')));
+      }); t.appendChild(tb); m.body.appendChild(t);
+      var go = h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('docker', j.rows.filter(function (r) { return r.managed; }).map(function (r) { return r.name; }), 'Update started'); } }, 'Update now');
+      m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+    });
+  }
+  function modal(title) {
+    var bg = h('div', { class: 'modal-bg' }), body = h('div'), foot = h('div', { class: 'foot' });
+    function close() { if (bg.parentNode) bg.parentNode.removeChild(bg); }
+    bg.appendChild(h('div', { class: 'modal', role: 'dialog' }, h('h3', null, title), body, foot));
+    bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
+    root.appendChild(bg); return { body: body, foot: foot, close: close };
+  }
+
+  /* ---------- Plugins ---------- */
+  function vPlugins() {
+    var w = h('div');
+    if (!S.plugins) { w.appendChild(h('div', { class: 'dau-loading' }, 'Loading plugins')); return w; }
+    var auto = S.plugins.auto_update;
+    w.appendChild(h('div', { class: 'banner' + (auto ? ' ok' : '') }, auto ? 'Automatic plugin updates are ON. Only plugins set to "Auto update" are installed, after safety checks.' : 'Automatic plugin updates are OFF (default). Updates are only reported. Turn them on in Settings > Plugins.'));
+    var q = h('input', { type: 'search', placeholder: 'Search…', value: S.pq, oninput: function () { S.pq = q.value; var p = q.selectionStart; render(); var n = root.querySelector('input[type=search]'); if (n) { n.focus(); n.setSelectionRange(p, p); } } });
+    var f = h('select', { onchange: function () { S.pfilter = f.value; render(); } }); [['all', 'All'], ['updates', 'Update available'], ['auto', 'Auto update'], ['blocked', 'Blocked']].forEach(function (o) { f.appendChild(h('option', { value: o[0], selected: o[0] === S.pfilter }, o[1])); });
+    var rows = S.plugins.rows.filter(function (r) { return (!S.pq || r.name.toLowerCase().indexOf(S.pq.toLowerCase()) >= 0) && (S.pfilter === 'all' || (S.pfilter === 'updates' && r.latest) || (S.pfilter === 'auto' && r.policy === 'auto') || (S.pfilter === 'blocked' && r.state === 'blocked')); });
+    var sel = rows.map(function (r) { return r.file; }).filter(function (n) { return S.psel[n]; });
+    var bulk = h('select', { disabled: !sel.length, onchange: function () { if (!bulk.value) return; act('set_plugin', { files: sel, data: { policy: bulk.value } }, 'Policy set').then(function () { load('plugins'); }); } }, h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
+    var up = h('button', { class: 'btn pri', disabled: S.ov.run.running || !sel.length, onclick: function () { confirmPlugins(sel); } }, 'Update selected…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, bulk, h('span', { class: 'grow' }), up));
+    var t = h('table', { class: 'resp' });
+    t.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Plugin'), h('th', null, 'Installed'), h('th', null, 'Available'), h('th', null, 'Status'), h('th', null, 'Policy'), h('th', null, 'Last update'), h('th', null, ''))));
+    var tb = h('tbody'); t.appendChild(tb);
+    if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: 8, class: 'muted' }, 'No plugins match.')));
+    rows.forEach(function (r) {
+      var st = STATE[r.state] || [r.state, ''];
+      tb.appendChild(h('tr', { class: 'row' },
+        h('td', null, r.self ? null : h('input', { type: 'checkbox', checked: !!S.psel[r.file], onchange: function (e) { S.psel[r.file] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Plugin' }, h('span', { class: 'nm' }, r.name), r.self ? h('div', { class: 'muted sm' }, 'this plugin - updated from Plugins only') : null),
+        h('td', { 'data-l': 'Installed' }, r.version), h('td', { 'data-l': 'Available' }, r.latest || '-'),
+        h('td', { 'data-l': 'Status' }, h('span', { class: 'badge ' + st[1], title: r.reason }, st[0]), r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null, r.state === 'blocked' ? h('div', { class: 'muted sm' }, r.reason) : null),
+        h('td', { 'data-l': 'Policy' }, r.self ? h('span', { class: 'muted' }, 'manual only') : polSel(r.policy, function (v) { act('set_plugin', { files: [r.file], data: { policy: v } }).then(function () { load('plugins'); }); })),
+        h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts))) : '-'),
+        h('td', null, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null)));
+    });
+    w.appendChild(t);
+    return w;
+  }
+  function confirmPlugins(files) {
+    var rows = S.plugins.rows.filter(function (r) { return files.indexOf(r.file) >= 0 && r.latest; });
+    if (!rows.length) { toast('None of the selected plugins has an update.'); return; }
+    var m = modal('Update ' + rows.length + ' plugin(s)?');
+    m.body.appendChild(h('p', { class: 'muted' }, 'Plugins can run code as root. The plugin file is validated first (same source URL, no new download hosts, compatible with this Unraid version) and then installed with Unraid\'s own plugin tool. There is no automatic rollback.'));
+    rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', r.version + ' → ' + r.latest)); });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
+    m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('plugins', rows.map(function (r) { return r.file; }), 'Plugin update started'); } }, 'Update'));
+  }
+
+  /* ---------- OS ---------- */
+  function vOS() {
+    var w = h('div');
+    if (!S.os) { w.appendChild(h('div', { class: 'dau-loading' }, 'Loading')); return w; }
+    var o = S.os.os;
+    w.appendChild(h('div', { class: 'banner' }, 'Unraid OS updates are only detected and reported here. This plugin never installs an OS update and never reboots your server.'));
+    w.appendChild(h('div', { class: 'cards' }, card('Installed', S.os.installed || '?'), card('Available', o.available || 'None', o.available ? 'since ' + when(o.first_seen) : 'Up to date', o.available ? 'hot' : ''), card('Last check', ago(o.last_check), o.last_error ? 'Failed: ' + o.last_error : 'OK', o.last_error ? 'bad' : '')));
+    if (o.available) {
+      w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Release notes (excerpt)'), h('pre', { class: 'log' }, o.notes || 'Not available. Open Tools > Update OS to read the full release notes.'),
+        h('p', null, 'To install: ', h('a', { href: '/Tools' }, 'open Tools'), ' and choose "Update OS". Back up your flash drive first and read the release notes.')));
+    }
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update')));
+    return w;
+  }
+
+  /* ---------- Settings ---------- */
+  function path(o, p) { var a = p.split('.'), x = o; for (var i = 0; i < a.length - 1; i++) x = x[a[i]]; return [x, a[a.length - 1]]; }
+  function fSwitch(label, p, hint) { var r = path(S.draft, p); var cb = h('input', { type: 'checkbox', checked: !!r[0][r[1]], onchange: function () { r[0][r[1]] = cb.checked; } }); return h('div', null, h('label', { class: 'switch' }, cb, label), hint ? h('div', { class: 'hint muted sm' }, hint) : null); }
+  function fNum(label, p, min, max, hint, unit) { var r = path(S.draft, p); var i = h('input', { type: 'number', min: min, max: max, value: r[0][r[1]], style: 'width:90px', onchange: function () { r[0][r[1]] = Math.max(min, Math.min(max, parseInt(i.value, 10) || 0)); } }); return h('div', { class: 'fld' }, h('label', null, label), h('div', { class: 'inl' }, i, unit ? h('span', { class: 'muted' }, unit) : null), hint ? h('span', { class: 'hint' }, hint) : null); }
+  function fText(label, p, hint, ph) { var r = path(S.draft, p); var i = h('input', { type: 'text', value: r[0][r[1]] || '', placeholder: ph || '', style: 'width:100%;max-width:420px', onchange: function () { r[0][r[1]] = i.value; } }); return h('div', { class: 'fld' }, h('label', null, label), i, hint ? h('span', { class: 'hint' }, hint) : null); }
+  function fSched(label, base) { var o = path(S.draft, base)[0][base.split('.').pop()]; var s = schedFields(o); var upd = function () { var v = s.get(); o.frequency = v.frequency; o.time = v.time; o.weekday = v.weekday; o.monthday = v.monthday; }; s.el.addEventListener('change', upd); s.el.addEventListener('input', upd); return h('div', { class: 'fld' }, h('label', null, label), s.el); }
+  function fWindow(label, base) {
+    var w = path(S.draft, base)[0][base.split('.').pop()];
+    var en = h('input', { type: 'checkbox', checked: !!w.enabled, onchange: function () { w.enabled = en.checked; box.style.opacity = en.checked ? 1 : .5; } });
+    var st = h('input', { type: 'time', value: w.start, onchange: function () { w.start = st.value; } }), ed = h('input', { type: 'time', value: w.end, onchange: function () { w.end = ed.value; } });
+    var days = h('div', { class: 'inl' }); DAYS.forEach(function (d, i) { var cb = h('input', { type: 'checkbox', checked: w.days.indexOf(i) >= 0, onchange: function () { var s = w.days.filter(function (x) { return x !== i; }); if (cb.checked) s.push(i); w.days = s.sort(); } }); days.appendChild(h('label', { class: 'switch' }, cb, d.slice(0, 3))); });
+    var box = h('div', { style: 'opacity:' + (w.enabled ? 1 : .5) }, h('div', { class: 'inl' }, 'from', st, 'to', ed), days);
+    return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, 'Only update inside this window'), box, h('span', { class: 'hint' }, 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
+  }
+  function section(title, kids) { return h('div', { class: 'panel' }, h('h3', null, title), kids); }
+  function vSettings() {
+    var d = S.draft, w = h('div');
+    w.appendChild(section('Docker: default schedule', h('div', { class: 'grid2' },
+      h('div', null, fSwitch('Check and update on a schedule', 'global.enabled', 'Applies to containers set to "Auto update" that have no schedule of their own.'), fSched('Schedule', 'global'), fSwitch('Skip stopped containers', 'global.skip_stopped'), fSwitch('Send notifications', 'global.notify', 'Master switch; each container can also be muted.')),
+      h('div', null, fNum('Update delay (hours)', 'global.update_delay_hours', 0, 720, '0 = immediately. 24 = one day, 72 = three days, 168 = seven days. Counted from when an image was first seen.'), fNum('Pause between updates', 'global.delay', 0, 600, null, 'seconds'), fWindow('Maintenance window', 'global.window')))));
+    w.appendChild(section('Docker: safety', h('div', { class: 'grid2' },
+      h('div', null, fSwitch('Verify after update (state and health)', 'global.verify.enabled', 'A container without a health check is not treated as failed.'), fNum('Verification timeout', 'global.verify.timeout', 10, 900, null, 'seconds'), fSwitch('Check free disk space before pulling', 'global.disk_check'), fNum('Warn below', 'global.min_free_gb', 0, 500, null, 'GB free')),
+      h('div', null, fNum('Retry failed pulls up to', 'global.retry.max', 0, 5, 'Only network/registry errors that left the container untouched are retried. Never retries once the container was changed.', 'times'), fNum('Retry interval', 'global.retry.interval_min', 5, 1440, null, 'minutes'), fSwitch('Remove the old image after a verified update', 'global.cleanup', 'Only that one image, and only if nothing else uses it. Never a broad prune.')))));
+    w.appendChild(section('Docker: backups before update (optional)', h('div', null,
+      h('p', { class: 'muted sm' }, 'Turn on per container in its Settings. "Config" saves the template and container definition (small). "Image" saves the current image as a tar file (large). "Appdata" archives the container\'s host folders while it is still running, so databases may not be consistent: use a dedicated backup plugin for those.'),
+      h('div', { class: 'grid2' }, h('div', null, fSwitch('Enable backups', 'global.backup.enabled'), fText('Destination folder (under /mnt)', 'global.backup.dest', 'Example: /mnt/user/backups/docker-autoupdate', '/mnt/user/backups'), fNum('Keep newest', 'global.backup.retention', 1, 30, null, 'backups per container')),
+        h('div', null, fSwitch('Config (template + settings)', 'global.backup.config'), fSwitch('Image (docker save)', 'global.backup.image'), fSwitch('Appdata folders (not application-consistent)', 'global.backup.appdata'), fSwitch('Backup is required: do not update if it fails', 'global.backup.required'))))));
+    w.appendChild(section('Plugins', h('div', { class: 'grid2' },
+      h('div', null, fSwitch('Check for plugin updates on a schedule', 'plugins.check_enabled'), fSched('Schedule', 'plugins'), fSwitch('Install updates automatically (plugins set to Auto update)', 'plugins.auto_update', 'OFF by default. Plugins run as root: only enable this for plugins you trust.'),
+        (function () { var s = h('select', { onchange: function () { d.plugins.default_policy = s.value; } }); POL.forEach(function (p) { s.appendChild(h('option', { value: p[0], selected: d.plugins.default_policy === p[0] }, p[1])); }); return h('div', { class: 'fld' }, h('label', null, 'Policy for plugins without their own'), s); })()),
+      h('div', null, fNum('Wait after a new version appears', 'plugins.delay_hours', 0, 720, null, 'hours'), fNum('Pause between plugins', 'plugins.delay', 0, 600, null, 'seconds'), fWindow('Maintenance window', 'plugins.window')))));
+    w.appendChild(section('Unraid OS', h('div', null, fSwitch('Check for OS updates on a schedule', 'os.check_enabled', 'Detection and notification only. Nothing is installed and the server is never rebooted.'), fSched('Schedule', 'os'))));
+    var dc = S.ov.config.discord;
+    var url = h('input', { type: 'password', placeholder: dc.webhook_set ? 'A webhook is saved (hidden). Paste a new one to replace it.' : 'https://discord.com/api/webhooks/…', style: 'width:100%;max-width:520px', autocomplete: 'off' });
+    var ev = function (k, l) { return fSwitch(l, 'discord.events.' + k); }, ty = function (k, l) { return fSwitch(l, 'discord.types.' + k); };
+    var bat = h('select', { onchange: function () { d.discord.batching = bat.value; } }, h('option', { value: 'combine', selected: d.discord.batching === 'combine' }, 'Combine into few messages'), h('option', { value: 'separate', selected: d.discord.batching === 'separate' }, 'One message per notification'));
+    w.appendChild(section('Discord notifications', h('div', null,
+      fSwitch('Send to Discord', 'discord.enabled'),
+      h('div', { class: 'fld' }, h('label', null, 'Webhook URL'), url, h('span', { class: 'hint' }, 'Stored on the server only in a separate file and never shown again. Messages never contain secrets.')),
+      h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: function () { act('test_discord', { url: url.value }).then(function (j) { if (j.ok) toast('Test message sent.'); else if (!j.error) toast('Test failed', true); }); } }, 'Send test message'),
+        dc.webhook_set ? h('button', { class: 'btn danger', onclick: function () { if (confirm('Remove the saved webhook?')) act('clear_webhook', {}, 'Webhook removed').then(function () { S.draft = null; load('settings'); }); } }, 'Remove webhook') : null),
+      h('div', { class: 'grid2' }, h('div', null, h('h4', null, 'Categories'), ev('docker', 'Docker'), ev('plugins', 'Unraid plugins'), ev('os', 'Unraid OS')),
+        h('div', null, h('h4', null, 'Message types'), ty('available', 'Update available'), ty('success', 'Update succeeded'), ty('failed', 'Update failed / retries'), ty('summary', 'Run summary'))),
+      h('div', { class: 'fld' }, h('label', null, 'Batching'), bat), fNum('Maximum messages per run', 'discord.max_messages', 1, 20))));
+    w.appendChild(section('Unraid notifications', h('div', null, fSwitch('Docker events', 'notify_unraid.docker'), fSwitch('Plugin events', 'notify_unraid.plugins'), fSwitch('OS events', 'notify_unraid.os'))));
+    w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
+      h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'docker-autoupdate-config.json' }, 'Export settings'),
+        h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
+      h('p', { class: 'muted sm' }, 'Exports never include the Discord webhook.'))));
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', onclick: function () {
+      var cfg = JSON.parse(JSON.stringify(d)); delete cfg.containers; if (url.value) cfg.discord.webhook_url = url.value;
+      act('save_config', { config: cfg }, 'Settings saved').then(function (j) { if (j.ok) { S.draft = null; load('settings'); } });
+    } }, 'Save settings'), h('button', { class: 'btn', onclick: function () { S.draft = JSON.parse(JSON.stringify(S.ov.config)); render(); } }, 'Discard changes')));
+    return w;
+  }
+  function importSettings() {
+    var inp = h('input', { type: 'file', accept: 'application/json,.json' });
+    inp.addEventListener('change', function () {
+      var f = inp.files[0]; if (!f) return; var rd = new FileReader();
+      rd.onload = function () { try { var j = JSON.parse(rd.result); if (confirm('Replace the current settings with this file? A copy of the current settings is kept.')) act('import', { config: j }, 'Imported').then(function () { S.draft = null; load('settings'); }); } catch (e) { toast('That file is not valid JSON.', true); } };
+      rd.readAsText(f);
+    }); inp.click();
+  }
+
+  /* ---------- Activity ---------- */
+  function vActivity() {
+    var w = h('div');
+    if (S.hist === null) { w.appendChild(h('div', { class: 'dau-loading' }, 'Loading')); return w; }
+    var t = h('table', { class: 'resp' }); t.appendChild(h('thead', null, h('tr', null, ['When', 'Type', 'Name', 'Result', 'Versions / images', 'Verification', 'Took', 'Details'].map(function (x) { return h('th', null, x); }))));
+    var tb = h('tbody'); t.appendChild(tb);
+    if (!S.hist.length) tb.appendChild(h('tr', null, h('td', { colspan: 8, class: 'muted' }, 'No updates recorded yet.')));
+    S.hist.forEach(function (e) {
+      var p = e.prev || {}, n = e.new || {};
+      var from = p.version || p.id || '', to = n.version || n.id || '';
+      tb.appendChild(h('tr', { class: 'row' }, h('td', { 'data-l': 'When' }, when(e.ts)), h('td', { 'data-l': 'Type' }, e.type), h('td', { 'data-l': 'Name', class: 'name' }, h('span', { class: 'nm' }, e.name), e.trigger ? h('div', { class: 'muted sm' }, e.trigger) : null),
+        h('td', { 'data-l': 'Result' }, h('span', { class: 'badge ' + (e.result === 'updated' ? 'ok' : (e.result === 'failed' || e.result === 'interrupted') ? 'bad' : 'warn') }, e.result), e.attempts > 1 ? h('div', { class: 'muted sm' }, e.attempts + ' attempts') : null),
+        h('td', { class: 'digest', 'data-l': 'Versions' }, from || to ? from + ' → ' + to : '-'), h('td', { 'data-l': 'Verification' }, e.verification ? h('span', { title: e.verification.detail }, e.verification.result) : '-'), h('td', { 'data-l': 'Took' }, e.duration ? dur(e.duration) : '-'),
+        h('td', { 'data-l': 'Details' }, h('div', { class: 'sm' }, e.error || ''), e.message ? h('div', { class: 'muted sm' }, e.message) : null)));
+    });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Update history'), t));
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Log'), h('pre', { class: 'log' }, S.log || 'The log is empty.')));
+    return w;
+  }
+
+  load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); });
+})();
