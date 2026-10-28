@@ -1,6 +1,6 @@
 <?php
 /* Unraid Swiss Manager - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
-require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
+require_once '/usr/local/emhttp/plugins/unraid-swiss-manager/include/lib.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -151,7 +151,7 @@ switch ($action) {
   }
 
   case 'export': {
-    header('Content-Disposition: attachment; filename="unraid-autoupdater-config.json"');
+    header('Content-Disposition: attachment; filename="unraid-swiss-manager-config.json"');
     echo json_encode(dau_export_config(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES); exit;
   }
 

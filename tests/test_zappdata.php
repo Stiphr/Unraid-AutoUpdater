@@ -171,7 +171,9 @@ t('cleanup: a dry run of the Docker cleanup changes nothing and reports sizes', 
 });
 
 t('widget: the Dashboard tile never shows the Unraid OS version and uses the plugin logo', function () {
-  $page = file_get_contents(__DIR__ . '/../src/UnraidAutoUpdaterDash.page'); $api = file_get_contents(__DIR__ . '/../src/include/api.php');
-  lacks($page, 'os_installed'); lacks($page, 'j.os+'); lacks($page, "'Unraid '+"); has($page, 'images/unraid-autoupdater.png'); has($page, 'class="img"'); lacks($page, 'fa-refresh f32"></i>\n<div');
+  $page = file_get_contents(__DIR__ . '/../src/UnraidSwissManagerDash.page'); $api = file_get_contents(__DIR__ . '/../src/include/api.php');
+  lacks($page, 'os_installed'); lacks($page, 'j.os+'); lacks($page, "'Unraid '+"); has($page, 'images/unraid-swiss-manager.png');
+  lacks($page, 'class="w25"', 'no unstyled label columns (labels ran into their values on Unraid 7)'); has($page, "P+'?tab='+tab"); has($page, '#dau-tile .dau-row'); has($page, "'activity', 'bad'");
+  has(file_get_contents(__DIR__ . '/../src/assets/app.js'), "q.get('tab')");
   $w = substr($api, strpos($api, "case 'widget'"), 1400); lacks($w, 'os_installed'); lacks($w, 'dau_os_version'); has($w, 'os_update');
 });

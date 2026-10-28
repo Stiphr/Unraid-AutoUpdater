@@ -167,13 +167,13 @@ t('backups: the dispatcher cron line exists when only a backup is scheduled', fu
 });
 
 t('release: every file under src/include is packed into the plugin file', function () {
-  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg');
+  $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg');
   foreach (glob(__DIR__ . '/../src/include/*.php') as $f) has($plg, 'Name="&emhttp;/include/' . basename($f) . '"', 'not packed');
   foreach (glob(__DIR__ . '/../src/assets/*') as $f) has($plg, '/assets/' . basename($f) . '"', 'not packed');
 });
 
-t('rename: the settings page lives at Settings/UnraidSwissManager and the old page file is removed on update', function () {
-  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg');
-  has($plg, 'launch="Settings/UnraidSwissManager"'); has($plg, 'Name="&emhttp;/UnraidSwissManager.page"'); lacks($plg, 'Name="&emhttp;/UnraidAutoUpdater.page"'); has($plg, 'rm -f &emhttp;/UnraidAutoUpdater.page');
+t('rename: the settings page lives at Settings/UnraidSwissManager, the tile in UnraidSwissManagerDash.page', function () {
+  $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg');
+  has($plg, 'launch="Settings/UnraidSwissManager"'); has($plg, 'Name="&emhttp;/UnraidSwissManager.page"'); has($plg, 'Name="&emhttp;/UnraidSwissManagerDash.page"'); lacks(substr($plg, strpos($plg, '</CHANGES>')), 'UnraidAutoUpdater', 'only the changelog may mention the old name');
   foreach (array_merge(glob(__DIR__ . '/../src/*.page'), glob(__DIR__ . '/../src/include/*.php')) as $f) lacks(file_get_contents($f), 'Settings/UnraidAutoUpdater', basename($f));
 });

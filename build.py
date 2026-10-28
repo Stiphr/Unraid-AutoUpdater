@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Builds unraid-autoupdater.plg from src/ (every file is inlined, as Unraid plugins require).
+"""Builds unraid-swiss-manager.plg from src/ (every file is inlined, as Unraid plugins require).
 Usage: python3 build.py [VERSION] [--beta]      default version = today's date, e.g. 2026.10.30 (add a letter for a second release that day: 2026.10.30a)
-Also writes docker.autoupdate.plg: a small migration stub for installs made under the former plugin name.
+Also writes the redirect stubs for the former plugin names (unraid-autoupdater.plg on both branches, docker.autoupdate.plg on stable):
+installs made under an old name are offered the stub, which installs this plugin (settings are carried over) and removes the old entry.
 """
 import sys, re, pathlib, datetime, hashlib, base64, textwrap
 
@@ -12,7 +13,7 @@ BETA = '--beta' in sys.argv          # a beta build updates itself from the beta
 version = args[0] if args else datetime.date.today().strftime('%Y.%m.%d')
 BRANCH = 'beta' if BETA else 'stable'
 files = [
-    ('UnraidSwissManager.page', '0644'), ('UnraidAutoUpdaterDash.page', '0644'),
+    ('UnraidSwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),
     ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
     ('include/discord.php', '0644'), ('include/backup.php', '0644'), ('include/backups.php', '0644'), ('include/docker.php', '0644'), ('include/plugins.php', '0644'),
     ('include/os.php', '0644'), ('include/workflow.php', '0644'), ('include/extras.php', '0644'), ('include/appdata.php', '0644'), ('include/jobs.php', '0644'), ('include/api.php', '0644'),
@@ -22,14 +23,14 @@ changes = (root / 'CHANGES.txt').read_text().strip()
 
 out = ["""<?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
-<!ENTITY name    "unraid-autoupdater">
+<!ENTITY name    "unraid-swiss-manager">
 <!ENTITY author  "Stiphr">
 <!ENTITY version "%s">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/%s/unraid-autoupdater.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/%s/unraid-swiss-manager.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-autoupdater.png">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-swiss-manager.png">
 
 <CHANGES>
 %s
@@ -48,26 +49,33 @@ for rel, mode in files:
     sha = hashlib.sha256(written.encode()).hexdigest()
     out.append('<FILE Name="&emhttp;/%s" Mode="%s">\n<INLINE><![CDATA[%s]]></INLINE>\n<SHA256>%s</SHA256>\n</FILE>\n' % (rel, mode, text, sha))
 
-# One-time migration from the former plugin name "docker.autoupdate": settings, webhook, state and history are copied (never overwriting
-# anything already present), the old runtime folder and schedule are removed, and the old settings folder is kept as ".migrated".
-# DAU_PLUGS / DAU_EMHTTP / DAU_RUN only exist so the tests can run this block in a sandbox.
-MIGRATE = """# one-time migration from the former plugin name (docker.autoupdate)
+# One-time migration from the former plugin names (unraid-autoupdater, before that docker.autoupdate): settings, webhook, state, history
+# and template backups are copied (never overwriting anything already present; the newer name first), the old runtime folder, schedule
+# and run files are removed, and each old settings folder is kept as ".migrated". A job of the old plugin that is still running is
+# waited for (at most 10 minutes) so nothing is copied halfway through a write.
+# DAU_PLUGS / DAU_EMHTTP / DAU_RUN / DAU_LOGDIR only exist so the tests can run this block in a sandbox.
+MIGRATE = """# one-time migration from the former plugin names
 PLUGS="${DAU_PLUGS:-/boot/config/plugins}"
 EM="${DAU_EMHTTP:-/usr/local/emhttp/plugins}"
 RUN="${DAU_RUN:-/var/run}"
-OLD="$PLUGS/docker.autoupdate"
-NEW="$PLUGS/unraid-autoupdater"
-if [ -d "$OLD" ]; then
+LOGS="${DAU_LOGDIR:-/var/log}"
+NEW="$PLUGS/unraid-swiss-manager"
+for OLDNAME in unraid-autoupdater docker.autoupdate; do
+  OLD="$PLUGS/$OLDNAME"
+  [ -d "$OLD" ] || continue
+  RUNNAME=$(echo "$OLDNAME" | tr . -)
+  if [ -e "$RUN/$RUNNAME.lock" ] && command -v flock > /dev/null; then flock -w 600 "$RUN/$RUNNAME.lock" true; fi
   mkdir -p "$NEW"
   cp -rn "$OLD"/. "$NEW"/ 2>/dev/null
-  rm -f "$NEW/docker-autoupdate.cron" "$OLD/docker-autoupdate.cron"
+  rm -f "$NEW/$RUNNAME.cron" "$OLD/$RUNNAME.cron"
   rm -rf "$OLD.migrated"
   mv "$OLD" "$OLD.migrated"
-  rm -rf "$EM/docker.autoupdate"
-  rm -f "$RUN/docker-autoupdate.lock" "$RUN/docker-autoupdate.progress" "$RUN/docker-autoupdate.stop"
+  rm -rf "$EM/$OLDNAME"
+  rm -f "$RUN/$RUNNAME.lock" "$RUN/$RUNNAME.progress" "$RUN/$RUNNAME.stop"
+  if [ -f "$LOGS/$RUNNAME.log" ] && [ ! -f "$LOGS/unraid-swiss-manager.log" ]; then mv "$LOGS/$RUNNAME.log" "$LOGS/unraid-swiss-manager.log"; fi
   if [ -x /usr/local/sbin/update_cron ]; then /usr/local/sbin/update_cron; fi
-  echo "Settings of the former docker.autoupdate plugin were migrated (a copy is kept in $OLD.migrated)"
-fi
+  echo "Settings of the former $OLDNAME plugin were carried over (a copy is kept in $OLD.migrated)"
+done
 """
 out.append('<FILE Run="/bin/bash">\n<INLINE><![CDATA[' + MIGRATE + ']]></INLINE>\n</FILE>\n')
 
@@ -80,10 +88,8 @@ out.append("""<FILE Run="/bin/bash">
 <INLINE>
 mkdir -p &emhttp;/images
 echo '""" + icon_b64 + """' | base64 -d > /tmp/dau-icon.png 2>/dev/null
-if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = \"""" + icon_sha + """\" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-autoupdater.png; chmod 644 &emhttp;/images/unraid-autoupdater.png; else echo "icon check failed, skipped"; fi
+if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = \"""" + icon_sha + """\" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-swiss-manager.png; chmod 644 &emhttp;/images/unraid-swiss-manager.png; else echo "icon check failed, skipped"; fi
 rm -f /tmp/dau-icon.png
-# the settings page used to be called UnraidAutoUpdater (renamed with the plugin)
-rm -f &emhttp;/UnraidAutoUpdater.page
 </INLINE>
 </FILE>
 """)
@@ -106,51 +112,58 @@ echo ""
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 /usr/bin/php &emhttp;/scripts/run.php --uninstall 2>/dev/null
-rm -f &flash;/unraid-autoupdater.cron
+rm -f &flash;/unraid-swiss-manager.cron
 /usr/local/sbin/update_cron 2>/dev/null
 rm -rf &emhttp;
-rm -f /var/run/unraid-autoupdater.lock /var/run/unraid-autoupdater.progress /var/run/unraid-autoupdater.stop
+rm -f /var/run/unraid-swiss-manager.lock /var/run/unraid-swiss-manager.progress /var/run/unraid-swiss-manager.stop
 echo "Unraid Swiss Manager removed. Settings, history and backups were kept in &flash;"
 </INLINE>
 </FILE>
 
 </PLUGIN>
 """)
-(root / 'unraid-autoupdater.plg').write_text('\n'.join(out))
-print('built unraid-autoupdater.plg', version, '(beta)' if BETA else '')
-if BETA: sys.exit(0)
+(root / 'unraid-swiss-manager.plg').write_text('\n'.join(out))
+print('built unraid-swiss-manager.plg', version, '(beta)' if BETA else '')
 
-# ---- migration stub: keeps the old plugin name updatable and moves installs over to the new one ----
-NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg'
-stub = """<?xml version='1.0' standalone='yes'?>
+# ---- redirect stubs for the former plugin names ----
+# Installed copies compare versions as text, so a stub must stay newer than the last release made under its old name (2026.11.02 / 2026.11.02b1).
+STUB_VERSION = '2026.11.03'
+RAW = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/'
+
+def stub(old, branch, title):
+    return """<?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
-<!ENTITY name    "docker.autoupdate">
+<!ENTITY name    "%(old)s">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "%s">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/docker.autoupdate.plg">
+<!ENTITY version "%(ver)s">
+<!ENTITY pluginURL "%(raw)s%(branch)s/%(old)s.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="refresh">
 
 <CHANGES>
-###%s
-- Renamed: this plugin is now called Unraid Swiss Manager (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
+###%(ver)s
+- Renamed: %(title)s is now Unraid Swiss Manager (unraid-swiss-manager). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
 </CHANGES>
 
 <FILE Run="/bin/bash">
-<INLINE><![CDATA[echo "Docker Auto Update is now Unraid Swiss Manager. Installing the new plugin..."
-/usr/local/sbin/plugin install %s
+<INLINE><![CDATA[echo "%(title)s is now Unraid Swiss Manager. Installing the new plugin..."
+/usr/local/sbin/plugin install %(raw)s%(branch)s/unraid-swiss-manager.plg
 # this entry is registered by the update that is running right now, so it is removed a moment later
-nohup setsid bash -c 'sleep 20; /usr/local/sbin/plugin remove docker.autoupdate.plg' > /dev/null 2>&1 &
-echo "The old docker.autoupdate entry will disappear in a few seconds."
+nohup setsid bash -c 'sleep 20; /usr/local/sbin/plugin remove %(old)s.plg' > /dev/null 2>&1 &
+echo "The old %(old)s entry will disappear in a few seconds."
 ]]></INLINE>
 </FILE>
 
 <FILE Run="/bin/bash" Method="remove">
-<INLINE><![CDATA[echo "Old docker.autoupdate entry removed. Unraid Swiss Manager and its settings are untouched."
+<INLINE><![CDATA[echo "Old %(old)s entry removed. Unraid Swiss Manager and its settings are untouched."
 ]]></INLINE>
 </FILE>
 
 </PLUGIN>
-""" % (version, version, NEW_URL)
-(root / 'docker.autoupdate.plg').write_text(stub)
-print('built docker.autoupdate.plg (migration stub)', version)
+""" % {'old': old, 'ver': STUB_VERSION, 'raw': RAW, 'branch': branch, 'title': title}
+
+(root / 'unraid-autoupdater.plg').write_text(stub('unraid-autoupdater', BRANCH, 'Unraid AutoUpdater'))
+print('built unraid-autoupdater.plg (redirect stub)', STUB_VERSION, BRANCH)
+if BETA: sys.exit(0)      # the oldest name only ever existed on stable
+(root / 'docker.autoupdate.plg').write_text(stub('docker.autoupdate', 'stable', 'Docker Auto Update'))
+print('built docker.autoupdate.plg (redirect stub)', STUB_VERSION)
