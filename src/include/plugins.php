@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - Unraid plugins.
+ * Unraid Swiss Manager - Unraid plugins.
  * Only Unraid's own `plugin` tool ever installs anything: `plugin check` downloads the plg the plugin itself points
  * to, `plugin update` installs that downloaded file. This module adds the safety net around it (opt-in, policies,
  * delay, validation, pinning, verification). It never disables a check Unraid does and never auto-rolls back.
@@ -113,7 +113,7 @@ function dau_plugin_validate(array $p, $latest) {
 /** Eligibility (same vocabulary as containers). */
 function dau_plugin_eval(array $cfg, array $st, array $p, $latest, $now, $manual = false) {
   $pc = $cfg['plugins'];
-  if ($p['self'] && $manual) return ['state' => 'self', 'reason' => 'Update this plugin from Plugins > Unraid AutoUpdater.', 'eta' => null];
+  if ($p['self'] && $manual) return ['state' => 'self', 'reason' => 'Update this plugin from Plugins > Unraid Swiss Manager.', 'eta' => null];
   if ($p['self']) return ['state' => 'self', 'reason' => 'This plugin never updates itself automatically.', 'eta' => null];
   if (!dau_version_newer($latest, $p['version'])) return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];

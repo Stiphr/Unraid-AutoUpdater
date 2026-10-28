@@ -1,5 +1,5 @@
 <?php
-/* Unraid AutoUpdater - configuration: defaults, validation, v1 -> v2 migration, secrets. */
+/* Unraid Swiss Manager - configuration: defaults, validation, v1 -> v2 migration, secrets. */
 
 define('DAU_CFG_VERSION', 2);
 

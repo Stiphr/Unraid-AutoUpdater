@@ -2,19 +2,19 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.30a">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
+<!ENTITY version "2026.10.31">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/docker.autoupdate.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="refresh">
 
 <CHANGES>
-###2026.10.30a
-- Renamed: this plugin is now called Unraid AutoUpdater (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
+###2026.10.31
+- Renamed: this plugin is now called Unraid Swiss Manager (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
 </CHANGES>
 
 <FILE Run="/bin/bash">
-<INLINE><![CDATA[echo "Docker Auto Update is now Unraid AutoUpdater. Installing the new plugin..."
-/usr/local/sbin/plugin install https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg
+<INLINE><![CDATA[echo "Docker Auto Update is now Unraid Swiss Manager. Installing the new plugin..."
+/usr/local/sbin/plugin install https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg
 # this entry is registered by the update that is running right now, so it is removed a moment later
 nohup setsid bash -c 'sleep 20; /usr/local/sbin/plugin remove docker.autoupdate.plg' > /dev/null 2>&1 &
 echo "The old docker.autoupdate entry will disappear in a few seconds."
@@ -22,7 +22,7 @@ echo "The old docker.autoupdate entry will disappear in a few seconds."
 </FILE>
 
 <FILE Run="/bin/bash" Method="remove">
-<INLINE><![CDATA[echo "Old docker.autoupdate entry removed. Unraid AutoUpdater and its settings are untouched."
+<INLINE><![CDATA[echo "Old docker.autoupdate entry removed. Unraid Swiss Manager and its settings are untouched."
 ]]></INLINE>
 </FILE>
 

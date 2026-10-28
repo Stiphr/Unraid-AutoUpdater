@@ -31,7 +31,7 @@ This plugin was written by me with the help of AI assistants (Claude and ChatGPT
 1. In Unraid open **Plugins → Install Plugin** and paste:
 
    ```
-   https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg
+   https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg
    ```
 2. Open it from **Settings → User Utilities → Unraid Swiss Manager** (or click its icon on the Plugins page).
 3. **Updates** appear on the Plugins page like for any other plugin.

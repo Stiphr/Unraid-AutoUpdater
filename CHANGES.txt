@@ -1,3 +1,6 @@
+###2026.10.31
+- Renamed: the plugin is now called Unraid Swiss Manager, with a new logo. Your settings, schedule and history are untouched.
+- The stable branch is now called stable (it was main). Installed copies keep updating without any action.
 ###2026.10.30a
 - Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
 - README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.

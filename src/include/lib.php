@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - core helpers.
+ * Unraid Swiss Manager - core helpers.
  * Written for PHP 7.4+ (Unraid 6.9 and later): no match, str_contains, nullsafe or named arguments.
  *
  * Test seams (in-process only, never read from the environment or the web):
@@ -13,7 +13,7 @@ if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
 define('DAU_VERSION',   '@@VERSION@@');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
-define('DAU_NAME',      'Unraid AutoUpdater');
+define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
 define('DAU_CFG',       DAU_DIR . '/config.json');
