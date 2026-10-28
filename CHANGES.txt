@@ -1,3 +1,6 @@
+###2026.10.30a
+- Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
+- README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.
 ###2026.10.30
 - Renamed to Unraid AutoUpdater (plugin name unraid-autoupdater). Existing installs update through a one-time migration that keeps settings, history and the webhook; the old "docker.autoupdate" entry is removed automatically.
 - One version everywhere: the plugin version (date based) is the only version shown, on the dashboard, in Discord and in the README.

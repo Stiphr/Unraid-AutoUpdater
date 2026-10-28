@@ -8,9 +8,9 @@
 /* header: logo + title + orange version line */
 .dau .brand{display:flex;align-items:center;gap:16px;min-width:0}
 .dau .logo{width:64px;height:64px;border-radius:14px;flex:none;display:block}
-.dau .title{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:700;line-height:1.15;letter-spacing:0;color:#fff}
+.dau .dau-name{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:600;line-height:1.15;letter-spacing:0;color:#fff;background:none;border:0;padding:0;margin:0;text-shadow:none}
 .dau .ver{font-size:15px;font-weight:500;color:var(--accent);margin-top:4px}
-@media (max-width:600px){.dau .brand{gap:12px}.dau .logo{width:48px;height:48px;border-radius:11px}.dau .title{font-size:21px}.dau .ver{font-size:13px}}
+@media (max-width:600px){.dau .brand{gap:12px}.dau .logo{width:48px;height:48px;border-radius:11px}.dau .dau-name{font-size:21px}.dau .ver{font-size:13px}}
 .dau .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dau .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
 .dau .tab{background:none!important;border:0!important;border-bottom:2px solid transparent!important;color:var(--muted)!important;padding:8px 14px!important;margin:0!important;cursor:pointer;font:inherit!important;white-space:nowrap;border-radius:0!important;text-transform:none!important;letter-spacing:0!important}
