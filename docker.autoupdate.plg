@@ -2,16 +2,21 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.28">
+<!ENTITY version "2026.10.28a">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
 ]>
-<PLUGIN name="&name;" author="&author;" version="&version;" min="6.9.0" icon="refresh">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/DockerAutoUpdate" min="6.9.0" icon="refresh">
 
 <CHANGES>
+###2026.10.28a
+- Per-container schedules (Daily / Weekly / Bi-weekly / Monthly) with the global schedule as the default.
+- Per-container notification toggle, one notification per container update.
+- Dark grey UI matching the Unraid theme.
+- Plugin icon on the Plugins page now opens the settings page; update check via GitHub.
 ###2026.10.28
-- Initial release: global and per-container auto-update, Daily / Weekly / Bi-weekly / Monthly schedule,
-  update history, run log, Unraid notifications, dark UI.
+- Initial release.
 </CHANGES>
 
 <FILE Name="&emhttp;/DockerAutoUpdate.page" Mode="0644">
@@ -73,7 +78,7 @@ function dau_defaults() {
       'time'         => '04:00',
       'weekday'      => 0,         // 0 = Sunday
       'monthday'     => 1,         // 1..28
-      'notify'       => true,
+      'notify'       => true,     // master switch; each container can also opt out
       'check_only'   => false,     // scheduled runs only notify, never apply
       'skip_stopped' => true,
       'prune'        => true,
@@ -108,31 +113,81 @@ function dau_clean_global($in, $cur) {
   return $o;
 }
 
-/* ---------- cron ---------- */
+/* ---------- schedules ---------- */
 
-function dau_cron_line($g) {
-  list($h, $m) = array_map('intval', explode(':', $g['time']));
-  switch ($g['frequency']) {
-    case 'weekly':
-    case 'biweekly': $spec = "$m $h * * " . (int)$g['weekday']; break;   // bi-weekly gating happens in run.php
-    case 'monthly':  $spec = "$m $h " . (int)$g['monthday'] . " * *"; break;
-    default:         $spec = "$m $h * * *";
-  }
-  return $spec . ' /usr/bin/php ' . DAU_ROOT . '/scripts/run.php --scheduled > /dev/null 2>&1';
+/** Normalise a schedule array, or return null when it is not a valid schedule. */
+function dau_clean_schedule($in) {
+  if (!is_array($in)) return null;
+  $f = $in['frequency'] ?? 'daily';
+  if (!in_array($f, ['daily', 'weekly', 'biweekly', 'monthly'], true)) return null;
+  $t = (isset($in['time']) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)$in['time'])) ? $in['time'] : '04:00';
+  return [
+    'frequency' => $f,
+    'time'      => $t,
+    'weekday'   => max(0, min(6, (int)($in['weekday'] ?? 0))),
+    'monthday'  => max(1, min(28, (int)($in['monthday'] ?? 1))),
+  ];
 }
 
-function dau_apply_cron($g) {
-  if (empty($g['enabled'])) {
+/** Containers sharing the same schedule share one cron line ("slot"). */
+function dau_slot_key($s) {
+  $sig = $s['frequency'] . '|' . $s['time']
+       . '|' . (in_array($s['frequency'], ['weekly', 'biweekly'], true) ? (int)$s['weekday'] : '')
+       . '|' . ($s['frequency'] === 'monthly' ? (int)$s['monthday'] : '');
+  return 'c' . substr(md5($sig), 0, 8);
+}
+
+/**
+ * Effective schedule of a container, or null when it is not scheduled:
+ * it must be marked Auto, and it uses its own schedule if it has one,
+ * otherwise the global default (which must be switched on).
+ */
+function dau_container_schedule($cfg, $name) {
+  $c = $cfg['containers'][$name] ?? null;
+  if (!is_array($c) || empty($c['auto'])) return null;
+  $custom = dau_clean_schedule($c['schedule'] ?? null);
+  if ($custom) return ['slot' => dau_slot_key($custom), 'sched' => $custom, 'custom' => true];
+  if (empty($cfg['global']['enabled'])) return null;
+  return ['slot' => 'global', 'sched' => dau_clean_schedule($cfg['global']), 'custom' => false];
+}
+
+function dau_last_run($state, $slot) {
+  $m = $state['last_scheduled'] ?? null;
+  return is_array($m) ? (int)($m[$slot] ?? 0) : 0;
+}
+
+function dau_cron_line($s, $slot) {
+  list($h, $m) = array_map('intval', explode(':', $s['time']));
+  switch ($s['frequency']) {
+    case 'weekly':
+    case 'biweekly': $spec = "$m $h * * " . (int)$s['weekday']; break;   // bi-weekly gating happens in run.php
+    case 'monthly':  $spec = "$m $h " . (int)$s['monthday'] . " * *"; break;
+    default:         $spec = "$m $h * * *";
+  }
+  return $spec . ' /usr/bin/php ' . DAU_ROOT . '/scripts/run.php --scheduled --slot=' . $slot . ' > /dev/null 2>&1';
+}
+
+/** Rebuild the cron file: one line for the global default plus one per distinct custom schedule. */
+function dau_apply_cron($cfg) {
+  $slots = [];
+  if (!empty($cfg['global']['enabled'])) $slots['global'] = dau_clean_schedule($cfg['global']);
+  foreach (array_keys($cfg['containers']) as $n) {
+    $x = dau_container_schedule($cfg, $n);
+    if ($x && $x['custom']) $slots[$x['slot']] = $x['sched'];
+  }
+  if (!$slots) {
     @unlink(DAU_CRON);
   } else {
     @mkdir(DAU_DIR, 0755, true);
-    file_put_contents(DAU_CRON, "# Docker Auto Update\n" . dau_cron_line($g) . "\n");
+    $lines = "# Docker Auto Update\n";
+    foreach ($slots as $slot => $s) $lines .= dau_cron_line($s, $slot) . "\n";
+    file_put_contents(DAU_CRON, $lines);
   }
   @exec('/usr/local/sbin/update_cron');
 }
 
+/** Next run of a schedule array (caller decides whether it is active). */
 function dau_next_run($g, $last = 0) {
-  if (empty($g['enabled'])) return null;
   $now = time();
   try { $dt = new DateTime('today ' . $g['time']); } catch (Exception $e) { return null; }
   $freq = $g['frequency'];
@@ -306,12 +361,23 @@ switch ($action) {
     $cfg = dau_load_config();
     $st  = dau_read_json(DAU_STATEF, []);
     $cs  = dau_containers();
+    if ($cs === null) $cs = null; // Docker down
+    foreach ((array)$cs as $k => $c) {
+      $e  = $cfg['containers'][$c['name']] ?? [];
+      $x  = dau_container_schedule($cfg, $c['name']);
+      $c['auto']     = !empty($e['auto']);
+      $c['notify']   = array_key_exists('notify', $e) ? !empty($e['notify']) : true;
+      $c['schedule'] = dau_clean_schedule($e['schedule'] ?? null);   // null = follows the global default
+      $c['next']     = $x ? dau_next_run($x['sched'], dau_last_run($st, $x['slot'])) : null;
+      $cs[$k] = $c;
+    }
+    $g = $cfg['global'];
     out([
       'docker'     => $cs !== null,
       'containers' => $cs ?? [],
-      'config'     => ['global' => $cfg['global'], 'containers' => (object)$cfg['containers']],
+      'config'     => ['global' => $g],
       'run'        => dau_run_info(),
-      'next'       => dau_next_run($cfg['global'], (int)($st['last_scheduled'] ?? 0)),
+      'next'       => !empty($g['enabled']) ? dau_next_run($g, dau_last_run($st, 'global')) : null,
       'last'       => (object)$st,
       'checked_at' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0,
       'history'    => array_slice(dau_read_json(DAU_HIST, []), 0, 12),
@@ -324,9 +390,10 @@ switch ($action) {
     $cfg = dau_load_config();
     $cfg['global'] = dau_clean_global($in, $cfg['global']);
     dau_save_config($cfg);
-    dau_apply_cron($cfg['global']);
+    dau_apply_cron($cfg);
     $st = dau_read_json(DAU_STATEF, []);
-    out(['ok' => true, 'global' => $cfg['global'], 'next' => dau_next_run($cfg['global'], (int)($st['last_scheduled'] ?? 0))]);
+    out(['ok' => true, 'global' => $cfg['global'],
+         'next' => !empty($cfg['global']['enabled']) ? dau_next_run($cfg['global'], dau_last_run($st, 'global')) : null]);
   }
 
   case 'set_auto': {
@@ -336,9 +403,36 @@ switch ($action) {
     $cfg = dau_load_config();
     foreach ($names as $n) {
       if (!valid_name($n)) continue;
-      $cfg['containers'][$n] = ['auto' => $val];
+      $e = is_array($cfg['containers'][$n] ?? null) ? $cfg['containers'][$n] : [];
+      $e['auto'] = $val;
+      $cfg['containers'][$n] = $e;
     }
     dau_save_config($cfg);
+    dau_apply_cron($cfg);
+    out(['ok' => true]);
+  }
+
+  case 'set_container': {
+    $name = $_POST['name'] ?? '';
+    if (!valid_name($name)) fail('Invalid container name');
+    $f = json_decode($_POST['fields'] ?? '', true);
+    if (!is_array($f)) fail('Invalid payload');
+    $cfg = dau_load_config();
+    $e = is_array($cfg['containers'][$name] ?? null) ? $cfg['containers'][$name] : [];
+    if (array_key_exists('auto', $f))   $e['auto']   = filter_var($f['auto'], FILTER_VALIDATE_BOOLEAN);
+    if (array_key_exists('notify', $f)) $e['notify'] = filter_var($f['notify'], FILTER_VALIDATE_BOOLEAN);
+    if (array_key_exists('schedule', $f)) {
+      if ($f['schedule'] === null) {
+        unset($e['schedule']);
+      } else {
+        $sc = dau_clean_schedule($f['schedule']);
+        if (!$sc) fail('Invalid schedule');
+        $e['schedule'] = $sc;
+      }
+    }
+    $cfg['containers'][$name] = $e;
+    dau_save_config($cfg);
+    dau_apply_cron($cfg);
     out(['ok' => true]);
   }
 
@@ -384,43 +478,57 @@ switch ($action) {
 <INLINE><![CDATA[<?php
 /*
  * Docker Auto Update - runner
- *   --scheduled        run from cron: update containers marked "auto"
- *   --check            only refresh update status
- *   --all              update every container that has an update pending
- *   --container=NAME   update one container (forced)
+ *   --scheduled --slot=KEY   run from cron: update the containers whose schedule slot is KEY
+ *                            (KEY "global" = containers that follow the default schedule)
+ *   --check                  only refresh update status
+ *   --all                    update every container that has an update pending
+ *   --container=NAME         update one container (forced)
  */
 require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
 set_time_limit(0);
 
-$opt = getopt('', ['scheduled', 'check', 'all', 'container:']);
+$opt       = getopt('', ['scheduled', 'check', 'all', 'container:', 'slot:']);
+$scheduled = isset($opt['scheduled']);
+$slot      = isset($opt['slot']) ? (string)$opt['slot'] : 'global';
 
+/* Scheduled runs queue up behind another run (two schedules can share a minute); manual runs do not. */
 $lock = fopen(DAU_LOCK, 'c');
-if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
-  dau_log('Another run is already in progress, exiting');
-  exit(0);
+$t0 = time();
+$wait = $scheduled ? 7200 : 0;
+while (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+  if (!$lock || time() - $t0 >= $wait) { dau_log('Another run is already in progress, exiting'); exit(0); }
+  sleep(5);
 }
 
 function progress($p) { dau_write_json(DAU_PROGRESS, $p); }
 
-$cfg       = dau_load_config();
-$g         = $cfg['global'];
-$state     = dau_read_json(DAU_STATEF, []);
-$scheduled = isset($opt['scheduled']);
-$trigger   = $scheduled ? 'scheduled' : 'manual';
-$force     = isset($opt['container']);
-$started   = time();
+$cfg     = dau_load_config();
+$g       = $cfg['global'];
+$state   = dau_read_json(DAU_STATEF, []);
+if (!is_array($state['last_scheduled'] ?? null)) $state['last_scheduled'] = [];
+$trigger = $scheduled ? 'scheduled' : 'manual';
+$force   = isset($opt['container']);
+$started = time();
 
+/* containers that belong to this schedule slot */
+$slotTargets = [];
+$slotSched = null;
 if ($scheduled) {
-  if (empty($g['enabled'])) { flock($lock, LOCK_UN); progress(['running' => false]); exit(0); }
-  if ($g['frequency'] === 'biweekly' && !empty($state['last_scheduled']) && (time() - (int)$state['last_scheduled']) < 12 * 86400) {
-    dau_log('Bi-weekly schedule: off week, skipping');
+  foreach (array_keys($cfg['containers']) as $n) {
+    $x = dau_container_schedule($cfg, $n);
+    if ($x && $x['slot'] === $slot) { $slotTargets[] = $n; $slotSched = $x['sched']; }
+  }
+  if (!$slotTargets) { progress(['running' => false]); exit(0); }
+  $last = dau_last_run($state, $slot);
+  if ($slotSched['frequency'] === 'biweekly' && $last && (time() - $last) < 12 * 86400) {
+    dau_log("Bi-weekly schedule ($slot): off week, skipping");
     progress(['running' => false]);
     exit(0);
   }
-  $state['last_scheduled'] = time();
+  $state['last_scheduled'][$slot] = time();
 }
 
-$mode = $scheduled ? 'scheduled run' : (isset($opt['check']) ? 'update check' : (isset($opt['all']) ? 'update all pending' : 'update ' . ($opt['container'] ?? '')));
+$mode = $scheduled ? "scheduled run ($slot)" : (isset($opt['check']) ? 'update check' : (isset($opt['all']) ? 'update all pending' : 'update ' . ($opt['container'] ?? '')));
 dau_log("=== Started: $mode");
 progress(['running' => true, 'phase' => 'Checking for updates', 'done' => 0, 'total' => 0, 'started' => $started]);
 
@@ -441,13 +549,22 @@ if (isset($opt['container'])) {
   $targets[] = $opt['container'];
 } elseif (isset($opt['all'])) {
   foreach ($list as $c) if ($c['update'] === true && $c['managed']) $targets[] = $c['name'];
-} elseif (!isset($opt['check'])) {
-  foreach ($cfg['containers'] as $n => $v) if (!empty($v['auto']) && isset($by[$n])) $targets[] = $n;
+} elseif ($scheduled) {
+  foreach ($slotTargets as $n) if (isset($by[$n])) $targets[] = $n;
 }
 
-$pending = array_map(function ($c) { return $c['name']; }, array_filter($list, function ($c) { return $c['update'] === true; }));
 if (isset($opt['check'])) {
+  $pending = array_map(function ($c) { return $c['name']; }, array_filter($list, function ($c) { return $c['update'] === true; }));
   dau_log(count($pending) ? 'Updates available: ' . implode(', ', $pending) : 'All containers are up to date');
+}
+
+/* per-container notification (scheduled runs only, the UI shows manual results) */
+function notify_for($name, $subject, $desc, $importance = 'normal') {
+  global $cfg, $g, $scheduled;
+  if (!$scheduled || empty($g['notify'])) return;
+  $e = $cfg['containers'][$name] ?? [];
+  if (array_key_exists('notify', $e) && empty($e['notify'])) return;
+  dau_notify($subject, $desc, $importance);
 }
 
 $res = ['updated' => [], 'failed' => [], 'available' => [], 'unchanged' => []];
@@ -465,6 +582,7 @@ foreach ($targets as $i => $name) {
     dau_log("$name: update available (notify only)");
     $res['available'][] = $name;
     dau_history_add(['container' => $name, 'image' => $c['image'], 'result' => 'available', 'message' => 'Update available', 'trigger' => $trigger]);
+    notify_for($name, "$name: update available", $c['image'] . ' has a newer image. Auto-apply is off (notify only).');
     continue;
   }
 
@@ -474,10 +592,12 @@ foreach ($targets as $i => $name) {
     dau_log("$name: FAILED - " . $r['msg']);
     $res['failed'][] = $name;
     dau_history_add(['container' => $name, 'image' => $c['image'], 'result' => 'failed', 'message' => $r['msg'], 'trigger' => $trigger]);
+    notify_for($name, "$name: update failed", $r['msg'], 'warning');
   } elseif ($r['changed']) {
     dau_log("$name: updated");
     $res['updated'][] = $name;
     dau_history_add(['container' => $name, 'image' => $c['image'], 'result' => 'updated', 'message' => 'Updated to the latest image', 'trigger' => $trigger]);
+    notify_for($name, "$name: updated", $c['image'] . ' was updated to the latest image.');
   } else {
     dau_log("$name: already on the latest image");
     $res['unchanged'][] = $name;
@@ -497,16 +617,6 @@ if ($res['updated'] && !empty($g['prune'])) {
   dau_log('Pruned old images: ' . trim((string)end($o)));
 }
 
-/* notify (scheduled runs only, the UI shows manual results) */
-if ($scheduled && !empty($g['notify']) && ($res['updated'] || $res['failed'] || $res['available'])) {
-  $parts = [];
-  if ($res['updated'])   $parts[] = 'Updated: ' . implode(', ', $res['updated']);
-  if ($res['failed'])    $parts[] = 'Failed: ' . implode(', ', $res['failed']);
-  if ($res['available']) $parts[] = 'Updates available: ' . implode(', ', $res['available']);
-  $subject = $res['failed'] ? 'Docker auto-update finished with errors' : ($res['available'] ? 'Docker updates available' : 'Docker containers updated');
-  dau_notify($subject, implode('. ', $parts), $res['failed'] ? 'warning' : 'normal');
-}
-
 $state['last_run']     = time();
 $state['last_trigger'] = $trigger;
 $state['last_result']  = ['updated' => count($res['updated']), 'failed' => count($res['failed']), 'available' => count($res['available'])];
@@ -518,28 +628,28 @@ progress(['running' => false, 'finished' => time()]);
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.css" Mode="0644">
-<INLINE><![CDATA[/* Docker Auto Update - dark UI. Scoped to .dau so it never leaks into the Unraid theme. */
+<INLINE><![CDATA[/* Docker Auto Update - dark grey UI matching the Unraid theme. Scoped to .dau so it never leaks into the page. */
 .dau {
-  --bg: #0a0f17;
-  --panel: #111823;
-  --panel-2: #172030;
-  --line: #222d3f;
-  --line-2: #2c3a50;
-  --text: #e7ecf5;
-  --muted: #8794ab;
-  --accent: #3dd6c6;
-  --accent-ink: #04201d;
-  --amber: #f5b94a;
-  --ok: #46d39a;
-  --bad: #ff6b7a;
-  --info: #6aa8ff;
+  --bg: #1d1b1b;
+  --panel: #222020;
+  --bar: #262626;
+  --field: #181616;
+  --line: #333030;
+  --line-2: #433f3f;
+  --text: #e8e6e6;
+  --muted: #9b9797;
+  --accent: #f15a2c;
+  --accent-hi: #ff7447;
+  --amber: #e8b33c;
+  --ok: #4ec38b;
+  --bad: #ff6b5e;
+  --link: #6f93e0;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   font: 14px/1.5 var(--font);
-  padding: 22px;
-  border-radius: 16px;
-  margin: 8px 0 24px;
+  padding: 4px 0 24px;
+  margin: 0;
   text-align: left;
   position: relative;
 }
@@ -552,116 +662,122 @@ progress(['running' => false, 'finished' => time()]);
 .dau-loading { padding: 40px; text-align: center; color: var(--muted); }
 
 /* header */
-.dau .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
-.dau .title { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.2; color: var(--text); }
+.dau .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.dau .title { font-size: 20px; font-weight: 600; line-height: 1.2; color: var(--text); letter-spacing: .02em; }
 .dau .subtitle { color: var(--muted); margin-top: 2px; }
 .dau .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* buttons - beat Unraid's global button styles */
 .dau .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 36px; min-width: 0; margin: 0; padding: 0 14px;
-  border: 1px solid var(--line-2); border-radius: 10px;
-  background: var(--panel-2); color: var(--text);
-  font: 600 13px/1 var(--font); letter-spacing: 0; text-shadow: none; box-shadow: none;
-  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+  height: 34px; min-width: 0; margin: 0; padding: 0 14px;
+  border: 1px solid var(--line-2); border-radius: 4px;
+  background: #2c2a2a; color: var(--text);
+  font: 600 13px/1 var(--font); letter-spacing: .02em; text-shadow: none; box-shadow: none;
+  cursor: pointer; transition: background .15s, border-color .15s;
 }
-.dau .btn:hover { background: #1e2a3e; border-color: #3a4c68; color: var(--text); }
-.dau .btn:focus-visible, .dau .switch:focus-visible, .dau .seg-b:focus-visible, .dau .field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dau .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.dau .btn.primary:hover { background: #63e4d6; border-color: #63e4d6; color: var(--accent-ink); }
-.dau .btn.sm { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 8px; }
+.dau .btn:hover { background: #363333; border-color: #5a5555; color: var(--text); }
+.dau .btn:focus-visible, .dau .switch:focus-visible, .dau .seg-b:focus-visible, .dau .field:focus-visible, .dau .sched:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.dau .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dau .btn.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); color: #fff; }
+.dau .btn.sm { height: 28px; padding: 0 11px; font-size: 12.5px; }
 .dau .btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
-.dau .btn.quiet:hover { background: var(--panel-2); color: var(--text); border-color: transparent; }
-.dau .btn:disabled { opacity: .45; cursor: not-allowed; }
+.dau .btn.quiet:hover { background: #2c2a2a; color: var(--text); border-color: transparent; }
+.dau .btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* banner */
-.dau .banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 16px; }
-.dau .banner.run { border-color: rgba(61, 214, 198, .45); background: linear-gradient(0deg, rgba(61, 214, 198, .06), rgba(61, 214, 198, .06)), var(--panel); }
-.dau .banner.warn { border-color: rgba(245, 185, 74, .4); }
+.dau .banner { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); margin-bottom: 14px; }
+.dau .banner.run { border-color: rgba(241, 90, 44, .55); }
 .dau .b-title { margin-bottom: 6px; }
-.dau .bar { height: 5px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.dau .bar { height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
 .dau .bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s ease; }
 .dau .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); animation: dau-spin .8s linear infinite; flex: none; }
 @keyframes dau-spin { to { transform: rotate(360deg); } }
-.dau .led { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.dau .led.on { background: var(--ok); box-shadow: 0 0 0 4px rgba(70, 211, 154, .15); }
+.dau .led { width: 9px; height: 9px; border-radius: 50%; background: #5a5555; flex: none; }
+.dau .led.on { background: var(--ok); box-shadow: 0 0 0 4px rgba(78, 195, 139, .15); }
 
 /* stats */
-.dau .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-.dau .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-.dau .stat .n { font-size: 28px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.dau .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.dau .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px 16px; }
+.dau .stat .n { font-size: 26px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .dau .stat .l { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .dau .stat.hot .n { color: var(--amber); }
 
 /* layout */
-.dau .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-.dau .side { display: grid; gap: 16px; }
-.dau .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-.dau .card-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.dau .card-t { font-size: 15px; font-weight: 600; color: var(--text); }
-.dau .card-b { padding: 16px 18px; }
-.dau .log-wrap { margin-top: 16px; }
+.dau .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.dau .side { display: grid; gap: 14px; }
+.dau .card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.dau .card-h { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--bar); border-bottom: 1px solid var(--line); min-height: 44px; }
+.dau .card-t { font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: .06em; }
+.dau .log-wrap { margin-top: 14px; }
 
 /* toolbar */
-.dau .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.dau .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .dau .search { position: relative; flex: 1 1 180px; min-width: 150px; }
-.dau .search svg { position: absolute; left: 11px; top: 10px; color: var(--muted); }
+.dau .search svg { position: absolute; left: 11px; top: 9px; color: var(--muted); }
 .dau .field {
-  display: block; width: 100%; height: 36px; min-width: 0; margin: 0; padding: 0 12px;
-  background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 10px;
+  display: block; width: 100%; height: 34px; min-width: 0; margin: 0; padding: 0 12px;
+  background: var(--field); color: var(--text); border: 1px solid var(--line-2); border-radius: 4px;
   font: 13.5px/1 var(--font); box-shadow: none; text-shadow: none; -webkit-appearance: none; appearance: none;
 }
 .dau .field.has-ico { padding-left: 34px; }
-.dau select.field { padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 15px, calc(100% - 11px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
-.dau input[type=time].field { color-scheme: dark; }
-.dau input[type=number].field { color-scheme: dark; }
-.dau .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 10px; }
-.dau .seg-b { height: 28px; min-width: 0; margin: 0; padding: 0 11px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 600 12.5px/1 var(--font); letter-spacing: 0; text-shadow: none; box-shadow: none; cursor: pointer; }
+.dau select.field { padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 14px, calc(100% - 11px) 14px; background-size: 5px 5px; background-repeat: no-repeat; }
+.dau input[type=time].field, .dau input[type=number].field { color-scheme: dark; }
+.dau .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--field); border: 1px solid var(--line-2); border-radius: 4px; }
+.dau .seg-b { height: 26px; min-width: 0; margin: 0; padding: 0 11px; border: 0; border-radius: 3px; background: transparent; color: var(--muted); font: 600 12.5px/1 var(--font); letter-spacing: 0; text-shadow: none; box-shadow: none; cursor: pointer; }
 .dau .seg-b:hover { color: var(--text); background: transparent; }
-.dau .seg-b.on { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+.dau .seg-b.on { background: var(--accent); color: #fff; }
 .dau .seg.full { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
 .dau .seg.full .seg-b { padding: 0 4px; }
+.dau .seg.two-up { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
 
 /* container rows: left rail encodes update status */
-.dau .cols, .dau .row { display: grid; grid-template-columns: minmax(0, 1fr) 140px 64px 92px; gap: 12px; align-items: center; padding: 0 18px; }
-.dau .cols { height: 36px; color: var(--muted); font-size: 12.5px; border-bottom: 1px solid var(--line); }
+.dau .cols, .dau .row { display: grid; grid-template-columns: minmax(0, 1fr) 118px 176px 52px 56px 84px; gap: 12px; align-items: center; padding: 0 16px; }
+.dau .cols { height: 34px; color: var(--muted); font-size: 12.5px; border-bottom: 1px solid var(--line); background: var(--bar); }
 .dau .cols .c { text-align: center; }
-.dau .row { min-height: 62px; padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); position: relative; }
+.dau .row { min-height: 64px; padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); position: relative; }
 .dau .row:last-child { border-bottom: 0; }
 .dau .row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--line-2); }
 .dau .row.s-up::before { background: var(--ok); }
 .dau .row.s-new::before { background: var(--amber); }
-.dau .row.s-ext { opacity: .7; }
+.dau .row.s-ext { opacity: .65; }
 .dau .ct { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.dau .avatar { width: 38px; height: 38px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); display: grid; place-items: center; font-weight: 650; color: var(--muted); position: relative; overflow: hidden; flex: none; }
-.dau .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--panel-2); padding: 4px; }
+.dau .avatar { width: 38px; height: 38px; border-radius: 6px; background: #2c2a2a; border: 1px solid var(--line); display: grid; place-items: center; font-weight: 600; color: var(--muted); position: relative; overflow: hidden; flex: none; }
+.dau .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #2c2a2a; padding: 4px; }
 .dau .ct-name { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dau .ct-name span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dau .ct-img { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dau .pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 99px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--line-2); color: var(--muted); white-space: nowrap; flex: none; }
-.dau .pill.ok { color: var(--ok); border-color: rgba(70, 211, 154, .35); }
-.dau .pill.new { color: var(--amber); border-color: rgba(245, 185, 74, .45); background: rgba(245, 185, 74, .08); }
-.dau .pill.run { color: var(--ok); border-color: rgba(70, 211, 154, .3); }
+.dau .pill.ok { color: var(--ok); border-color: rgba(78, 195, 139, .4); }
+.dau .pill.new { color: var(--amber); border-color: rgba(232, 179, 60, .5); background: rgba(232, 179, 60, .08); }
+.dau .pill.run { color: var(--ok); border-color: rgba(78, 195, 139, .3); }
 .dau .pill.off { color: var(--muted); }
 .dau .cell-c { display: flex; justify-content: center; }
 .dau .cell-r { display: flex; justify-content: flex-end; }
 .dau .empty { padding: 36px 18px; text-align: center; color: var(--muted); }
 .dau .empty b { display: block; margin-bottom: 4px; font-size: 15px; }
 
+/* schedule cell */
+.dau .sched { display: block; width: 100%; min-width: 0; margin: 0; padding: 5px 8px; text-align: left; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); font: 13px/1.3 var(--font); letter-spacing: 0; text-shadow: none; box-shadow: none; cursor: pointer; }
+.dau .sched:hover { background: #2c2a2a; border-color: var(--line-2); color: var(--text); }
+.dau .sched:disabled { cursor: not-allowed; opacity: .5; }
+.dau .sched .s1 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dau .sched .s2 { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dau .sched.custom .s1 { color: var(--link); }
+
 /* switch */
-.dau .switch { position: relative; width: 40px; height: 22px; min-width: 0; margin: 0; padding: 0; border-radius: 99px; border: 1px solid var(--line-2); background: #1d2738; cursor: pointer; transition: background .18s, border-color .18s; flex: none; box-shadow: none; }
-.dau .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #9aa8c0; transition: left .18s, background .18s; }
+.dau .switch { position: relative; width: 40px; height: 22px; min-width: 0; margin: 0; padding: 0; border-radius: 99px; border: 1px solid var(--line-2); background: #2c2a2a; cursor: pointer; transition: background .18s, border-color .18s; flex: none; box-shadow: none; }
+.dau .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #9b9797; transition: left .18s, background .18s; }
 .dau .switch.on { background: var(--accent); border-color: var(--accent); }
-.dau .switch.on::after { left: 20px; background: var(--accent-ink); }
+.dau .switch.on::after { left: 20px; background: #fff; }
 .dau .switch:disabled { opacity: .35; cursor: not-allowed; }
-.dau .switch:hover { background: #26334a; }
-.dau .switch.on:hover { background: #63e4d6; }
+.dau .switch:hover { background: #3a3737; }
+.dau .switch.on:hover { background: var(--accent-hi); }
 
 /* settings */
-.dau .master { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-.dau .master .t { font-weight: 600; font-size: 15px; color: var(--text); }
-.dau .set-body { padding: 16px 18px; display: grid; gap: 16px; transition: opacity .2s; }
+.dau .master { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.dau .master .t { font-weight: 600; font-size: 14.5px; color: var(--text); }
+.dau .set-body { padding: 16px; display: grid; gap: 16px; transition: opacity .2s; }
 .dau .set-body.dim { opacity: .5; }
 .dau .lbl { font-size: 13px; color: var(--muted); margin-bottom: 7px; }
 .dau .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -671,34 +787,43 @@ progress(['running' => false, 'finished' => time()]);
 .dau .opts { display: grid; }
 
 /* history */
-.dau .h-item { display: flex; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--line); }
+.dau .h-item { display: flex; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
 .dau .h-item:last-child { border-bottom: 0; }
 .dau .h-top { display: flex; justify-content: space-between; gap: 10px; }
 .dau .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: var(--muted); flex: none; }
 .dau .dot.updated { background: var(--ok); }
 .dau .dot.failed { background: var(--bad); }
 .dau .dot.available { background: var(--amber); }
-.dau .dot.unchanged { background: var(--info); }
+.dau .dot.unchanged { background: var(--link); }
 
 /* log */
-.dau pre.log { margin: 0; padding: 14px 18px; max-height: 280px; overflow: auto; background: var(--bg); color: #b7c3d9; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; border: 0; border-radius: 0; }
+.dau pre.log { margin: 0; padding: 14px 16px; max-height: 280px; overflow: auto; background: var(--field); color: #bdb9b9; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; border: 0; border-radius: 0; }
+
+/* schedule dialog */
+.dau-modal { position: fixed; inset: 0; z-index: 99998; background: rgba(0, 0, 0, .6); display: grid; place-items: center; padding: 16px; }
+.dau-dialog { width: 100%; max-width: 440px; background: #222020; color: #e8e6e6; border: 1px solid #433f3f; border-radius: 6px; box-shadow: 0 20px 50px rgba(0, 0, 0, .6); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.dau-dialog .d-h { padding: 14px 18px; background: #262626; border-bottom: 1px solid #333030; border-radius: 6px 6px 0 0; font-weight: 600; letter-spacing: .04em; }
+.dau-dialog .d-b { padding: 18px; display: grid; gap: 16px; }
+.dau-dialog .d-f { padding: 14px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #333030; }
+.dau-dialog .note { color: #9b9797; font-size: 12.5px; }
 
 /* toasts */
 .dau-toasts { position: fixed; right: 22px; bottom: 22px; display: grid; gap: 8px; z-index: 99999; }
-.dau-toast { background: #101826; color: #e7ecf5; border: 1px solid #2c3a50; border-left: 3px solid #3dd6c6; padding: 10px 14px; border-radius: 10px; font: 13.5px/1.4 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); max-width: 340px; animation: dau-in .18s ease-out; }
-.dau-toast.bad { border-left-color: #ff6b7a; }
-.dau-toast.warn { border-left-color: #f5b94a; }
+.dau-toast { background: #262626; color: #e8e6e6; border: 1px solid #433f3f; border-left: 3px solid #f15a2c; padding: 10px 14px; border-radius: 4px; font: 13.5px/1.4 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); max-width: 340px; animation: dau-in .18s ease-out; }
+.dau-toast.bad { border-left-color: #ff6b5e; }
+.dau-toast.warn { border-left-color: #e8b33c; }
 @keyframes dau-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-@media (max-width: 1180px) { .dau .grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 720px) {
-  .dau { padding: 14px; border-radius: 12px; }
+@media (max-width: 1280px) { .dau .grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) {
   .dau .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dau .cols { display: none; }
-  .dau .row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "ct auto" "upd btn"; row-gap: 8px; }
+  .dau .row { grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "ct ct ct" "upd sch sch" "auto not btn"; row-gap: 8px; }
   .dau .row .ct { grid-area: ct; }
   .dau .row .cell-u { grid-area: upd; }
+  .dau .row .cell-s { grid-area: sch; }
   .dau .row .cell-a { grid-area: auto; }
+  .dau .row .cell-n { grid-area: not; }
   .dau .row .cell-b { grid-area: btn; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -719,11 +844,12 @@ progress(['running' => false, 'finished' => time()]);
 
   const S = {
     docker: true, containers: [], history: [],
-    cfg: { global: {}, containers: {} },
+    cfg: { global: {} },
     run: { running: false, progress: {} },
     next: null, last: {}, checkedAt: 0,
     filter: 'all', q: '', logOpen: false, first: true,
   };
+  let M = null;                       // schedule dialog state
   let pollTimer = null, saveTimer = null, dirty = false;
 
   /* ---------- helpers ---------- */
@@ -736,8 +862,18 @@ progress(['running' => false, 'finished' => time()]);
     search: ico('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
     term: ico('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
   };
-  const isAuto = n => !!(S.cfg.containers[n] && S.cfg.containers[n].auto);
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const FREQS = [['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Bi-weekly'], ['monthly', 'Monthly']];
 
+  function schedShort(s) {
+    const t = s.time || '04:00';
+    switch (s.frequency) {
+      case 'weekly': return 'Weekly ' + DAYS[+s.weekday || 0].slice(0, 3) + ' ' + t;
+      case 'biweekly': return 'Bi-weekly ' + DAYS[+s.weekday || 0].slice(0, 3) + ' ' + t;
+      case 'monthly': return 'Monthly day ' + (+s.monthday || 1) + ', ' + t;
+      default: return 'Daily ' + t;
+    }
+  }
   function ago(ts) {
     if (!ts) return 'never';
     const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -768,7 +904,7 @@ progress(['running' => false, 'finished' => time()]);
     t.className = 'dau-toast ' + kind;
     t.textContent = msg;
     box.appendChild(t);
-    setTimeout(() => t.remove(), 3600);
+    setTimeout(() => t.remove(), 3800);
   }
 
   /* ---------- shell ---------- */
@@ -777,7 +913,7 @@ progress(['running' => false, 'finished' => time()]);
       <div class="head">
         <div>
           <div class="title">Docker Auto Update</div>
-          <div class="subtitle">Keep your containers current without opening the Docker tab.</div>
+          <div class="subtitle">Pick the containers to keep current, and when each one should be checked.</div>
         </div>
         <div class="actions">
           <button class="btn" data-act="check">${ICON.refresh}Check for updates</button>
@@ -798,7 +934,7 @@ progress(['running' => false, 'finished' => time()]);
             <button class="btn sm" data-act="bulk-on" title="Turn on auto-update for the containers shown">Auto on</button>
             <button class="btn sm" data-act="bulk-off" title="Turn off auto-update for the containers shown">Auto off</button>
           </div>
-          <div class="cols"><div>Container</div><div>Update</div><div class="c">Auto</div><div></div></div>
+          <div class="cols"><div>Container</div><div>Update</div><div>Schedule</div><div class="c">Auto</div><div class="c">Notify</div><div></div></div>
           <div id="list"></div>
         </section>
         <aside class="side">
@@ -827,7 +963,7 @@ progress(['running' => false, 'finished' => time()]);
       [cs.length, 'Containers', ''],
       [cs.filter(c => c.state === 'running').length, 'Running', ''],
       [cs.filter(c => c.update === true).length, 'Updates waiting', cs.some(c => c.update === true) ? 'hot' : ''],
-      [cs.filter(c => c.managed && isAuto(c.name)).length, 'On auto-update', ''],
+      [cs.filter(c => c.managed && c.auto).length, 'On auto-update', ''],
     ];
     $('#stats').innerHTML = items.map(([n, l, k]) => `<div class="stat ${k}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   }
@@ -845,11 +981,14 @@ progress(['running' => false, 'finished' => time()]);
       return;
     }
     const g = S.cfg.global || {};
-    const freq = { daily: 'every day', weekly: 'every week', biweekly: 'every two weeks', monthly: 'every month' }[g.frequency] || '';
-    const status = g.enabled
-      ? `<b>Auto-update is on</b> <span class="muted">checks ${freq}${S.next ? ', next run ' + esc(when(S.next)) : ''}</span>`
-      : `<b>Auto-update is off</b> <span class="muted">turn it on in the schedule panel</span>`;
-    el.innerHTML = `<div class="banner"><span class="led ${g.enabled ? 'on' : ''}"></span><div class="grow">${status}</div>
+    const own = S.containers.filter(c => c.managed && c.auto && c.schedule).length;
+    const onDefault = S.containers.filter(c => c.managed && c.auto && !c.schedule).length;
+    const parts = [];
+    parts.push(g.enabled
+      ? `<b>Default schedule is on</b> <span class="muted">${esc(schedShort(g))}${S.next ? ', next run ' + esc(when(S.next)) : ''}, ${onDefault} container${onDefault === 1 ? '' : 's'}</span>`
+      : `<b>Default schedule is off</b> <span class="muted">switch it on in the panel to the right</span>`);
+    if (own) parts.push(`<span class="muted">${own} container${own === 1 ? '' : 's'} on their own schedule</span>`);
+    el.innerHTML = `<div class="banner"><span class="led ${(g.enabled || own) ? 'on' : ''}"></span><div class="grow">${parts.join(', ')}</div>
       <div class="muted sm">Last check ${esc(ago(S.checkedAt))}</div></div>`;
   }
 
@@ -857,7 +996,21 @@ progress(['running' => false, 'finished' => time()]);
     const q = S.q.trim().toLowerCase();
     return S.containers.filter(c =>
       (!q || c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q)) &&
-      (S.filter === 'all' || (S.filter === 'updates' && c.update === true) || (S.filter === 'auto' && isAuto(c.name))));
+      (S.filter === 'all' || (S.filter === 'updates' && c.update === true) || (S.filter === 'auto' && c.auto)));
+  }
+
+  function schedCell(c) {
+    const g = S.cfg.global || {};
+    let s1, s2, cls = '';
+    if (c.schedule) {
+      cls = 'custom';
+      s1 = schedShort(c.schedule);
+      s2 = c.auto ? (c.next ? 'Next ' + when(c.next) : '') : 'Auto is off';
+    } else {
+      s1 = g.enabled ? 'Default: ' + schedShort(g) : 'Default (off)';
+      s2 = !c.auto ? 'Auto is off' : (g.enabled ? (c.next ? 'Next ' + when(c.next) : '') : 'Default schedule is off');
+    }
+    return `<button class="sched ${cls}" data-act="schedule" title="Change when ${esc(c.name)} is updated" ${c.managed ? '' : 'disabled'}><span class="s1">${esc(s1)}</span><span class="s2">${esc(s2)}</span></button>`;
   }
 
   function renderList() {
@@ -874,6 +1027,7 @@ progress(['running' => false, 'finished' => time()]);
       return;
     }
     const busy = S.run.running;
+    const notifyOn = !!(S.cfg.global && S.cfg.global.notify);
     el.innerHTML = rows.map(c => {
       const cls = !c.managed ? 's-ext' : c.update === true ? 's-new' : c.update === false ? 's-up' : '';
       const badge = !c.managed ? `<span class="pill off" title="Not created from an Unraid template, so it can't be updated here">External</span>`
@@ -881,14 +1035,15 @@ progress(['running' => false, 'finished' => time()]);
         : c.update === false ? `<span class="pill ok">Up to date</span>`
         : `<span class="pill">Not checked</span>`;
       const state = c.state === 'running' ? `<span class="pill run">Running</span>` : `<span class="pill off">${esc(c.state === 'exited' ? 'Stopped' : c.state)}</span>`;
-      const on = isAuto(c.name);
       return `<div class="row ${cls}" data-name="${esc(c.name)}">
         <div class="ct">
           <div class="avatar">${esc((c.name[0] || '?').toUpperCase())}${c.icon ? `<img src="${esc(c.icon)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
           <div class="grow"><div class="ct-name"><span class="t">${esc(c.name)}</span>${state}</div><div class="ct-img" title="${esc(c.image)}">${esc(c.image)}</div></div>
         </div>
         <div class="cell-u">${badge}</div>
-        <div class="cell-c cell-a"><button class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="Auto-update ${esc(c.name)}" data-act="toggle" ${c.managed ? '' : 'disabled'}></button></div>
+        <div class="cell-s">${schedCell(c)}</div>
+        <div class="cell-c cell-a"><button class="switch ${c.auto ? 'on' : ''}" role="switch" aria-checked="${!!c.auto}" aria-label="Auto-update ${esc(c.name)}" data-act="toggle" ${c.managed ? '' : 'disabled'}></button></div>
+        <div class="cell-c cell-n"><button class="switch ${c.notify ? 'on' : ''}" role="switch" aria-checked="${!!c.notify}" aria-label="Notify when ${esc(c.name)} is updated" data-act="notify" title="${notifyOn ? 'Notify when this container is updated' : 'Notifications are switched off in the default settings'}" ${(c.managed && notifyOn) ? '' : 'disabled'}></button></div>
         <div class="cell-r cell-b"><button class="btn sm ${c.update === true ? 'primary' : ''}" data-act="update" ${(!c.managed || busy) ? 'disabled' : ''}>Update</button></div>
       </div>`;
     }).join('');
@@ -901,18 +1056,17 @@ progress(['running' => false, 'finished' => time()]);
   function renderSettings() {
     const g = S.cfg.global;
     const f = g.frequency || 'daily';
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const freqs = [['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Bi-weekly'], ['monthly', 'Monthly']];
     const opt = (key, t, d) => `<div class="opt"><div class="grow"><div class="opt-t">${t}</div><div class="muted sm">${d}</div></div>${sw(key, g[key])}</div>`;
     $('#settings').innerHTML = `
+      <div class="card-h"><div class="card-t grow">Default schedule</div></div>
       <div class="master">
-        <div class="grow"><div class="t">Global auto-update</div><div class="muted sm">Update the containers marked Auto on the schedule below.</div></div>
+        <div class="grow"><div class="t">Global auto-update</div><div class="muted sm">Containers marked Auto follow this schedule unless they have their own.</div></div>
         ${sw('enabled', g.enabled)}
       </div>
       <div class="set-body ${g.enabled ? '' : 'dim'}">
         <div>
           <div class="lbl">Check for updates</div>
-          <div class="seg full">${freqs.map(([v, l]) => `<button class="seg-b ${f === v ? 'on' : ''}" data-set="frequency" data-val="${v}">${l}</button>`).join('')}</div>
+          <div class="seg full">${FREQS.map(([v, l]) => `<button class="seg-b ${f === v ? 'on' : ''}" data-set="frequency" data-val="${v}">${l}</button>`).join('')}</div>
         </div>
         <div class="two">
           <div><div class="lbl">Time</div><input class="field" type="time" data-set="time" value="${esc(g.time || '04:00')}"></div>
@@ -920,10 +1074,12 @@ progress(['running' => false, 'finished' => time()]);
             ? `<div><div class="lbl">Day of month</div><select class="field" data-set="monthday">${Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}" ${+g.monthday === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>`
             : f === 'daily'
               ? `<div><div class="lbl">Day</div><select class="field" disabled><option>Every day</option></select></div>`
-              : `<div><div class="lbl">Day of week</div><select class="field" data-set="weekday">${days.map((d, i) => `<option value="${i}" ${+g.weekday === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`}
+              : `<div><div class="lbl">Day of week</div><select class="field" data-set="weekday">${DAYS.map((d, i) => `<option value="${i}" ${+g.weekday === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`}
         </div>
+      </div>
+      <div class="set-body" style="padding-top:0">
         <div class="opts">
-          ${opt('notify', 'Send an Unraid notification', 'After each scheduled run that finds or changes something.')}
+          ${opt('notify', 'Notifications', 'Send an Unraid notification for each container update. Turn individual containers on or off in the list.')}
           ${opt('check_only', 'Notify only', 'Check on schedule but never apply updates. You update by hand.')}
           ${opt('skip_stopped', 'Skip stopped containers', 'Leave containers alone if they are not running.')}
           ${opt('prune', 'Remove old images', 'Free disk space after a successful update.')}
@@ -959,15 +1115,71 @@ progress(['running' => false, 'finished' => time()]);
 
   function renderAll() { renderStats(); renderBanner(); renderList(); renderHistory(); }
 
+  /* ---------- per-container schedule dialog ---------- */
+  function openSchedule(name) {
+    const c = S.containers.find(x => x.name === name);
+    if (!c) return;
+    const g = S.cfg.global || {};
+    M = {
+      name, auto: c.auto, mode: c.schedule ? 'custom' : 'global',
+      s: Object.assign({ frequency: 'daily', time: g.time || '04:00', weekday: +g.weekday || 0, monthday: +g.monthday || 1 }, c.schedule || {}),
+    };
+    renderModal();
+  }
+
+  function renderModal() {
+    let el = $('#modal');
+    if (!M) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'modal'; el.className = 'dau-modal'; root.appendChild(el); }
+    const g = S.cfg.global || {};
+    const s = M.s;
+    const custom = M.mode === 'custom';
+    const dayField = s.frequency === 'monthly'
+      ? `<div><div class="lbl">Day of month</div><select class="field" data-m="monthday">${Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}" ${+s.monthday === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>`
+      : s.frequency === 'daily'
+        ? `<div><div class="lbl">Day</div><select class="field" disabled><option>Every day</option></select></div>`
+        : `<div><div class="lbl">Day of week</div><select class="field" data-m="weekday">${DAYS.map((d, i) => `<option value="${i}" ${+s.weekday === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`;
+    el.innerHTML = `<div class="dau-dialog" role="dialog" aria-modal="true" aria-label="Schedule for ${esc(M.name)}">
+      <div class="d-h">Schedule for ${esc(M.name)}</div>
+      <div class="d-b">
+        <div class="seg two-up">
+          <button class="seg-b ${custom ? '' : 'on'}" data-m="mode" data-val="global">Use default</button>
+          <button class="seg-b ${custom ? 'on' : ''}" data-m="mode" data-val="custom">Own schedule</button>
+        </div>
+        ${custom ? `
+          <div><div class="lbl">Check for updates</div>
+            <div class="seg full">${FREQS.map(([v, l]) => `<button class="seg-b ${s.frequency === v ? 'on' : ''}" data-m="freq" data-val="${v}">${l}</button>`).join('')}</div></div>
+          <div class="two"><div><div class="lbl">Time</div><input class="field" type="time" data-m="time" value="${esc(s.time)}"></div>${dayField}</div>
+          <div class="note">Runs on this schedule even when the default schedule is off. The container still needs Auto switched on.</div>`
+        : `<div class="note">Follows the default schedule: ${g.enabled ? esc(schedShort(g)) : 'currently switched off'}.</div>`}
+      </div>
+      <div class="d-f"><button class="btn" data-m="cancel">Cancel</button><button class="btn primary" data-m="save">Save schedule</button></div>
+    </div>`;
+  }
+
+  async function saveSchedule() {
+    const m = M;
+    const schedule = m.mode === 'custom'
+      ? { frequency: m.s.frequency, time: m.s.time, weekday: +m.s.weekday, monthday: +m.s.monthday }
+      : null;
+    try {
+      await api('set_container', { name: m.name, fields: { schedule } });
+      M = null; renderModal();
+      toast(schedule ? 'Own schedule saved for ' + m.name : m.name + ' follows the default schedule',
+        schedule && !m.auto ? 'warn' : '');
+      if (schedule && !m.auto) toast('Switch Auto on for ' + m.name + ' so it runs.', 'warn');
+      await loadAll();
+    } catch (e) { toast(e.message, 'bad'); }
+  }
+
   /* ---------- data ---------- */
   async function loadAll() {
     try {
       const j = await api('list');
-      S.docker = j.docker; S.containers = j.containers; S.history = j.history || [];
       const keep = dirty ? S.cfg.global : null;
-      S.cfg = j.config; S.run = j.run;
-      if (keep) S.cfg.global = keep; S.next = j.next; S.last = j.last || {}; S.checkedAt = j.checked_at;
-      if (!S.cfg.containers || Array.isArray(S.cfg.containers)) S.cfg.containers = {};
+      S.docker = j.docker; S.containers = j.containers; S.history = j.history || [];
+      S.cfg = { global: j.config.global }; S.run = j.run; S.next = j.next; S.last = j.last || {}; S.checkedAt = j.checked_at;
+      if (keep) S.cfg.global = keep;
       if (S.first) { renderSettings(); S.first = false; }
       renderAll();
       if (S.run.running) startPolling();
@@ -986,7 +1198,7 @@ progress(['running' => false, 'finished' => time()]);
       if (S.logOpen) setLog(j.log);
       if (!S.run.running) {
         clearInterval(pollTimer); pollTimer = null;
-        if (was) { toast('Run finished', ''); await loadAll(); }
+        if (was) { toast('Run finished'); await loadAll(); }
       }
     } catch (e) { /* keep polling */ }
   }
@@ -1001,35 +1213,55 @@ progress(['running' => false, 'finished' => time()]);
     } catch (e) { toast(e.message, 'bad'); }
   }
 
-  /* ---------- settings ---------- */
+  /* ---------- default schedule settings ---------- */
   function queueSave() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveGlobal, 450); }
   async function saveGlobal() {
     try {
       const j = await api('save_global', { global: S.cfg.global });
       dirty = false;
       S.cfg.global = j.global; S.next = j.next;
-      renderBanner();
-      toast('Schedule saved');
+      await loadAll();
+      toast('Default schedule saved');
     } catch (e) { dirty = false; toast(e.message, 'bad'); }
   }
   function setGlobal(key, val) {
     S.cfg.global[key] = val;
-    renderSettings(); renderBanner();
-    if (key === 'enabled' && val && !S.containers.some(c => c.managed && isAuto(c.name))) {
-      toast('Auto-update is on, but no container is marked Auto yet.', 'warn');
+    renderSettings(); renderBanner(); renderList();
+    if (key === 'enabled' && val && !S.containers.some(c => c.managed && c.auto && !c.schedule)) {
+      toast('Default schedule is on, but no container is marked Auto yet.', 'warn');
     }
     queueSave();
   }
 
+  /* ---------- per-container toggles ---------- */
   async function setAuto(names, value) {
-    names.forEach(n => { S.cfg.containers[n] = { auto: value }; });
-    renderStats(); renderList();
-    try { await api('set_auto', { names, value }); }
+    S.containers.forEach(c => { if (names.includes(c.name)) c.auto = value; });
+    renderStats(); renderBanner(); renderList();
+    try { await api('set_auto', { names, value }); await loadAll(); }
+    catch (e) { toast(e.message, 'bad'); loadAll(); }
+  }
+  async function toggleNotify(name) {
+    const c = S.containers.find(x => x.name === name);
+    if (!c) return;
+    c.notify = !c.notify;
+    renderList();
+    try { await api('set_container', { name, fields: { notify: c.notify } }); }
     catch (e) { toast(e.message, 'bad'); loadAll(); }
   }
 
   /* ---------- events ---------- */
   root.addEventListener('click', e => {
+    const m = e.target.closest('[data-m]');
+    if (m && M) {
+      const k = m.dataset.m;
+      if (k === 'cancel') { M = null; renderModal(); }
+      else if (k === 'save') saveSchedule();
+      else if (k === 'mode') { M.mode = m.dataset.val; renderModal(); }
+      else if (k === 'freq') { M.s.frequency = m.dataset.val; renderModal(); }
+      return;
+    }
+    if (M && e.target.id === 'modal') { M = null; renderModal(); return; }
+
     const set = e.target.closest('[data-set]');
     if (set && set.classList.contains('switch')) { setGlobal(set.dataset.set, !S.cfg.global[set.dataset.set]); return; }
     if (set && set.classList.contains('seg-b')) { setGlobal(set.dataset.set, set.dataset.val); return; }
@@ -1043,10 +1275,14 @@ progress(['running' => false, 'finished' => time()]);
 
     const b = e.target.closest('[data-act]');
     if (!b || b.disabled) return;
-    const name = (b.closest('.row') || {}).dataset ? b.closest('.row').dataset.name : null;
+    const row = b.closest('.row');
+    const name = row ? row.dataset.name : null;
+    const cur = name ? S.containers.find(c => c.name === name) : null;
 
     switch (b.dataset.act) {
-      case 'toggle': setAuto([name], !isAuto(name)); break;
+      case 'toggle': setAuto([name], !(cur && cur.auto)); break;
+      case 'notify': toggleNotify(name); break;
+      case 'schedule': openSchedule(name); break;
       case 'update': start('update', { name }, 'Updating ' + name); break;
       case 'check': start('check', {}, 'Checking for updates'); break;
       case 'update-all': {
@@ -1079,6 +1315,13 @@ progress(['running' => false, 'finished' => time()]);
   });
 
   root.addEventListener('change', e => {
+    const mEl = e.target.closest('[data-m]');
+    if (mEl && M) {
+      const k = mEl.dataset.m;
+      if (k === 'time' && /^\d{2}:\d{2}$/.test(mEl.value)) M.s.time = mEl.value;
+      else if (k === 'weekday' || k === 'monthday') M.s[k] = parseInt(mEl.value, 10);
+      return;
+    }
     const el = e.target.closest('[data-set]');
     if (!el || el.classList.contains('switch') || el.classList.contains('seg-b')) return;
     const key = el.dataset.set;
@@ -1090,10 +1333,12 @@ progress(['running' => false, 'finished' => time()]);
     queueSave();
   });
 
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && M) { M = null; renderModal(); } });
+
   /* ---------- boot ---------- */
   shell();
   loadAll();
-  setInterval(() => { if (!S.run.running && !document.hidden) loadAll(); }, 60000);
+  setInterval(() => { if (!S.run.running && !document.hidden && !M) loadAll(); }, 60000);
 })();
 ]]></INLINE>
 </FILE>
@@ -1107,7 +1352,7 @@ chmod 755 &emhttp;/scripts/run.php
 echo ""
 echo "----------------------------------------------------"
 echo " Docker Auto Update &version; installed"
-echo " Open it from Settings > User Utilities (or Tools)"
+echo " Open it from Settings > User Utilities > Docker Auto Update"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>
