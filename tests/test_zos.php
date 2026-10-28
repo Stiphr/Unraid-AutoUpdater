@@ -347,18 +347,18 @@ t('workflow: Discord reports the workflow and keeps working', function () {
 });
 
 t('release: version, build, icon and update metadata are consistent', function () {
-  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
+  $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
   $ver = (string)$x['version']; $top = trim(strtok(file_get_contents(__DIR__ . '/../CHANGES.txt'), "\n"));
-  eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'unraid-autoupdater');
+  eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'unraid-swiss-manager');
   has($plg, "define('DAU_VERSION',   '$ver');"); lacks($plg, 'DAU_BUILD'); lacks($plg, '@@'); ok(preg_match('/^\d{4}\.\d{2}\.\d{2}([a-z]|b\d+)?$/', $ver) === 1, 'date format'); $beta = (bool)preg_match('/b\d+$/', $ver);
-  eq((string)$x['icon'], 'unraid-autoupdater.png'); has($plg, 'images/unraid-autoupdater.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
-  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/' . ($beta ? 'beta' : 'stable') . '/unraid-autoupdater.plg');
-  ok(dau_version_newer($ver, '2026.10.29') && dau_version_newer($ver, '2026.10.28f'), 'newer than the previous releases');
+  eq((string)$x['icon'], 'unraid-swiss-manager.png'); has($plg, 'images/unraid-swiss-manager.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
+  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/' . ($beta ? 'beta' : 'stable') . '/unraid-swiss-manager.plg');
+  ok(!dau_version_newer('2026.10.27', $ver) || $ver === '2026.10.28', 'the renamed plugin starts at 2026.10.28 or later');
   ok(!dau_version_newer($ver, $ver), 'not newer than itself');
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
   ok($fn >= 15, 'all inline files carry a checksum');
-  has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'Icon="unraid-autoupdater.png"');
-  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-autoupdater.png"); has($js, "class: 'brand'");
+  has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'Icon="unraid-swiss-manager.png"');
+  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-swiss-manager.png"); has($js, "class: 'brand'");
   ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'dau-name'"), 'logo is left of the title');
 });
 
@@ -372,38 +372,52 @@ t('release: settings and webhook survive a plugin update', function () {
   eq($n['os']['pre'], dau_os_pre_defaults()); eq($n['os']['mode'], 'notify'); eq($n['global']['update_delay_hours'], 48); eq($n['containers']['app']['policy'], 'auto');
 });
 
-t('rename: migration stub and one-time migration from docker.autoupdate', function () {
-  $new = dau_plg_parse(file_get_contents(__DIR__ . '/../unraid-autoupdater.plg')); $stub = dau_plg_parse(file_get_contents(__DIR__ . '/../docker.autoupdate.plg'));
-  ok($stub !== null, 'stub parses'); eq((string)$stub['name'], 'docker.autoupdate'); eq((string)$new['name'], 'unraid-autoupdater');
-  $isBeta = (bool)preg_match('/b\d+$/', (string)$new['version']); /* beta builds never touch the stub, which stays on the stable URL */
-  if (!$isBeta) eq((string)$stub['version'], (string)$new['version'], 'same version'); ok(dau_version_newer((string)$stub['version'], '2026.10.29a'), 'installed copies are offered the stub');
-  /* the stub was published under the old repo name; GitHub redirects it, so it is left as published */
-  eq((string)$stub['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg', 'old installs keep finding updates here');
-  $stubText = file_get_contents(__DIR__ . '/../docker.autoupdate.plg');
-  has($stubText, 'plugin install https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg'); has($stubText, 'plugin remove docker.autoupdate.plg'); lacks($stubText, 'rm -rf');
-  eq(count($stub->FILE), 2, 'install script + harmless remove script');
-  /* run the migration block of the new plugin in a sandbox */
-  $blk = null; foreach ($new->FILE as $f) if (isset($f['Run']) && strpos((string)$f->INLINE, 'docker.autoupdate') !== false && strpos((string)$f->INLINE, 'DAU_PLUGS') !== false) $blk = (string)$f->INLINE;
+t('rename: redirect stubs under both old names reach existing installs and install the new plugin', function () {
+  $new = dau_plg_parse(file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg')); $isBeta = (bool)preg_match('/b\d+$/', (string)$new['version']);
+  $branch = $isBeta ? 'beta' : 'stable'; $raw = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/';
+  $stubs = ['unraid-autoupdater' => $branch]; if (!$isBeta) $stubs['docker.autoupdate'] = 'stable';     /* beta builds leave docker.autoupdate.plg alone */
+  foreach ($stubs as $old => $br) {
+    $text = file_get_contents(__DIR__ . "/../$old.plg"); $stub = dau_plg_parse($text);
+    ok($stub !== null, "$old stub parses"); eq((string)$stub['name'], $old);
+    foreach (['2026.11.02', '2026.11.02b1', '2026.10.31b7'] as $last) ok(dau_version_newer((string)$stub['version'], $last), "$old stub is offered over $last");
+    eq((string)$stub['pluginURL'], "$raw$br/$old.plg", 'old installs keep finding updates here');
+    has($text, "plugin install $raw$br/unraid-swiss-manager.plg"); has($text, "plugin remove $old.plg"); lacks($text, 'rm -rf');
+    eq(count($stub->FILE), 2, 'install script + harmless remove script');
+  }
+});
+
+t('rename: one-time migration from unraid-autoupdater and docker.autoupdate', function () {
+  $new = dau_plg_parse(file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg'));
+  $blk = null; foreach ($new->FILE as $f) if (isset($f['Run']) && strpos((string)$f->INLINE, 'DAU_PLUGS') !== false) $blk = (string)$f->INLINE;
   ok($blk !== null, 'migration block present'); $box = '/tmp/dau-mig-' . getmypid(); dau_test_rm($box);
-  foreach (['/plugins/docker.autoupdate', '/em/docker.autoupdate', '/run'] as $d) mkdir($box . $d, 0755, true);
-  file_put_contents("$box/plugins/docker.autoupdate/config.json", '{"os":{"mode":"notify"}}'); file_put_contents("$box/plugins/docker.autoupdate/secrets.json", '{"discord_url":"x"}');
-  file_put_contents("$box/plugins/docker.autoupdate/history.json", '[]'); file_put_contents("$box/plugins/docker.autoupdate/docker-autoupdate.cron", "* * * * * x\n"); file_put_contents("$box/run/docker-autoupdate.lock", '');
-  mkdir("$box/plugins/unraid-autoupdater"); file_put_contents("$box/plugins/unraid-autoupdater/history.json", '["new"]');   // already present: must not be overwritten
+  foreach (['/plugins/unraid-autoupdater/template-backups', '/plugins/docker.autoupdate', '/em/unraid-autoupdater', '/em/docker.autoupdate', '/run', '/log'] as $d) mkdir($box . $d, 0755, true);
+  $o = "$box/plugins/unraid-autoupdater";
+  file_put_contents("$o/config.json", '{"os":{"mode":"install"}}'); file_put_contents("$o/secrets.json", '{"discord_url":"x"}'); file_put_contents("$o/history.json", '["newer"]');
+  file_put_contents("$o/template-backups/a__20260101-000000.xml", '<x/>'); file_put_contents("$o/unraid-autoupdater.cron", "* * * * * x\n");
+  foreach (['lock', 'progress', 'stop'] as $e) file_put_contents("$box/run/unraid-autoupdater.$e", ''); file_put_contents("$box/log/unraid-autoupdater.log", "old log\n");
+  file_put_contents("$box/plugins/docker.autoupdate/config.json", '{"os":{"mode":"notify"}}'); file_put_contents("$box/plugins/docker.autoupdate/state.json", '{"old":1}');
+  file_put_contents("$box/plugins/docker.autoupdate/docker-autoupdate.cron", "* * * * * y\n");
+  mkdir("$box/plugins/unraid-swiss-manager"); file_put_contents("$box/plugins/unraid-swiss-manager/quarantine.json", '["kept"]');   // already present: never overwritten
   file_put_contents("$box/mig.sh", $blk);
-  $cmd = "DAU_PLUGS=$box/plugins DAU_EMHTTP=$box/em DAU_RUN=$box/run bash $box/mig.sh 2>&1"; $out = shell_exec($cmd);
-  has($out, 'migrated'); eq(file_get_contents("$box/plugins/unraid-autoupdater/config.json"), '{"os":{"mode":"notify"}}'); eq(file_get_contents("$box/plugins/unraid-autoupdater/secrets.json"), '{"discord_url":"x"}');
-  eq(file_get_contents("$box/plugins/unraid-autoupdater/history.json"), '["new"]', 'existing files are never overwritten');
-  ok(!file_exists("$box/plugins/unraid-autoupdater/docker-autoupdate.cron") && !file_exists("$box/plugins/docker.autoupdate.migrated/docker-autoupdate.cron"), 'old schedule removed');
-  ok(!is_dir("$box/plugins/docker.autoupdate") && is_file("$box/plugins/docker.autoupdate.migrated/config.json"), 'old settings kept as .migrated');
-  ok(!is_dir("$box/em/docker.autoupdate") && !file_exists("$box/run/docker-autoupdate.lock"), 'old runtime removed');
-  $out2 = shell_exec($cmd); lacks($out2, 'migrated'); eq(file_get_contents("$box/plugins/unraid-autoupdater/config.json"), '{"os":{"mode":"notify"}}', 'second run does nothing');
+  $cmd = "DAU_PLUGS=$box/plugins DAU_EMHTTP=$box/em DAU_RUN=$box/run DAU_LOGDIR=$box/log bash $box/mig.sh 2>&1"; $out = shell_exec($cmd);
+  $n = "$box/plugins/unraid-swiss-manager";
+  has($out, 'unraid-autoupdater plugin were carried over'); has($out, 'docker.autoupdate plugin were carried over');
+  eq(file_get_contents("$n/config.json"), '{"os":{"mode":"install"}}', 'the newer name wins'); eq(file_get_contents("$n/secrets.json"), '{"discord_url":"x"}');
+  eq(file_get_contents("$n/history.json"), '["newer"]'); eq(file_get_contents("$n/state.json"), '{"old":1}', 'missing files are filled from the oldest name');
+  eq(file_get_contents("$n/quarantine.json"), '["kept"]', 'existing files are never overwritten'); ok(is_file("$n/template-backups/a__20260101-000000.xml"), 'sub folders are copied');
+  ok(!glob("$n/*.cron") && !glob("$box/plugins/*.migrated/*.cron"), 'old schedules removed');
+  ok(!is_dir($o) && is_file("$o.migrated/config.json") && is_file("$box/plugins/docker.autoupdate.migrated/config.json"), 'old settings kept as .migrated');
+  ok(!is_dir("$box/em/unraid-autoupdater") && !is_dir("$box/em/docker.autoupdate"), 'old runtime folders removed'); eq(glob("$box/run/*"), [], 'old run files removed');
+  eq(file_get_contents("$box/log/unraid-swiss-manager.log"), "old log\n", 'the log moves along');
+  $out2 = shell_exec($cmd); lacks($out2, 'carried over'); eq(file_get_contents("$n/config.json"), '{"os":{"mode":"install"}}', 'second run does nothing');
   dau_test_rm($box);
 });
 
 t('rename: no leftovers of the old name in the plugin code or the dashboard', function () {
   foreach (array_merge(glob(__DIR__ . '/../src/*'), glob(__DIR__ . '/../src/*/*')) as $f) {
     if (!is_file($f)) continue; $s = file_get_contents($f);
-    foreach (['docker.autoupdate', 'docker-autoupdate', 'DockerAutoUpdate', 'Docker Auto Update', 'Unraid Auto Updater', 'DAU_BUILD'] as $old) lacks($s, $old, basename($f));
+    foreach (['docker.autoupdate', 'docker-autoupdate', 'DockerAutoUpdate', 'Docker Auto Update', 'Unraid Auto Updater', 'UnraidAutoUpdater', 'DAU_BUILD'] as $old) lacks($s, $old, basename($f));
+    if (basename($f) !== 'appdata.php') lacks($s, 'unraid-autoupdater', basename($f));     // only the hidden quarantine folder in user shares keeps the old name
   }
   ok(is_file(__DIR__ . '/../src/UnraidSwissManager.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
   $css = file_get_contents(__DIR__ . '/../src/assets/app.css'); has($css, '.dau .ver{'); has($css, 'var(--accent)');

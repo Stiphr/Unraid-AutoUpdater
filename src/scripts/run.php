@@ -14,7 +14,7 @@
  *   --install / --uninstall   boot-time setup / removal
  */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
+require_once '/usr/local/emhttp/plugins/unraid-swiss-manager/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
