@@ -50,7 +50,7 @@ t('backups: an archive is written privately, atomically and listed', function ()
   ok($r['ok'], $r['error']); eq($r['kept'], 1); ok(is_file($r['file'])); eq(substr(sprintf('%o', fileperms($r['file'])), -4), '0600');
   ok((bool)preg_match('#/Unraid-Swiss-Manager/appdata/appdata-\d{8}-\d{6}\.tar\.gz$#', $r['file']));
   eq(glob('/mnt/dau-test/backups/Unraid-Swiss-Manager/appdata/.*.partial'), [], 'no temporary file left');
-  $a = $GLOBALS['TARS'][0]; has(implode(' ', $a), '-C / '); has(implode(' ', $a), '--exclude=mnt/dau-test/appdata/Cache'); has(implode(' ', $a), ' -- mnt/dau-test/appdata');
+  $a = $GLOBALS['TARS'][0]; has(implode(' ', $a), '-C / '); has(implode(' ', $a), '--exclude=mnt/dau-test/appdata/Cache'); has(implode(' ', $a), '--exclude=mnt/dau-test/appdata/.unraid-autoupdater-quarantine'); has(implode(' ', $a), ' -- mnt/dau-test/appdata');
   $f = dau_bk_list('appdata', '/mnt/dau-test/backups'); eq(count($f), 1); ok($f[0]['size'] > 0);
 });
 
@@ -74,6 +74,42 @@ t('backups: a failed run changes nothing (older archives stay) and says why', fu
   ok(!$r['ok']); has($r['error'], 'No space left'); eq(bk_files('appdata'), $before, 'nothing removed'); eq(glob('/mnt/dau-test/backups/Unraid-Swiss-Manager/appdata/.*.partial'), []);
   $GLOBALS['BK']['tar'] = 0; $GLOBALS['BK']['du'] = '9000000000000000'; $r = dau_bk_run('appdata', $cfg); ok(!$r['ok']); has($r['error'], 'Not enough free space'); eq(bk_files('appdata'), $before);
   $GLOBALS['BK']['du'] = 4096; $GLOBALS['BK']['tar'] = 1; $GLOBALS['DAU_NOW'] += 60; $r = dau_bk_run('appdata', $cfg); ok($r['ok'], 'exit 1 = files changed while reading, still a backup'); has(implode(' ', $r['notes']), 'changed');
+});
+
+/* docker ps/inspect/stop/start for the stop-containers option; DOCKER_LOG records stop/start order */
+function bk_docker(array $running, array $fail = []) {
+  $GLOBALS['BKD'] = ['running' => $running, 'fail' => $fail, 'log' => []];
+  $prev = $GLOBALS['DAU_EXEC_MOCK'];
+  mock_exec(function ($a, $in) use ($prev) {
+    if (basename($a[0]) !== 'docker') return $prev($a, $in);
+    $D =& $GLOBALS['BKD'];
+    if ($a[1] === 'ps') return ['out' => implode("\n", array_keys($D['running'])) . "\n"];
+    if ($a[1] === 'inspect') { $o = []; foreach ($D['running'] as $n => $src) $o[] = ['Name' => "/$n", 'State' => ['Status' => 'running'], 'Mounts' => [['Type' => 'bind', 'Source' => $src]]]; return ['out' => json_encode($o)]; }
+    if ($a[1] === 'stop' || $a[1] === 'start') { $n = end($a); $D['log'][] = $a[1] . ' ' . $n; return ['code' => in_array($a[1] . ' ' . $n, $D['fail'], true) ? 1 : 0]; }
+    return null;
+  });
+}
+
+t('backups: "stop the containers" stops users of appdata (dependants first) and starts them again in order', function () {
+  $cfg = bkenv(['appdata' => ['stop_containers' => true]]);
+  $cfg['containers'] = ['app' => ['after' => ['db']]]; dau_save_config($cfg); $cfg = dau_load_config();
+  bk_docker(['app' => '/mnt/dau-test/appdata/plex', 'db' => '/mnt/dau-test/appdata/db', 'media' => '/mnt/dau-test/media']);
+  $r = dau_bk_run('appdata', $cfg); ok($r['ok'], $r['error']);
+  eq($GLOBALS['BKD']['log'], ['stop app', 'stop db', 'start db', 'start app'], 'media is not stopped, db starts first');
+  has(implode(' ', $r['notes']), 'Stopped during the backup');
+  $cfg['backups']['appdata']['stop_containers'] = false; bk_docker(['app' => '/mnt/dau-test/appdata/plex']); $GLOBALS['DAU_NOW'] += 60;
+  ok(dau_bk_run('appdata', $cfg)['ok']); eq($GLOBALS['BKD']['log'], [], 'off: nothing is stopped');
+});
+
+t('backups: containers are started again when tar fails; a refused stop aborts; a failed start is reported', function () {
+  $cfg = bkenv(['appdata' => ['stop_containers' => true]]);
+  bk_docker(['app' => '/mnt/dau-test/appdata/plex']); $GLOBALS['BK']['tar'] = 2;
+  $r = dau_bk_run('appdata', $cfg); ok(!$r['ok']); eq($GLOBALS['BKD']['log'], ['stop app', 'start app'], 'started again after a failed tar');
+  $GLOBALS['BK']['tar'] = 0;
+  bk_docker(['a' => '/mnt/dau-test/appdata/x', 'b' => '/mnt/dau-test/appdata/y'], ['stop a']); $GLOBALS['TARS'] = [];
+  $r = dau_bk_run('appdata', $cfg); ok(!$r['ok']); has($r['error'], 'could not be stopped'); eq($GLOBALS['TARS'], [], 'no archive'); eq($GLOBALS['BKD']['log'], ['stop b', 'stop a', 'start b'], 'what was stopped is started again');
+  bk_docker(['app' => '/mnt/dau-test/appdata/plex'], ['start app']); $GLOBALS['DAU_NOW'] += 60;
+  $r = dau_bk_run('appdata', $cfg); ok(!$r['ok'], 'a container left down is not a success'); has($r['error'], 'did not start again'); ok(is_file($r['file']), 'the archive itself is kept');
 });
 
 t('backups: the boot drive archive is checked and /boot is the source', function () {

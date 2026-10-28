@@ -1,3 +1,10 @@
+###2026.11.02b1
+- BETA. New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
+- BETA. Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
+- BETA. Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- BETA. Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
+- BETA. Improved: an automatic reboot after an OS update also waits while the mover is running.
+- BETA. Improved: no deprecation warnings on newer PHP versions.
 ###2026.10.31b7
 - BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6

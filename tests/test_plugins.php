@@ -68,6 +68,11 @@ t('plugins: failed install is detected despite exit code 0, no rollback attempte
   eq(count(calls_matching('plugin update')), 1);
 });
 
+t('plugins: parsing a plg leaves XML file loading working (PHP 7 entity loader is restored)', function () {
+  ok(dau_plg_parse(plg_xml('2')) !== null);
+  file_put_contents('/tmp/dau-t.xml', '<a><b>1</b></a>'); ok(@simplexml_load_file('/tmp/dau-t.xml') !== false, 'simplexml_load_file still works'); @unlink('/tmp/dau-t.xml');
+});
+
 t('plugins: validation blocks unsafe updates', function () {
   $cases = [
     'new host'      => [plg_xml('2', '<FILE Name="/x"><URL>https://evil.example.net/x</URL></FILE>'), 'new host'],

@@ -39,6 +39,7 @@ define('DAU_OSVERFILE', '/etc/unraid-version');
 define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
+define('DAU_MOVERPID',  '/var/run/mover.pid');
 define('DAU_SELF_PLG',  'unraid-autoupdater.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
@@ -250,6 +251,12 @@ function dau_unraid_notify($subject, $desc, $importance = 'normal', $link = '/Do
   if (!is_file(DAU_NOTIFY)) return;
   dau_run([DAU_NOTIFY, '-e', DAU_NAME, '-s', dau_clip(dau_redact($subject), 120),
            '-d', dau_clip(dau_redact($desc), 500), '-i', $importance, '-l', $link], 30);
+}
+
+/** True when the pid file names a process that is still alive (a stale file left by a crash does not count). */
+function dau_pid_alive($file) {
+  $pid = (int)trim((string)@file_get_contents($file));
+  return $pid > 1 && is_dir('/proc/' . $pid);
 }
 
 function dau_valid_name($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $n) === 1; }

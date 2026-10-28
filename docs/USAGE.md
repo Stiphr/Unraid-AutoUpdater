@@ -140,7 +140,7 @@ Unraid 6.9.0+ (PHP-7.4-safe syntax). Behaviour was verified against the current 
 - The delay starts when the update is first *seen*, not when it was published (registries do not expose that reliably).
 - No automatic rollback for containers or plugins (by design); guidance only.
 - Containers not created from an Unraid template (e.g. compose) are listed but cannot be updated here.
-- Appdata backups are not application-consistent.
+- Appdata backups are not application-consistent unless *Stop the containers while the backup runs* is on.
 
 ## Troubleshooting
 
@@ -191,6 +191,6 @@ The **Backups** tab makes archives of your appdata folders and of the boot drive
 - **When:** not on a schedule, every week, or every month (day and time of your choice). Appdata can also be backed up right before updates are installed. That happens once per run and only when an update is really going to be installed. Turn on *Do not install the updates if this backup fails* to hold updates back until a backup works.
 - **Where:** a folder under `/mnt` (for example `/mnt/user/backups`). Files go into `Unraid-Swiss-Manager/appdata` and `Unraid-Swiss-Manager/flash` inside it. The folder must not be inside the data that is backed up.
 - **How many:** keep 1, 2 or 3. After a new backup has finished successfully, older ones beyond that number are deleted. The newest is never deleted, and a failed or low-space backup deletes nothing.
-- **Appdata is not application-consistent.** Containers keep running while their folders are read, so a database can be captured mid-write. Use a plugin that stops containers first for databases. Individual folders can be left out.
+- **Appdata is not application-consistent by default.** Containers keep running while their folders are read, so a database can be captured mid-write. Turn on *Stop the containers while the backup runs* (Backups tab) to stop the running containers that use the appdata folders for the backup and start them again afterwards, in their *update after* order, also when the backup fails. Individual folders can be left out, and the Cleanup quarantine is never included.
 - **Safety:** archives are created private (0600), written under a temporary name and renamed when complete; the boot drive archive is read back to check it. Free space is checked first.
 - **Restore:** each file is a normal `.tar.gz`. Appdata: stop the container, then `tar -xzf appdata-DATE.tar.gz -C /`. Boot drive: unpack onto a freshly prepared USB drive.
