@@ -11,12 +11,10 @@ function api_call($action, array $post = [], $method = 'POST', $csrf = 'tok') {
   return json_decode((string)$out, true) ?: ['_raw' => $out];
 }
 
-t('api: changes need POST and a valid CSRF token', function () {
+t('api: changes need POST', function () {
   has(api_call('save_config', ['config' => '{}'], 'GET')['error'] ?? '', 'POST');
-  has(api_call('save_config', ['config' => '{}'], 'POST', 'wrong')['error'] ?? '', 'security token');
   ok(isset(api_call('stop', [], 'POST', 'tok')['ok']));
-  ok(!is_file(DAU_CFG) || true);
-  eq(api_call('stop', [], 'POST', null)['error'] ?? '', 'Invalid security token. Reload the page.');
+  /* the token itself is validated by Unraid's auto-prepended local_prepend.php (it also strips it), not by this API */
 });
 
 t('api: save_config validates and never returns the webhook; secrets are separate', function () {

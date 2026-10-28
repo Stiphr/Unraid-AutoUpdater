@@ -40,7 +40,7 @@
 
   function api(action, data, post) {
     var fd = new FormData(); fd.append('action', action);
-    if (post) fd.append('csrf_token', window.DAU_CSRF || '');
+    fd.append('csrf_token', window.DAU_CSRF || '');   // Unraid rejects any POST without it, reads included
     for (var k in (data || {})) fd.append(k, typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k]);
     return fetch(API, { method: post ? 'POST' : 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
       return r.json().catch(function () { return { error: 'Unexpected response (' + r.status + ')' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'Request failed (' + r.status + ')'; return j; });

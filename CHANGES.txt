@@ -1,3 +1,5 @@
+###2026.10.28c
+- Fix: the page stayed on "Loading" because every request must carry Unraid's CSRF token (and Unraid removes it before the plugin sees it).
 ###2026.10.28b
 - Update manager: per-container policies (auto / notify only / ignore), update delay tracked per image digest, maintenance window, critical containers that need your approval.
 - Update preview with confirmation before manual (bulk) updates.
