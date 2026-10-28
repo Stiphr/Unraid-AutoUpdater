@@ -1,11 +1,11 @@
-<p align="center"><img src="assets/icon.png" width="96" alt="Unraid AutoUpdater logo"></p>
+<p align="center"><img src="assets/icon.png" width="96" alt="Unraid Swiss Manager logo"></p>
 
-# Unraid AutoUpdater
+# Unraid Swiss Manager
 
 <p align="center">
-<img src="https://img.shields.io/github/v/release/Stiphr/Unraid-AutoUpdater?label=release&color=0078d4" alt="Release version">
+<img src="https://img.shields.io/github/v/release/Stiphr/Unraid-Swiss-Manager?label=release&color=0078d4" alt="Release version">
 <img src="https://img.shields.io/badge/Unraid-tested%20with%207.3.4-e8e8e8?labelColor=e8612c" alt="Unraid tested with 7.3.4">
-<img src="https://img.shields.io/github/issues/Stiphr/Unraid-AutoUpdater?label=issues&color=44cc11" alt="Open issues">
+<img src="https://img.shields.io/github/issues/Stiphr/Unraid-Swiss-Manager?label=issues&color=44cc11" alt="Open issues">
 </p>
 
 Keep your Unraid server up to date from one dashboard: Docker containers, plugins and Unraid OS, with schedules, safety checks, history and Discord notifications. It only uses Unraid's own update mechanisms and never bypasses its checks.
@@ -15,10 +15,10 @@ Keep your Unraid server up to date from one dashboard: Docker containers, plugin
 - **Docker containers** – global default plus a per-container policy (*Auto update*, *Notify only*, *Ignore*), schedule (daily, weekly, bi-weekly, monthly), delay, maintenance window and optional backup. Updates are verified; the old image is only removed after success.
 - **Plugins** – update checks, notifications and optional automatic installation, per plugin, with safety validation.
 - **Unraid OS** – checked and **notify only by default**. Automatic install and reboot are opt-in, with a maintenance window, a waiting period and a pre-update workflow (plugins first, health checks, optional confirmation).
-- **Discord** – optional webhook notifications with the Unraid AutoUpdater logo.
+- **Discord** – optional webhook notifications with the Unraid Swiss Manager logo.
 - **History and dashboard** – dark UI that matches Unraid, an activity log and statistics.
 
-![Unraid AutoUpdater dashboard](assets/dashboard.png)
+![Unraid Swiss Manager dashboard](assets/dashboard.png)
 
 ## ⚠️ Disclaimer
 
@@ -31,9 +31,9 @@ This plugin was written by me with the help of AI assistants (Claude and ChatGPT
 1. In Unraid open **Plugins → Install Plugin** and paste:
 
    ```
-   https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg
+   https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg
    ```
-2. Open it from **Settings → User Utilities → Unraid AutoUpdater** (or click its icon on the Plugins page).
+2. Open it from **Settings → User Utilities → Unraid Swiss Manager** (or click its icon on the Plugins page).
 3. **Updates** appear on the Plugins page like for any other plugin.
 
 Coming from *Docker Auto Update* (`docker.autoupdate`)? Just update it from the Plugins page. Your settings, history and webhook are kept and the old entry is removed.
