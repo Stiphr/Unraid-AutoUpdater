@@ -1,5 +1,5 @@
 <?php
-/* Docker Auto Update - JSON API. Reads are GET/POST; EVERY change requires POST + Unraid's CSRF token. */
+/* Docker Auto Update - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
 require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
 
 header('Content-Type: application/json');
@@ -13,8 +13,8 @@ $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
 $READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
-  $tok = $GLOBALS['var']['csrf_token'] ?? (@parse_ini_file(DAU_VARINI)['csrf_token'] ?? '');
-  if ($tok === '' || !hash_equals((string)$tok, (string)($_POST['csrf_token'] ?? ''))) fail('Invalid security token. Reload the page.', 403);
+  /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
+     so it must not be re-checked here: it is already gone. Mutations are POST-only. */
 }
 $json = function ($k) { $v = json_decode((string)($_POST[$k] ?? ''), true); return is_array($v) ? $v : null; };
 

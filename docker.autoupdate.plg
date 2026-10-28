@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.28b">
+<!ENTITY version "2026.10.28d">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
@@ -10,6 +10,10 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/DockerAutoUpdate" min="6.9.0" icon="refresh">
 
 <CHANGES>
+###2026.10.28d
+- Fix: requests are sent form-encoded (multipart uploads hang on Unraid's web server), which is what kept the page on "Loading".
+###2026.10.28c
+- Fix: the page stayed on "Loading" because every request must carry Unraid's CSRF token (and Unraid removes it before the plugin sees it).
 ###2026.10.28b
 - Update manager: per-container policies (auto / notify only / ignore), update delay tracked per image digest, maintenance window, critical containers that need your approval.
 - Update preview with confirmation before manual (bulk) updates.
@@ -61,7 +65,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/as
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.28b');
+define('DAU_VERSION',   '2026.10.28d');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/docker.autoupdate');
 define('DAU_DIR',       '/boot/config/plugins/docker.autoupdate');
 define('DAU_CFG',       DAU_DIR . '/config.json');
@@ -2268,7 +2272,7 @@ function dau_uninstall() {
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
 <INLINE><![CDATA[<?php
-/* Docker Auto Update - JSON API. Reads are GET/POST; EVERY change requires POST + Unraid's CSRF token. */
+/* Docker Auto Update - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
 require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
 
 header('Content-Type: application/json');
@@ -2282,8 +2286,8 @@ $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
 $READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
-  $tok = $GLOBALS['var']['csrf_token'] ?? (@parse_ini_file(DAU_VARINI)['csrf_token'] ?? '');
-  if ($tok === '' || !hash_equals((string)$tok, (string)($_POST['csrf_token'] ?? ''))) fail('Invalid security token. Reload the page.', 403);
+  /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
+     so it must not be re-checked here: it is already gone. Mutations are POST-only. */
 }
 $json = function ($k) { $v = json_decode((string)($_POST[$k] ?? ''), true); return is_array($v) ? $v : null; };
 
@@ -2603,8 +2607,8 @@ exit(64);
   function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : '') }, msg); root.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
 
   function api(action, data, post) {
-    var fd = new FormData(); fd.append('action', action);
-    if (post) fd.append('csrf_token', window.DAU_CSRF || '');
+    var fd = new URLSearchParams(); fd.append('action', action);   // urlencoded, not multipart: multipart POSTs hang on Unraid's web server
+    fd.append('csrf_token', window.DAU_CSRF || '');   // Unraid rejects any POST without it, reads included
     for (var k in (data || {})) fd.append(k, typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k]);
     return fetch(API, { method: post ? 'POST' : 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
       return r.json().catch(function () { return { error: 'Unexpected response (' + r.status + ')' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'Request failed (' + r.status + ')'; return j; });
