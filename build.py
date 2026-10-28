@@ -27,7 +27,7 @@ out = ["""<?xml version='1.0' standalone='yes'?>
 <!ENTITY version "%s">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/%s/unraid-autoupdater.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/%s/unraid-autoupdater.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
 
@@ -94,8 +94,8 @@ chmod 755 &emhttp;/scripts/run.php
 /usr/bin/php &emhttp;/scripts/run.php --install
 echo ""
 echo "----------------------------------------------------"
-echo " Unraid AutoUpdater &version; installed"
-echo " Open it from Settings > User Utilities > Unraid AutoUpdater"
+echo " Unraid Swiss Manager &version; installed"
+echo " Open it from Settings > User Utilities > Unraid Swiss Manager"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>
@@ -108,7 +108,7 @@ rm -f &flash;/unraid-autoupdater.cron
 /usr/local/sbin/update_cron 2>/dev/null
 rm -rf &emhttp;
 rm -f /var/run/unraid-autoupdater.lock /var/run/unraid-autoupdater.progress /var/run/unraid-autoupdater.stop
-echo "Unraid AutoUpdater removed. Settings, history and backups were kept in &flash;"
+echo "Unraid Swiss Manager removed. Settings, history and backups were kept in &flash;"
 </INLINE>
 </FILE>
 
@@ -119,23 +119,23 @@ print('built unraid-autoupdater.plg', version, '(beta)' if BETA else '')
 if BETA: sys.exit(0)
 
 # ---- migration stub: keeps the old plugin name updatable and moves installs over to the new one ----
-NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg'
+NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg'
 stub = """<?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
 <!ENTITY version "%s">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/docker.autoupdate.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="refresh">
 
 <CHANGES>
 ###%s
-- Renamed: this plugin is now called Unraid AutoUpdater (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
+- Renamed: this plugin is now called Unraid Swiss Manager (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
 </CHANGES>
 
 <FILE Run="/bin/bash">
-<INLINE><![CDATA[echo "Docker Auto Update is now Unraid AutoUpdater. Installing the new plugin..."
+<INLINE><![CDATA[echo "Docker Auto Update is now Unraid Swiss Manager. Installing the new plugin..."
 /usr/local/sbin/plugin install %s
 # this entry is registered by the update that is running right now, so it is removed a moment later
 nohup setsid bash -c 'sleep 20; /usr/local/sbin/plugin remove docker.autoupdate.plg' > /dev/null 2>&1 &
@@ -144,7 +144,7 @@ echo "The old docker.autoupdate entry will disappear in a few seconds."
 </FILE>
 
 <FILE Run="/bin/bash" Method="remove">
-<INLINE><![CDATA[echo "Old docker.autoupdate entry removed. Unraid AutoUpdater and its settings are untouched."
+<INLINE><![CDATA[echo "Old docker.autoupdate entry removed. Unraid Swiss Manager and its settings are untouched."
 ]]></INLINE>
 </FILE>
 

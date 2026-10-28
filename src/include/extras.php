@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - extra features: dependency order, major-version flag, rollback, cleanup tools, release notes,
+ * Unraid Swiss Manager - extra features: dependency order, major-version flag, rollback, cleanup tools, release notes,
  * quiet hours and the links used in notifications. Nothing here runs unless the matching setting or button is used.
  */
 
@@ -319,7 +319,7 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
 
 /* ---------------- plugin channel (stable / beta) and force update ---------------- */
 
-const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/';
+const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/';
 
 function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'main') . '/unraid-autoupdater.plg' : ''; }
 

@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - command line runner.
+ * Unraid Swiss Manager - command line runner.
  *   --tick                    cron dispatcher: runs whatever is due (called every 5 minutes)
  *   --check                   refresh Docker/plugin/OS update information, update nothing
  *   --update-docker=a,b       update these containers now (manual: policy, delay and window are bypassed)

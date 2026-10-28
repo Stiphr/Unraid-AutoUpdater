@@ -5,8 +5,8 @@ function chplg($ch) { @mkdir(DAU_PLUGBOOT, 0755, true); file_put_contents(DAU_PL
 
 t('channel: current branch is read from the installed plugin file; only two fixed addresses exist', function () {
   chplg('stable'); eq(dau_channel_current(), 'stable'); chplg('beta'); eq(dau_channel_current(), 'beta');
-  eq(dau_channel_url('stable'), 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg');
-  eq(dau_channel_url('beta'), 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/beta/unraid-autoupdater.plg');
+  eq(dau_channel_url('stable'), 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg');
+  eq(dau_channel_url('beta'), 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-autoupdater.plg');
   eq(dau_channel_url('../evil'), ''); eq(dau_channel_install('http://evil/x.plg')['ok'], false);
 });
 

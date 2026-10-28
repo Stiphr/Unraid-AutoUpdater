@@ -10,11 +10,11 @@ try {
   if ($dau_on) {
     $dau_csrf = json_encode($var['csrf_token'] ?? '');
     $mytiles['unraid-autoupdater']['column2'] = <<<EOT
-<tbody title="Unraid AutoUpdater" id="dau-tile">
+<tbody title="Unraid Swiss Manager" id="dau-tile">
 <tr><td>
 <img id="dau-w-logo" class="img" src="/plugins/unraid-autoupdater/images/unraid-autoupdater.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
-<div class="section">Unraid AutoUpdater<br><span id="dau-w-sum" class="dau-w">Checking&hellip;</span></div>
-<a href="/Settings/UnraidAutoUpdater" title="Open Unraid AutoUpdater"><i class="fa fa-fw fa-cog chevron"></i></a>
+<div class="section">Unraid Swiss Manager<br><span id="dau-w-sum" class="dau-w">Checking&hellip;</span></div>
+<a href="/Settings/UnraidAutoUpdater" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
 </td></tr>
 <tr id="dau-r-docker"><td><span class="w25">Docker</span><span id="dau-w-docker">-</span></td></tr>
 <tr id="dau-r-plugins"><td><span class="w25">Plugins</span><span id="dau-w-plugins">-</span></td></tr>

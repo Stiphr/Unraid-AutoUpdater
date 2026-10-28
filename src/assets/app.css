@@ -1,4 +1,4 @@
-/* Unraid AutoUpdater - dark grey UI matching the Unraid theme. Scoped to .dau so it never leaks into the page. */
+/* Unraid Swiss Manager - dark grey UI matching the Unraid theme. Scoped to .dau so it never leaks into the page. */
 .dau{--bg:#1d1b1b;--panel:#222020;--bar:#262626;--field:#181616;--line:#333030;--line-2:#433f3f;--text:#e8e6e6;--muted:#9b9797;--accent:#f15a2c;--accent-hi:#ff7447;--accent-btn:#d4431a;--accent-btn-hi:#bd3a14;--accent-text:#ff7447;--amber:#e8b33c;--info:#6f93e0;--ok:#4ec38b;--bad:#ff6b5e;--link:#6f93e0;
   --hover:#252323;--open:#201e1e;--banner:#2a2620;--banner-bad:#2a2120;--banner-ok:#202823;--pre:#cfcaca;--title:#fff;
   --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--text);font:14px/1.5 var(--font);padding:4px 0 24px;margin:0;text-align:left;position:relative}

@@ -1,5 +1,5 @@
 Menu="Utilities"
-Title="Unraid AutoUpdater"
+Title="Unraid Swiss Manager"
 Icon="unraid-autoupdater.png"
 ---
 <?php

@@ -1,5 +1,5 @@
 <?php
-/* Unraid AutoUpdater - persistent state, history and statistics (all bounded). */
+/* Unraid Swiss Manager - persistent state, history and statistics (all bounded). */
 
 function dau_state_defaults() {
   $stat = ['ok' => 0, 'failed' => 0, 'dur' => 0];

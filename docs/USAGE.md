@@ -1,4 +1,4 @@
-# Unraid AutoUpdater – detailed guide
+# Unraid Swiss Manager – detailed guide
 
 Back to the [README](../README.md).
 
@@ -115,7 +115,7 @@ There is no automatic rollback. Unraid keeps the previous release on the flash d
 
 ## Discord
 
-Settings → Discord: enable, paste the webhook (messages are sent as **Unraid AutoUpdater** with an orange-on-grey icon as avatar and header; set *Icon image URL* to use your own https image), **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
+Settings → Discord: enable, paste the webhook (messages are sent as **Unraid Swiss Manager** with an orange-on-grey icon as avatar and header; set *Icon image URL* to use your own https image), **Send test message**. Toggles per category (Docker/Plugins/OS) and per type (available / success / failed / summary), combine or one message per notification, max messages per run. Embeds respect Discord limits; rate limits (HTTP 429) are honoured; a rejected webhook (401/403/404) is marked invalid until you save a new one. Mentions are disabled. The URL is stored only in a separate `secrets.json`, is never shown again, never logged, never in exports. Notification failures never fail an update.
 
 ## Scheduling
 
@@ -181,4 +181,4 @@ Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins
 
 - **Plugin branch**: *Stable* is the `main` branch, *Beta* is the `beta` branch (test servers only; a warning and a confirmation box are shown). Switching installs the plugin from that branch right away and keeps your settings, history and webhook. *Check versions* shows what each branch offers.
 - **Force update** reinstalls the plugin from the branch you are on even if the version is the same, for example to repair a broken install.
-- **Save settings to a file** downloads all settings (never the Discord webhook) under the name you choose; the default is `Unraid-AutoUpdater-Settings-YYYY-MM-DD`. **Load settings from a file** shows what the file contains and asks before it replaces the current settings (a copy of the old ones is kept).
+- **Save settings to a file** downloads all settings (never the Discord webhook) under the name you choose; the default is `Unraid-Swiss-Manager-Settings-YYYY-MM-DD`. **Load settings from a file** shows what the file contains and asks before it replaces the current settings (a copy of the old ones is kept).

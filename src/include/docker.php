@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - Docker containers.
+ * Unraid Swiss Manager - Docker containers.
  *
  * Update flow (per container), every step verified on its own; exit codes are never trusted alone:
  *   disk check -> optional backups -> docker pull (classified) -> compare image ids -> Unraid's update_container

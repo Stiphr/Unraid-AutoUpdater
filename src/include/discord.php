@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - Discord webhook notifications.
+ * Unraid Swiss Manager - Discord webhook notifications.
  *  - The URL is read from secrets.json only at send time; it is never logged, never returned by the API and is
  *    scrubbed from every message by dau_redact().
  *  - Only https://discord.com/api/webhooks/... style URLs are ever contacted (see dau_webhook_valid()).
@@ -8,7 +8,7 @@
  */
 
 /* Default avatar: an original icon (orange glyph on grey) published in this repository. Replace it in Settings with any https image. */
-const DAU_DEFAULT_ICON = 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/main/assets/icon.png';
+const DAU_DEFAULT_ICON = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/main/assets/icon.png';
 const DAU_DISCORD_EMBEDS_PER_MSG = 10;
 const DAU_DISCORD_CHARS_PER_MSG  = 5600;   // hard limit is 6000 characters across all embeds of a message
 

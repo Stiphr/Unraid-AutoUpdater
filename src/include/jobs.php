@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - job orchestration. One lock, one dispatcher (the "tick"), events collected during a run and
+ * Unraid Swiss Manager - job orchestration. One lock, one dispatcher (the "tick"), events collected during a run and
  * announced once at the end (Unraid notifications + one combined Discord summary).
  */
 
@@ -294,7 +294,7 @@ function dau_job_finish(array &$J) {
     dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : ($e['type'] === 'cleanup' ? '/Settings/UnraidAutoUpdater' : '/Docker')));
     $sent++;
   }
-  if ($more) dau_unraid_notify("Unraid AutoUpdater: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
+  if ($more) dau_unraid_notify("Unraid Swiss Manager: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
   /* Discord (never fails the job) */
   $sumSend['status'] = $sum['status']; $sumSend['trigger'] = $sum['trigger'];
   try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sumSend); }
@@ -425,7 +425,7 @@ function dau_job_main($action, array $o = []) {
 function dau_cron_apply(array $cfg) {
   $any = dau_docker_slots($cfg) || dau_plugin_slots($cfg) || dau_os_slots($cfg);
   if ($any) {
-    $line = "# Unraid AutoUpdater dispatcher (generated; do not edit)\n*/" . DAU_TICK_MIN . ' * * * * ' . DAU_PHP . ' ' . DAU_ROOT . "/scripts/run.php --tick > /dev/null 2>&1\n";
+    $line = "# Unraid Swiss Manager dispatcher (generated; do not edit)\n*/" . DAU_TICK_MIN . ' * * * * ' . DAU_PHP . ' ' . DAU_ROOT . "/scripts/run.php --tick > /dev/null 2>&1\n";
     if (!is_dir(DAU_DIR)) @mkdir(DAU_DIR, 0755, true);
     if (@file_get_contents(DAU_CRON) !== $line) file_put_contents(DAU_CRON, $line);
   } elseif (is_file(DAU_CRON)) @unlink(DAU_CRON);

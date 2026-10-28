@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - appdata cleanup: orphaned appdata folders (quarantine first), and saved templates of deleted containers.
+ * Unraid Swiss Manager - appdata cleanup: orphaned appdata folders (quarantine first), and saved templates of deleted containers.
  * Never deletes anything it was not asked to: every action is checked again against a fresh scan, paths come from the scan and never from
  * the browser, and a folder that any container (even a stopped one) still maps is never touched. When Docker cannot be asked, nothing is offered.
  */

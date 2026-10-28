@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid AutoUpdater - schedule maths.
+ * Unraid Swiss Manager - schedule maths.
  * All times are the server's local time zone (Settings > Date and Time), exactly like Unraid's own schedules.
  * The dispatcher ("tick") runs every DAU_TICK_MIN minutes; a schedule is "due" when its latest occurrence has
  * passed, has not run yet and is not older than DAU_CATCHUP (so a reboot over 04:00 still runs at 04:07, but a

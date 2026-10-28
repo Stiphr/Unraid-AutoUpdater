@@ -1,5 +1,5 @@
 <?php
-/* Unraid AutoUpdater - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
+/* Unraid Swiss Manager - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
 require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
 
 header('Content-Type: application/json');
