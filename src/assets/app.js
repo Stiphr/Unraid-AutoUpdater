@@ -56,6 +56,7 @@
     if (want === 'docker') jobs.push(api('docker').then(function (j) { S.docker = j; }));
     if (want === 'plugins') jobs.push(api('plugins').then(function (j) { S.plugins = j; }));
     if (want === 'os') jobs.push(api('os').then(function (j) { S.os = j; }));
+    if (want === 'backups') jobs.push(api('backups').then(function (j) { S.bk = j.error ? null : j; }));
     if (want === 'cleanup') jobs.push(api('history').then(function (j) { S.hist = j.rows || []; }));
     if (want === 'activity') { jobs.push(api('history').then(function (j) { S.hist = j.rows || []; })); jobs.push(api('log').then(function (j) { S.log = j.log || ''; })); }
     return Promise.all(jobs).then(render);
@@ -141,7 +142,7 @@
   }
 
   /* ---------- shell ---------- */
-  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['cleanup', 'Cleanup'], ['settings', 'Settings'], ['activity', 'Activity']];
+  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['cleanup', 'Cleanup'], ['backups', 'Backups'], ['settings', 'Settings'], ['activity', 'Activity']];
   var runBar = h('div');
   function renderRunBar() {
     clear(runBar);
@@ -166,7 +167,7 @@
     });
     root.appendChild(tabs);
     applyTheme(S.tab === 'settings' && S.draft ? S.draft.ui : S.ov.config.ui);
-    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, settings: vSettings, activity: vActivity }[S.tab]();
+    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, backups: vBackups, settings: vSettings, activity: vActivity }[S.tab]();
     root.appendChild(body);
   }
 
@@ -788,6 +789,79 @@
     });
     return h('div', { class: 'fld' }, h('label', null, 'When an update is found'), sel, h('span', { class: 'hint' }, 'Default: only check and notify. An automatic mode needs your explicit confirmation.'));
   }
+  /* ---------- backups: appdata and boot drive ---------- */
+  function bkKind(k) {
+    var info = S.bk && S.bk.backups ? S.bk.backups[k] : null, b = S.draft.backups[k], busy = S.ov.run.running;
+    var saved = S.ov.config.backups[k], dirty = JSON.stringify(b) !== JSON.stringify(saved);
+    var p = h('div', { class: 'panel' }, h('h3', null, k === 'flash' ? 'Boot drive (USB flash)' : 'Appdata folders'));
+    var last = info && info.last;
+    var st = h('div', { class: 'inl' });
+    if (last && last.at) st.appendChild(h('span', { class: 'badge ' + (last.ok ? 'ok' : 'bad') }, last.ok ? 'Last backup OK' : 'Last backup failed'));
+    else st.appendChild(h('span', { class: 'badge off' }, 'No backup yet'));
+    if (last && last.at) st.appendChild(h('span', { class: 'muted sm' }, ago(last.at) + (last.ok ? ' · ' + bytes(last.size) : '') + (last.reason ? ' · ' + last.reason : '')));
+    if (info && info.next) st.appendChild(h('span', { class: 'muted sm' }, 'Next: ' + when(info.next) + ' (' + info.text + ')'));
+    p.appendChild(st);
+    if (last && last.at && !last.ok && last.error) p.appendChild(h('div', { class: 'banner bad' }, h('b', null, 'What went wrong: '), last.error));
+    p.appendChild(h('p', { class: 'muted sm' }, k === 'flash'
+      ? 'Copies everything on the boot drive (/boot): your licence key, array and share settings, plugins and Docker templates. Keep this off the boot drive itself.'
+      : 'Archives your appdata folder' + (info && info.sources.length > 1 ? 's' : '') + (info && info.sources.length ? ' (' + info.sources.join(', ') + ')' : '') + '. Containers keep running while it is read, so a database may be captured mid-write. For databases use a plugin that stops containers first.'));
+    /* when */
+    var sc = h('select', { 'aria-label': 'When to back up' }, h('option', { value: 'off' }, 'Not on a schedule'), h('option', { value: 'weekly' }, 'Every week'), h('option', { value: 'monthly' }, 'Every month'));
+    sc.value = b.schedule;
+    var wd = h('select', { 'aria-label': 'Day of the week', onchange: function () { b.weekday = +wd.value; } }); DAYS.forEach(function (d, i) { wd.appendChild(h('option', { value: i, selected: +b.weekday === i }, d)); });
+    var md = h('select', { 'aria-label': 'Day of the month', onchange: function () { b.monthday = +md.value; } }); for (var i = 1; i <= 28; i++) md.appendChild(h('option', { value: i, selected: +b.monthday === i }, 'Day ' + i));
+    var tm = h('input', { type: 'time', value: b.time, 'aria-label': 'Time', onchange: function () { if (tm.value) b.time = tm.value; } });
+    var wr = h('span', null, wd), mr = h('span', null, md), tr = h('span', null, 'at ', tm);
+    function sync() { b.schedule = sc.value; wr.style.display = sc.value === 'weekly' ? '' : 'none'; mr.style.display = sc.value === 'monthly' ? '' : 'none'; tr.style.display = sc.value === 'off' ? 'none' : ''; }
+    sc.addEventListener('change', sync); sync();
+    p.appendChild(h('div', { class: 'fld' }, h('label', null, 'When'), h('div', { class: 'inl' }, sc, wr, mr, tr)));
+    if (k === 'appdata') {
+      p.appendChild(fSwitch('Also back up right before updates are installed', 'backups.appdata.before_update', 'Runs once before a run that installs Docker or plugin updates, and only when there really is something to install. Nothing is backed up when there is nothing to update.'));
+      p.appendChild(fSwitch('Do not install the updates if this backup fails', 'backups.appdata.required', 'Off: a failed backup is reported and the updates go on. On: the updates wait until a backup works.'));
+    }
+    p.appendChild(fText('Save backups to (a folder under /mnt)', 'backups.' + k + '.dest', 'Example: /mnt/user/backups. Backups go into a folder named Unraid-Swiss-Manager inside it. Use another disk or share than the data being backed up, ideally not the same disk.', '/mnt/user/backups'));
+    var kp = h('select', { 'aria-label': 'Backups to keep', style: 'max-width:220px', onchange: function () { b.keep = +kp.value; } });
+    [1, 2, 3].forEach(function (n) { kp.appendChild(h('option', { value: n, selected: +b.keep === n }, n === 1 ? 'Keep 1 backup' : 'Keep ' + n + ' backups')); });
+    p.appendChild(h('div', { class: 'fld' }, h('label', null, 'How many to keep'), kp, h('span', { class: 'hint' }, 'After a new backup has finished successfully, older ones beyond this number are deleted. The newest one is never deleted, and a failed backup deletes nothing. Room for one extra copy is needed while it runs.')));
+    if (k === 'appdata') {
+      var t = h('textarea', { rows: 3, spellcheck: 'false', 'aria-label': 'Folders to leave out', style: 'width:100%;max-width:420px;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { b.exclude = t.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); } }, (b.exclude || []).join('\n'));
+      p.appendChild(h('div', { class: 'fld' }, h('label', null, 'Leave these folders out (optional)'), t, h('span', { class: 'hint' }, 'One folder name per line, directly inside the appdata folder, for example a media cache that can be rebuilt.')));
+    }
+    /* actions */
+    var why = info && info.problem ? info.problem : busy ? 'Another job is running. Wait until it has finished.' : dirty ? 'Save your changes first.' : '';
+    p.appendChild(h('div', { class: 'actions' },
+      h('button', { class: 'btn pri', onclick: saveBackups }, 'Save backup settings'),
+      h('button', { class: 'btn', disabled: !!why, title: why, onclick: function () { runJob('backup', [], 'Backup started.', { kind: k }); } }, 'Back up now'),
+      why ? h('span', { class: 'muted sm' }, why) : null));
+    /* what exists */
+    var files = info ? info.files : [];
+    p.appendChild(h('h4', null, 'Backups on disk'));
+    if (info && info.folder) p.appendChild(h('div', { class: 'muted sm' }, h('span', { class: 'mono' }, info.folder + '/'), info.free != null ? ' · ' + bytes(info.free) + ' free' : ''));
+    if (!files.length) p.appendChild(h('p', { class: 'muted' }, info && info.folder ? 'No backup there yet.' : 'Choose a folder to see your backups.'));
+    else {
+      var tb = h('table', { class: 'resp' }); tb.appendChild(h('thead', null, h('tr', null, h('th', null, 'Date'), h('th', null, 'File'), h('th', null, 'Size'))));
+      var bd = h('tbody'); tb.appendChild(bd);
+      files.forEach(function (f, i) { bd.appendChild(h('tr', { class: 'row' }, h('td', { 'data-l': 'Date' }, when(f.ts), i === 0 ? h('span', { class: 'badge ok' }, 'Newest') : null), h('td', { 'data-l': 'File', class: 'mono' }, f.name), h('td', { 'data-l': 'Size' }, bytes(f.size)))); });
+      p.appendChild(tb);
+    }
+    var how = h('details', { class: 'more' }, h('summary', null, 'How to restore'));
+    how.appendChild(h('p', { class: 'muted sm' }, k === 'flash'
+      ? 'Each file is a normal .tar.gz of the boot drive. To restore, prepare a fresh USB drive the usual way, then unpack the backup onto it (for example: tar -xzf flash-DATE.tar.gz -C /tmp/restore, then copy the boot folder contents onto the drive). Restore your licence key and config files from it.'
+      : 'Each file is a normal .tar.gz that keeps the original folder paths. Stop the container first, then unpack, for example: tar -xzf appdata-DATE.tar.gz -C / . To restore only one folder, name it at the end of the command (the paths start without a leading slash). Restoring over a running container can corrupt its data.'));
+    p.appendChild(how);
+    return p;
+  }
+  function saveBackups() {
+    var cfg = JSON.parse(JSON.stringify(S.draft)); delete cfg.containers;
+    act('save_config', { config: cfg }, 'Backup settings saved').then(function (j) { if (j.ok) { S.draft = null; load('backups'); } });
+  }
+  function vBackups() {
+    var w = h('div');
+    if (!S.bk) return h('p', { class: 'muted' }, 'Loading…');
+    w.appendChild(h('div', { class: 'banner' }, 'These backups are separate from the small safety copies that can be made for a single container right before it updates (Settings > Docker). Backups are only made when the settings below say so, and old ones are removed only down to the number you choose.'));
+    w.appendChild(bkKind('appdata')); w.appendChild(bkKind('flash'));
+    return w;
+  }
   function vSettings() {
     var d = S.draft, w = h('div');
     w.appendChild(section('Docker: default schedule', h('div', { class: 'grid2' },
@@ -938,7 +1012,7 @@
       var p = e.prev || {}, n = e.new || {};
       var from = p.version || p.id || '', to = n.version || n.id || '';
       tb.appendChild(h('tr', { class: 'row' }, h('td', { 'data-l': 'When' }, when(e.ts)), h('td', { 'data-l': 'Type' }, e.type), h('td', { 'data-l': 'Name', class: 'name' }, h('span', { class: 'nm' }, e.name), e.trigger ? h('div', { class: 'muted sm' }, e.trigger) : null),
-        h('td', { 'data-l': 'Result' }, h('span', { class: 'badge ' + ((e.result === 'updated' || e.result === 'cleaned') ? 'ok' : (e.result === 'failed' || e.result === 'interrupted') ? 'bad' : 'warn') }, e.result), e.attempts > 1 ? h('div', { class: 'muted sm' }, e.attempts + ' attempts') : null),
+        h('td', { 'data-l': 'Result' }, h('span', { class: 'badge ' + ((e.result === 'updated' || e.result === 'cleaned' || e.result === 'completed') ? 'ok' : (e.result === 'failed' || e.result === 'interrupted') ? 'bad' : 'warn') }, e.result), e.attempts > 1 ? h('div', { class: 'muted sm' }, e.attempts + ' attempts') : null),
         h('td', { class: 'digest', 'data-l': 'Versions' }, from || to ? from + ' → ' + to : '-'), h('td', { 'data-l': 'Verification' }, e.verification ? h('span', { title: e.verification.detail }, e.verification.result) : '-'), h('td', { 'data-l': 'Took' }, e.duration ? dur(e.duration) : '-'),
         h('td', { 'data-l': 'Details' }, h('div', { class: 'sm' }, e.error || ''), e.message ? h('div', { class: 'muted sm' }, e.message) : null)));
     });

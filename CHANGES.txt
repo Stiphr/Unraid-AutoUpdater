@@ -1,3 +1,9 @@
+###2026.10.31b5
+- BETA. New Backups tab: back up your appdata folders and the boot drive (USB flash) to a folder you choose.
+- Appdata: weekly or monthly, and optionally right before updates are installed (only when there is something to install; you can choose to hold the updates back if that backup fails). Folders can be left out.
+- Boot drive: weekly or monthly, checked after it is written.
+- Keep 1, 2 or 3 backups. Older ones are deleted only after a new backup has finished, the newest is never deleted, and a failed backup deletes nothing.
+- Each archive is a normal tar.gz, written privately and moved into place only when complete. Results appear in Activity and can notify you.
 ###2026.10.31b4
 - The stable branch is now called stable (it was main). The Stable channel in Settings uses it; old links keep working.
 - Renamed: the plugin and its repository are now called Unraid Swiss Manager, with a new logo. Nothing else changes: same settings, same schedule, and the plugin keeps its install name, so existing installs update normally.

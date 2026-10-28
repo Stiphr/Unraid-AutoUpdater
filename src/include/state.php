@@ -27,6 +27,7 @@ function dau_state_defaults() {
     'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat, 'daily' => [], 'per' => []],
     'summary' => ['containers' => 0, 'docker_updates' => 0, 'plugin_updates' => 0, 'at' => 0],     // numbers for the dashboard widget (no Docker call needed to show them)
     'queue'   => [],      // notifications held back by quiet hours
+    'backups' => ['appdata' => ['at' => 0, 'ok' => null, 'file' => '', 'size' => 0, 'error' => '', 'reason' => '', 'kept' => 0], 'flash' => ['at' => 0, 'ok' => null, 'file' => '', 'size' => 0, 'error' => '', 'reason' => '', 'kept' => 0]],
     'cleanup' => ['at' => 0, 'appdata' => ['n' => 0, 'size' => 0], 'images' => ['n' => 0, 'size' => 0], 'volumes' => ['n' => 0, 'size' => 0], 'containers' => ['n' => 0, 'size' => 0], 'quarantine' => 0, 'reported' => '', 'reported_at' => 0],   // last cleanup scan: numbers for the tab badge and the report
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];
@@ -38,7 +39,7 @@ function dau_state_load() {
   foreach (['docker', 'plugins', 'os', 'stats', 'discord'] as $k) {
     if (isset($s[$k]) && is_array($s[$k])) $d[$k] = array_replace_recursive($d[$k], $s[$k]);
   }
-  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current', 'queue', 'summary', 'cleanup'] as $k) {
+  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current', 'queue', 'summary', 'cleanup', 'backups'] as $k) {
     if (array_key_exists($k, $s) && (is_array($s[$k]) || !is_array($d[$k]))) $d[$k] = $s[$k];
   }
   if (!is_array($d['slots'])) $d['slots'] = [];

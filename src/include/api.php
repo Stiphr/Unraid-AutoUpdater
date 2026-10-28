@@ -61,6 +61,7 @@ function api_next_runs($cfg, $st) {
   $add('Docker', $d);
   $p = []; foreach (dau_plugin_slots($cfg) as $k => $s) $p['p:' . $k] = $s; $add('Plugins', $p);
   $x = []; foreach (dau_os_slots($cfg) as $k => $s) $x['o:' . $k] = $s; $add('Unraid OS', $x);
+  foreach (dau_bk_slots($cfg) as $k => $s) $o[] = ['label' => $k === 'flash' ? 'Boot drive backup' : 'Appdata backup', 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, 'b:' . $k), $now), 'count' => 1];
   return $o;
 }
 
@@ -198,6 +199,20 @@ switch ($action) {
     fail('No pending update with a known image to approve for this container.');
   }
 
+  /* backups: settings, last result, next run and the archives that exist (reads only) */
+  case 'backups': {
+    $st = dau_state_load(); $cfg = dau_load_config(); $now = dau_now(); $o = [];
+    foreach (DAU_BK_KINDS as $k) {
+      $b = $cfg['backups'][$k]; $why = dau_bk_check_dest($k, $cfg); $sched = dau_bk_sched($b);
+      $next = ($b['schedule'] !== 'off' && $why === '' && $sched) ? dau_next_run($sched, dau_slot_rec($st, 'b:' . $k), $now) : null;
+      $dir = dau_bk_dir($k, (string)$b['dest']);
+      $o[$k] = ['label' => dau_bk_label($k), 'cfg' => $b, 'problem' => $why, 'sources' => dau_bk_sources($k, $cfg), 'last' => $st['backups'][$k] ?? null, 'next' => $next,
+        'text' => $b['schedule'] === 'off' ? '' : dau_sched_text($sched), 'files' => $b['dest'] !== '' && dau_valid_dest($b['dest']) ? dau_bk_list($k, $b['dest']) : [],
+        'folder' => $b['dest'] !== '' ? $dir : '', 'free' => $why === '' && is_dir($b['dest']) ? dau_backup_free($b['dest']) : null];
+    }
+    out(['ok' => true, 'backups' => $o, 'running' => (bool)(dau_read_json(DAU_PROGRESS, [])['running'] ?? false), 'now' => $now]);
+  }
+
   case 'run': {
     $what = (string)($_POST['what'] ?? '');
     if ($what === 'check') $args = ['--check'];
@@ -219,6 +234,12 @@ switch ($action) {
       if (!$ok) fail('Invalid names');
       $args = ['--update-' . $what . '=' . implode(',', $ok)];
       if ($what === 'docker' && ($_POST['allow_major'] ?? '') === '1') $args[] = '--allow-major=' . implode(',', $ok);
+    } elseif ($what === 'backup') {
+      $k = (string)($_POST['kind'] ?? ''); $kinds = $k === 'all' ? DAU_BK_KINDS : (in_array($k, DAU_BK_KINDS, true) ? [$k] : []);
+      if (!$kinds) fail('Unknown backup type');
+      $cfg = dau_load_config();
+      foreach ($kinds as $kk) { $why = dau_bk_check_dest($kk, $cfg); if ($why !== '') fail(dau_bk_label($kk) . ': ' . $why); }
+      $args = ['--backup=' . $k];
     } elseif ($what === 'channel') {
       $ch = (string)($_POST['channel'] ?? ''); if (!in_array($ch, ['stable', 'beta'], true)) fail('Unknown channel');
       if (($_POST['confirm'] ?? '') !== '1') fail('Changing the plugin branch needs an explicit confirmation.');
