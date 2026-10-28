@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.28c">
+<!ENTITY version "2026.10.28d">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg">
@@ -10,6 +10,8 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/DockerAutoUpdate" min="6.9.0" icon="refresh">
 
 <CHANGES>
+###2026.10.28d
+- Fix: requests are sent form-encoded (multipart uploads hang on Unraid's web server), which is what kept the page on "Loading".
 ###2026.10.28c
 - Fix: the page stayed on "Loading" because every request must carry Unraid's CSRF token (and Unraid removes it before the plugin sees it).
 ###2026.10.28b
@@ -63,7 +65,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/as
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.28c');
+define('DAU_VERSION',   '2026.10.28d');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/docker.autoupdate');
 define('DAU_DIR',       '/boot/config/plugins/docker.autoupdate');
 define('DAU_CFG',       DAU_DIR . '/config.json');
@@ -2605,7 +2607,7 @@ exit(64);
   function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : '') }, msg); root.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
 
   function api(action, data, post) {
-    var fd = new FormData(); fd.append('action', action);
+    var fd = new URLSearchParams(); fd.append('action', action);   // urlencoded, not multipart: multipart POSTs hang on Unraid's web server
     fd.append('csrf_token', window.DAU_CSRF || '');   // Unraid rejects any POST without it, reads included
     for (var k in (data || {})) fd.append(k, typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k]);
     return fetch(API, { method: post ? 'POST' : 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
