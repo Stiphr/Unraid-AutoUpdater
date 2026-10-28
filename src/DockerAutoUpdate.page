@@ -1,0 +1,11 @@
+Menu="Utilities"
+Title="Docker Auto Update"
+Icon="fa-refresh"
+---
+<?php
+$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/docker.autoupdate/assets/app.js');
+?>
+<link rel="stylesheet" href="/plugins/docker.autoupdate/assets/app.css<?=$dau_v?>">
+<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
+<script>window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
+<script src="/plugins/docker.autoupdate/assets/app.js<?=$dau_v?>"></script>
