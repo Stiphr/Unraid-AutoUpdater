@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-swiss-manager">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.28">
+<!ENTITY version "2026.10.29">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-swiss-manager.plg">
@@ -10,6 +10,11 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-swiss-manager.png">
 
 <CHANGES>
+###2026.10.29
+- New: remove containers and plugins. Docker and Plugins tabs have a Remove button on each row and "Remove selected…" for several at once, always behind a confirmation.
+- Containers: stopped and removed (never forced). Optionally their image is deleted too (Docker keeps it if another container uses it), and optionally their saved template is archived to Cleanup, where it can be restored. By default the template stays, so Apps > Previous Apps can reinstall it with the same settings. Appdata folders are never deleted here: the Cleanup tab can quarantine unused ones afterwards. A container that other containers use as their network is not removed.
+- Plugins: uninstalled with Unraid's own plugin tool (the same as Plugins > Remove) and checked afterwards. This plugin and Unraid itself cannot be removed from here.
+- Every removal is listed in Activity; a failed one also sends a notification.
 ###2026.10.28
 - Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
 - New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
@@ -224,7 +229,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.28');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.29');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-swiss-manager');
 define('DAU_DIR',       '/boot/config/plugins/unraid-swiss-manager');
@@ -478,13 +483,13 @@ function dau_valid_plg($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A
 
 } // DAU_LIB_LOADED
 
-foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker', 'plugins', 'os', 'workflow', 'extras', 'appdata', 'jobs'] as $__m) {
+foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker', 'plugins', 'os', 'workflow', 'extras', 'appdata', 'remove', 'jobs'] as $__m) {
   $__f = __DIR__ . '/' . $__m . '.php';
   if (is_file($__f)) require_once $__f;
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>8264524b8661db5e8d7dbf135d83b89571b9a528b4d98415df278dc30e8734d1</SHA256>
+<SHA256>1e06773bb29d0e4d54801636b5bb7dd7773fb03136f2b97763381928174e608d</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -3517,6 +3522,137 @@ function dau_cleanup_summary($a = null, $d = null) {
 <SHA256>60947e84d76b25f02568fc9bb58fdc89d8603222d591eff57419c87e06c65dd8</SHA256>
 </FILE>
 
+<FILE Name="&emhttp;/include/remove.php" Mode="0644">
+<INLINE><![CDATA[<?php
+/*
+ * Unraid Swiss Manager - removing containers and plugins (only ever on an explicit request from the web UI, never scheduled).
+ *
+ * Container: stop (if running) -> docker rm (never forced) -> optionally its image (never forced, so Docker keeps an image another
+ * container still uses) -> optionally archive its saved template (restorable from Cleanup). Appdata folders are never touched here:
+ * once the container is gone, Cleanup offers them with its quarantine. A container that other containers use as their network
+ * ("--net=container:NAME") is refused, because removing it would cut them off.
+ * Plugin: Unraid's own `plugin remove NAME.plg`, verified afterwards. This plugin and Unraid itself are never removed from here.
+ */
+
+/** Containers whose network mode is "container:<name or id>" of this one. */
+function dau_rm_net_dependants($name, $id) {
+  $out = [];
+  foreach (dau_inspect_all() ?? [] as $c) {
+    $n = ltrim((string)($c['Name'] ?? ''), '/'); $mode = (string)($c['HostConfig']['NetworkMode'] ?? '');
+    if ($n === $name || strpos($mode, 'container:') !== 0) continue;
+    $t = substr($mode, 10);
+    if ($t === $name || ($id !== '' && ($t === $id || (strlen($t) >= 12 && strpos($id, $t) === 0)))) $out[] = $n;
+  }
+  return $out;
+}
+
+/** `docker inspect` of every container (any state). null = Docker not available. */
+function dau_inspect_all() {
+  $r = dau_docker(['ps', '-aq', '--no-trunc'], 30);
+  if ($r['code'] !== 0) return null;
+  $ids = array_values(array_filter(preg_split('/\s+/', trim($r['out']))));
+  if (!$ids) return [];
+  $r = dau_docker(array_merge(['inspect'], $ids), 90);
+  $d = json_decode($r['out'], true);
+  return is_array($d) ? $d : null;
+}
+
+/**
+ * Remove one container. $o: image (bool) also remove its image, template (bool) archive its saved template.
+ * @return array result: removed | failed | blocked, plus what happened to the image, template and appdata.
+ */
+function dau_docker_remove($name, array $o) {
+  $res = ['result' => 'failed', 'stage' => 'precheck', 'error' => '', 'next' => '', 'image' => '', 'template' => '', 'appdata' => [], 'started' => dau_now(), 'finished' => 0,
+          'prev' => null, 'new' => null, 'verification' => null];
+  $done = function () use (&$res) { $res['finished'] = dau_now(); return $res; };
+  if (!dau_valid_name($name)) { $res['result'] = 'blocked'; $res['error'] = 'Invalid container name.'; return $done(); }
+  $i = dau_inspect_one($name);
+  if ($i === null) { $res['result'] = 'blocked'; $res['error'] = 'The container does not exist (any more).'; return $done(); }
+  $id = (string)($i['Id'] ?? ''); $imageId = (string)($i['Image'] ?? ''); $image = (string)($i['Config']['Image'] ?? '');
+  $res['prev'] = ['id' => dau_short_id($imageId), 'digest' => $image];
+  foreach ($i['Mounts'] ?? [] as $m) if (($m['Type'] ?? '') === 'bind' && strpos((string)($m['Source'] ?? ''), '/mnt/') === 0) $res['appdata'][] = (string)$m['Source'];
+  $deps = dau_rm_net_dependants($name, $id);
+  if ($deps) { $res['result'] = 'blocked'; $res['error'] = 'Other containers use its network: ' . implode(', ', $deps) . '. Remove or change those first.'; return $done(); }
+
+  if (!empty($i['State']['Running']) || in_array($i['State']['Status'] ?? '', ['running', 'restarting', 'paused'], true)) {
+    $res['stage'] = 'stop';
+    dau_phase('Stopping ' . $name, ['current' => $name]);
+    $r = dau_docker(['stop', '-t', '30', $name], 90);
+    if ($r['code'] !== 0 || $r['timeout']) { $res['error'] = 'The container could not be stopped: ' . dau_clip(dau_redact(trim($r['err'])), 160); $res['next'] = 'Nothing was removed.'; return $done(); }
+  }
+  $res['stage'] = 'remove';
+  dau_phase('Removing ' . $name, ['current' => $name]);
+  $r = dau_docker(['rm', $name], 60);
+  if ($r['code'] !== 0 || dau_inspect_one($name) !== null) {
+    $res['error'] = 'Docker did not remove the container: ' . dau_clip(dau_redact(trim($r['err'])), 160);
+    $res['next'] = 'It was stopped but not removed. Start it again on the Docker tab if you need it.';
+    return $done();
+  }
+  $res['result'] = 'removed'; $res['stage'] = '';
+  if (!empty($o['image']) && $imageId !== '') {
+    $r = dau_docker(['image', 'rm', $imageId], 120);
+    $res['image'] = $r['code'] === 0 ? 'removed' : 'kept (another container still uses it)';
+  }
+  if (!empty($o['template']) && is_file(DAU_TEMPLATES . "/my-$name.xml")) {
+    $t = dau_tpl_act('archive', $name);
+    $res['template'] = !empty($t['ok']) ? 'archived' : 'kept (' . ($t['error'] ?? 'not archived') . ')';
+  } elseif (is_file(DAU_TEMPLATES . "/my-$name.xml")) $res['template'] = 'kept';
+  if ($res['appdata']) $res['next'] = 'Its folders were not touched (' . implode(', ', array_slice($res['appdata'], 0, 3)) . (count($res['appdata']) > 3 ? ', …' : '') . '). Cleanup can move unused ones to quarantine.';
+  return $done();
+}
+
+/** Remove one plugin with Unraid's own tool. Never this plugin, never Unraid itself. */
+function dau_plugin_remove($file) {
+  $res = ['result' => 'failed', 'stage' => 'precheck', 'error' => '', 'next' => '', 'started' => dau_now(), 'finished' => 0, 'prev' => null, 'new' => null, 'verification' => null];
+  $done = function () use (&$res) { $res['finished'] = dau_now(); return $res; };
+  if (!dau_valid_plg($file)) { $res['result'] = 'blocked'; $res['error'] = 'Invalid plugin file name.'; return $done(); }
+  if ($file === DAU_SELF_PLG) { $res['result'] = 'blocked'; $res['error'] = 'This plugin cannot remove itself. Use Plugins in Unraid.'; return $done(); }
+  if ($file === 'unRAIDServer.plg' || strpos($file, 'unRAIDServer-') === 0) { $res['result'] = 'blocked'; $res['error'] = 'Unraid itself cannot be removed.'; return $done(); }
+  $inst = dau_plugins_installed();
+  if (!isset($inst[$file])) { $res['result'] = 'blocked'; $res['error'] = 'The plugin is not installed (any more).'; return $done(); }
+  $res['prev'] = ['version' => $inst[$file]['version']];
+  $res['stage'] = 'remove';
+  dau_phase('Removing plugin ' . $inst[$file]['name'], ['current' => $inst[$file]['name']]);
+  $r = dau_run([dau_plugin_bin(), 'remove', $file], 600);
+  clearstatcache();
+  if (is_link(DAU_PLUGLINKS . '/' . $file) || is_file(DAU_PLUGLINKS . '/' . $file)) {
+    $res['error'] = $r['timeout'] ? 'Unraid\'s plugin tool did not finish in 10 minutes.' : 'Unraid still lists the plugin after the removal. ' . dau_clip(dau_redact(trim($r['err'] . ' ' . $r['out'])), 200);
+    $res['next'] = 'Check Plugins in Unraid.';
+    return $done();
+  }
+  $res['result'] = 'removed'; $res['stage'] = '';
+  $res['next'] = 'Its settings folder on the flash drive (/boot/config/plugins/' . $inst[$file]['name'] . ') is left as the plugin\'s own removal leaves it.';
+  return $done();
+}
+
+/* ---------- job ---------- */
+
+/** $what: docker | plugins. Runs inside dau_job_main (holds the lock). */
+function dau_job_remove(array &$J, $what, array $names, array $o) {
+  $max = (int)$J['cfg']['history']['max_entries'];
+  $sum = $what === 'docker' ? 'docker' : 'plugins'; $i = 0;
+  foreach ($names as $n) {
+    if (dau_stop_requested()) { dau_log('warn', 'job', '-', 'stop', 'info', 'Stopped on request; the rest was not removed.'); break; }
+    dau_phase('Removing ' . $n, ['done' => $i++, 'total' => count($names), 'current' => $n]);
+    $res = $what === 'docker' ? dau_docker_remove($n, $o) : dau_plugin_remove($n);
+    $label = $what === 'docker' ? $n : preg_replace('/\.plg$/', '', $n);
+    $parts = [];
+    if (($res['image'] ?? '') !== '') $parts[] = 'image ' . $res['image'];
+    if (($res['template'] ?? '') !== '') $parts[] = 'template ' . $res['template'];
+    $msg = trim(($res['result'] === 'removed' && $parts ? ucfirst(implode(', ', $parts)) . '. ' : '') . $res['next']);
+    dau_history_add(['type' => $what === 'docker' ? 'docker' : 'plugin', 'name' => $label, 'action' => 'remove', 'result' => $res['result'], 'started' => $res['started'], 'finished' => $res['finished'],
+      'prev' => $res['prev'], 'new' => null, 'verification' => null, 'trigger' => $J['trigger'], 'error' => $res['error'], 'message' => $msg], $max);
+    dau_log($res['result'] === 'removed' ? 'info' : ($res['result'] === 'blocked' ? 'warn' : 'error'), $what === 'docker' ? 'docker' : 'plugin', $label, 'remove', $res['result'], $res['error'] ?: $msg);
+    if ($res['result'] === 'failed') $J['sum'][$sum]['failed']++; elseif ($res['result'] === 'blocked') $J['sum'][$sum]['skipped']++;
+    $J['events'][] = dau_ev($what === 'docker' ? 'docker' : 'plugin', $label, $res['result'] === 'removed' ? 'removed' : 'remove_failed', ['error' => $res['error'], 'next' => $res['next'], 'silent' => $res['result'] === 'removed']);
+  }
+  if ($what === 'plugins') { $J['st']['plugins']['available'] = array_intersect_key($J['st']['plugins']['available'], dau_plugins_installed()); $J['st']['summary']['plugin_updates'] = count($J['st']['plugins']['available']); }
+  dau_state_save($J['st']);
+}
+]]></INLINE>
+<SHA256>12e46d3ea3aaef7aa80bf477e4954dbe8e6a4041e11f1c6a575641b8cc35c82d</SHA256>
+</FILE>
+
 <FILE Name="&emhttp;/include/jobs.php" Mode="0644">
 <INLINE><![CDATA[<?php
 /*
@@ -3810,7 +3946,7 @@ function dau_job_finish(array &$J) {
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
             'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
-            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'removed' => ['removed', 'normal'], 'remove_failed' => ['removal FAILED', 'alert'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -3920,6 +4056,10 @@ function dau_job_main($action, array $o = []) {
       dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true, 'allow_major' => $o['allow_major'] ?? []]);
     } elseif ($action === 'backup') {
       foreach ((array)($o['kinds'] ?? []) as $bk) if (in_array($bk, DAU_BK_KINDS, true)) dau_job_backup($J, $bk, 'manual');
+    } elseif ($action === 'remove_docker') {
+      dau_job_remove($J, 'docker', array_values(array_filter((array)($o['names'] ?? []), 'dau_valid_name')), ['image' => !empty($o['image']), 'template' => !empty($o['template'])]);
+    } elseif ($action === 'remove_plugins') {
+      dau_job_remove($J, 'plugins', array_values(array_filter((array)($o['names'] ?? []), 'dau_valid_plg')), []);
     } elseif ($action === 'rollback') {
       dau_job_rollback($J, (string)($o['name'] ?? ''));
     } elseif ($action === 'plugins') {
@@ -3989,7 +4129,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>b08c891e093fa3ec35c34062378775555062d7ce0aa21f5324603c75af421366</SHA256>
+<SHA256>37e552b35630fc8d73cb5e58a2bae1538a613c1733e0be13eba2d5b750a3e9c8</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -4242,6 +4382,15 @@ switch ($action) {
       $force = ($_POST['force'] ?? '') === '1';
       if ($ch === dau_channel_current() && !$force) fail('This server already follows that channel. Use Force update to reinstall it.');
       $args = ['--channel=' . $ch]; if ($force) $args[] = '--force';
+    } elseif ($what === 'remove_docker' || $what === 'remove_plugins') {
+      if (($_POST['confirm'] ?? '') !== '1') fail('Removing needs an explicit confirmation.');
+      $docker = $what === 'remove_docker';
+      $names = $json('names'); if (!$names) fail('Nothing selected');
+      $ok = array_values(array_unique(array_filter($names, $docker ? 'dau_valid_name' : 'dau_valid_plg')));
+      if (!$ok) fail('Invalid names');
+      if (!$docker && (in_array(DAU_SELF_PLG, $ok, true) || in_array('unRAIDServer.plg', $ok, true))) fail('This plugin and Unraid itself cannot be removed from here.');
+      $args = [($docker ? '--remove-docker=' : '--remove-plugins=') . implode(',', $ok)];
+      if ($docker) { $args[] = '--remove-image=' . (($_POST['image'] ?? '') === '1' ? '1' : '0'); $args[] = '--archive-template=' . (($_POST['template'] ?? '') === '1' ? '1' : '0'); }
     } elseif ($what === 'rollback') {
       $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
       if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');
@@ -4380,7 +4529,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>50b6f4b98958d3ab2874324d105133a5ca7f067e51849adf7597146142c766cc</SHA256>
+<SHA256>6f4483da243241789ff9ecfd2a601909a37f8ecd1c5fc05677e3a1f9a1914750</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -4393,6 +4542,8 @@ switch ($action) {
  *   --allow-major=a,b         with --update-docker: also allow a major-version jump for these containers
  *   --channel=stable|beta     install the plugin from that branch now (--force reinstalls the branch it is already on)
  *   --rollback=name           go back to the image before the container's last update
+ *   --remove-docker=a,b       remove these containers (--remove-image=1 also their images, --archive-template=1 their saved templates)
+ *   --remove-plugins=a.plg    remove these plugins with Unraid's own plugin tool
  *   --update-plugins=a.plg,b  update these plugins now (after the usual safety validation)
  *   --os-check                check for an Unraid OS update (notify only)
  *   --os-install[-reboot]     install the available Unraid OS update now (manual; optionally reboot afterwards); --pre-plugins=0|1 --pre-docker=0|1 override the pre-OS steps
@@ -4404,7 +4555,7 @@ require_once '/usr/local/emhttp/plugins/unraid-swiss-manager/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
-$o = getopt('', ['tick', 'check', 'update-docker:', 'backup:', 'allow-major:', 'rollback:', 'update-plugins:', 'channel:', 'force', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
+$o = getopt('', ['tick', 'check', 'update-docker:', 'backup:', 'allow-major:', 'rollback:', 'update-plugins:', 'channel:', 'force', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall', 'remove-docker:', 'remove-plugins:', 'remove-image:', 'archive-template:']);
 $list = function ($k) use ($o) { return isset($o[$k]) ? array_values(array_filter(array_map('trim', explode(',', (string)$o[$k])))) : []; };
 
 if (isset($o['install']))   { dau_install(); exit(0); }
@@ -4418,13 +4569,15 @@ if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' =>
 if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
 if (isset($o['channel']))        { $r = dau_channel_install((string)$o['channel'], isset($o['force'])); exit(!empty($r['ok']) ? 0 : 1); }
 if (isset($o['rollback']))       exit(dau_job_main('rollback', ['name' => dau_valid_name((string)$o['rollback']) ? (string)$o['rollback'] : '']));
+if (isset($o['remove-docker']))  exit(dau_job_main('remove_docker', ['names' => $list('remove-docker'), 'image' => ($o['remove-image'] ?? '') === '1', 'template' => ($o['archive-template'] ?? '') === '1']));
+if (isset($o['remove-plugins'])) exit(dau_job_main('remove_plugins', ['names' => $list('remove-plugins')]));
 if (isset($o['backup'])) exit(dau_job_main('backup', ['kinds' => $o['backup'] === 'all' ? DAU_BK_KINDS : [$o['backup']]]));
 if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name')), 'allow_major' => array_values(array_filter($list('allow-major'), 'dau_valid_name'))]));
 if (isset($o['update-plugins'])) exit(dau_job_main('plugins', ['names' => array_values(array_filter($list('update-plugins'), 'dau_valid_plg'))]));
 fwrite(STDERR, "usage: run.php --tick | --check | --update-docker=a,b | --update-plugins=a.plg | --os-check | --os-install | --os-install-reboot | --install | --uninstall\n");
 exit(64);
 ]]></INLINE>
-<SHA256>28e4078d73908203d92dca2de96c11d0a1733c8077b28e7e5833733593f43391</SHA256>
+<SHA256>26546f83b7293ef339171338cee3882aff5c0bd74fc7a9e1beaab5603f0ec20d</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.css" Mode="0644">
@@ -4838,7 +4991,8 @@ exit(64);
       h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
     var upd = h('button', { class: 'btn pri', disabled: S.ov.run.running || !selNames.length, onclick: function () { previewUpdate(selNames); } }, 'Update selected…');
     var all = h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { previewUpdate(S.docker.rows.filter(function (r) { return r.update === true && r.managed; }).map(function (r) { return r.name; })); } }, 'Update all pending…');
-    w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all));
+    var rmSel = h('button', { class: 'btn danger', disabled: S.ov.run.running || !selNames.length, onclick: function () { removeContainers(selNames); } }, 'Remove selected…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all, rmSel));
     var t = h('table', { class: 'resp' });
     var all_cb = h('input', { type: 'checkbox', checked: names.length && selNames.length === names.length, onchange: function () { names.forEach(function (n) { S.sel[n] = all_cb.checked; }); render(); } });
     t.appendChild(h('thead', null, h('tr', null, h('th', null, all_cb), h('th', null, 'Container'), h('th', null, 'Status'), h('th', null, 'Image'), h('th', null, 'Policy'), h('th', null, 'Schedule / delay'), h('th', null, 'Last update'), h('th', null, ''))));
@@ -4863,7 +5017,8 @@ exit(64);
           r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
           r.rollback && !r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Go back to the image before the last update', onclick: function () { rollbackConfirm(r); } }, 'Roll back') : null,
           r.pinned ? h('button', { class: 'btn sm', title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
-          h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings')))));
+          h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings'),
+          h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Stop and remove this container', onclick: function () { removeContainers([r.name]); } }, 'Remove')))));
       if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
     });
     w.appendChild(t);
@@ -4942,7 +5097,8 @@ exit(64);
     var sel = rows.map(function (r) { return r.file; }).filter(function (n) { return S.psel[n]; });
     var bulk = h('select', { disabled: !sel.length, onchange: function () { if (!bulk.value) return; act('set_plugin', { files: sel, data: { policy: bulk.value } }, 'Policy set').then(function () { load('plugins'); }); } }, h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
     var up = h('button', { class: 'btn pri', disabled: S.ov.run.running || !sel.length, onclick: function () { confirmPlugins(sel); } }, 'Update selected…');
-    w.appendChild(h('div', { class: 'tools' }, q, f, bulk, h('span', { class: 'grow' }), up));
+    var rmSel = h('button', { class: 'btn danger', disabled: S.ov.run.running || !sel.length, onclick: function () { removePlugins(sel); } }, 'Remove selected…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, bulk, h('span', { class: 'grow' }), up, rmSel));
     var t = h('table', { class: 'resp' });
     t.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Plugin'), h('th', null, 'Installed'), h('th', null, 'Available'), h('th', null, 'Status'), h('th', null, 'Policy'), h('th', null, 'Last update'), h('th', null, ''))));
     var tb = h('tbody'); t.appendChild(tb);
@@ -4959,7 +5115,8 @@ exit(64);
         h('td', null, h('div', { class: 'inl' }, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null,
           r.latest ? h('button', { class: 'btn sm', onclick: function () { notesModal('plugin', r.file, r.name); } }, 'Notes') : null,
           r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
-          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null))));
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null,
+          r.self ? null : h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Uninstall this plugin', onclick: function () { removePlugins([r.file]); } }, 'Remove')))));
     });
     w.appendChild(t);
     return w;
@@ -4972,6 +5129,35 @@ exit(64);
     rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', r.version + ' → ' + r.latest)); });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
     m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('plugins', rows.map(function (r) { return r.file; }), 'Plugin update started'); } }, 'Update'));
+  }
+
+  /* ---------- remove containers / plugins (explicit, confirmed, run as a job) ---------- */
+  function removeContainers(names) {
+    var rows = S.docker.rows.filter(function (r) { return names.indexOf(r.name) >= 0; });
+    if (!rows.length) { toast('Nothing selected.'); return; }
+    var m = modal(rows.length === 1 ? 'Remove ' + rows[0].name + '?' : 'Remove ' + rows.length + ' containers?');
+    rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', h('span', { class: 'muted sm' }, r.image), r.run_state === 'running' ? h('span', { class: 'badge warn' }, 'running: will be stopped') : null, !r.managed ? h('span', { class: 'badge' }, 'not from an Unraid template') : null)); });
+    m.body.appendChild(h('p', { class: 'muted' }, 'Each container is stopped and removed. Its appdata folders are NOT deleted: afterwards the Cleanup tab can move unused ones to quarantine. A container that others use as their network is not removed.'));
+    var img = h('input', { type: 'checkbox', checked: true }), tpl = h('input', { type: 'checkbox' }), ok = h('input', { type: 'checkbox' });
+    m.body.appendChild(h('label', { class: 'switch' }, img, 'Also delete its image (kept automatically if another container uses it)'));
+    m.body.appendChild(h('label', { class: 'switch' }, tpl, 'Archive its saved template'));
+    m.body.appendChild(h('div', { class: 'muted sm' }, 'Off: the template stays, so you can reinstall it with the same settings from Apps > Previous Apps. On: it is moved to Cleanup > Saved templates, where it can be restored.'));
+    m.body.appendChild(h('label', { class: 'switch' }, ok, rows.length === 1 ? 'I want to remove this container' : 'I want to remove these ' + rows.length + ' containers'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); rows.forEach(function (r) { S.sel[r.name] = false; }); runJob('remove_docker', rows.map(function (r) { return r.name; }), 'Removal started', { confirm: '1', image: img.checked ? '1' : '', template: tpl.checked ? '1' : '' }); } }, 'Remove');
+    ok.addEventListener('change', function () { go.disabled = !ok.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+  function removePlugins(files) {
+    var rows = S.plugins.rows.filter(function (r) { return files.indexOf(r.file) >= 0 && !r.self; });
+    if (!rows.length) { toast('Nothing to remove.'); return; }
+    var m = modal(rows.length === 1 ? 'Remove the plugin ' + rows[0].name + '?' : 'Remove ' + rows.length + ' plugins?');
+    rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', h('span', { class: 'muted sm' }, r.version))); });
+    m.body.appendChild(h('p', { class: 'muted' }, 'Each plugin is uninstalled with Unraid\'s own plugin tool, the same as Plugins > Remove. What it leaves behind (usually its settings folder on the flash drive) is up to the plugin. Other plugins that need it may stop working.'));
+    var ok = h('input', { type: 'checkbox' });
+    m.body.appendChild(h('label', { class: 'switch' }, ok, rows.length === 1 ? 'I want to remove this plugin' : 'I want to remove these ' + rows.length + ' plugins'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); rows.forEach(function (r) { S.psel[r.file] = false; }); runJob('remove_plugins', rows.map(function (r) { return r.file; }), 'Removal started', { confirm: '1' }); } }, 'Remove');
+    ok.addEventListener('change', function () { go.disabled = !ok.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
 
   /* ---------- OS ---------- */
@@ -5618,7 +5804,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>f29c5eafdf73698f34054d249714682e7e62dafa16e5e136547e22feaf5cefb4</SHA256>
+<SHA256>7dc03d489532a49e5e16d04737644120371435a153f58229afdbc10bd821509b</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

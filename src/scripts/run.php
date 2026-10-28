@@ -7,6 +7,8 @@
  *   --allow-major=a,b         with --update-docker: also allow a major-version jump for these containers
  *   --channel=stable|beta     install the plugin from that branch now (--force reinstalls the branch it is already on)
  *   --rollback=name           go back to the image before the container's last update
+ *   --remove-docker=a,b       remove these containers (--remove-image=1 also their images, --archive-template=1 their saved templates)
+ *   --remove-plugins=a.plg    remove these plugins with Unraid's own plugin tool
  *   --update-plugins=a.plg,b  update these plugins now (after the usual safety validation)
  *   --os-check                check for an Unraid OS update (notify only)
  *   --os-install[-reboot]     install the available Unraid OS update now (manual; optionally reboot afterwards); --pre-plugins=0|1 --pre-docker=0|1 override the pre-OS steps
@@ -18,7 +20,7 @@ require_once '/usr/local/emhttp/plugins/unraid-swiss-manager/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
-$o = getopt('', ['tick', 'check', 'update-docker:', 'backup:', 'allow-major:', 'rollback:', 'update-plugins:', 'channel:', 'force', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
+$o = getopt('', ['tick', 'check', 'update-docker:', 'backup:', 'allow-major:', 'rollback:', 'update-plugins:', 'channel:', 'force', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall', 'remove-docker:', 'remove-plugins:', 'remove-image:', 'archive-template:']);
 $list = function ($k) use ($o) { return isset($o[$k]) ? array_values(array_filter(array_map('trim', explode(',', (string)$o[$k])))) : []; };
 
 if (isset($o['install']))   { dau_install(); exit(0); }
@@ -32,6 +34,8 @@ if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' =>
 if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
 if (isset($o['channel']))        { $r = dau_channel_install((string)$o['channel'], isset($o['force'])); exit(!empty($r['ok']) ? 0 : 1); }
 if (isset($o['rollback']))       exit(dau_job_main('rollback', ['name' => dau_valid_name((string)$o['rollback']) ? (string)$o['rollback'] : '']));
+if (isset($o['remove-docker']))  exit(dau_job_main('remove_docker', ['names' => $list('remove-docker'), 'image' => ($o['remove-image'] ?? '') === '1', 'template' => ($o['archive-template'] ?? '') === '1']));
+if (isset($o['remove-plugins'])) exit(dau_job_main('remove_plugins', ['names' => $list('remove-plugins')]));
 if (isset($o['backup'])) exit(dau_job_main('backup', ['kinds' => $o['backup'] === 'all' ? DAU_BK_KINDS : [$o['backup']]]));
 if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name')), 'allow_major' => array_values(array_filter($list('allow-major'), 'dau_valid_name'))]));
 if (isset($o['update-plugins'])) exit(dau_job_main('plugins', ['names' => array_values(array_filter($list('update-plugins'), 'dau_valid_plg'))]));
