@@ -247,6 +247,15 @@ switch ($action) {
       $force = ($_POST['force'] ?? '') === '1';
       if ($ch === dau_channel_current() && !$force) fail('This server already follows that channel. Use Force update to reinstall it.');
       $args = ['--channel=' . $ch]; if ($force) $args[] = '--force';
+    } elseif ($what === 'remove_docker' || $what === 'remove_plugins') {
+      if (($_POST['confirm'] ?? '') !== '1') fail('Removing needs an explicit confirmation.');
+      $docker = $what === 'remove_docker';
+      $names = $json('names'); if (!$names) fail('Nothing selected');
+      $ok = array_values(array_unique(array_filter($names, $docker ? 'dau_valid_name' : 'dau_valid_plg')));
+      if (!$ok) fail('Invalid names');
+      if (!$docker && (in_array(DAU_SELF_PLG, $ok, true) || in_array('unRAIDServer.plg', $ok, true))) fail('This plugin and Unraid itself cannot be removed from here.');
+      $args = [($docker ? '--remove-docker=' : '--remove-plugins=') . implode(',', $ok)];
+      if ($docker) { $args[] = '--remove-image=' . (($_POST['image'] ?? '') === '1' ? '1' : '0'); $args[] = '--archive-template=' . (($_POST['template'] ?? '') === '1' ? '1' : '0'); }
     } elseif ($what === 'rollback') {
       $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
       if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');

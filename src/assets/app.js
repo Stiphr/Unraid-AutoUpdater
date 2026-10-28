@@ -250,7 +250,8 @@
       h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
     var upd = h('button', { class: 'btn pri', disabled: S.ov.run.running || !selNames.length, onclick: function () { previewUpdate(selNames); } }, 'Update selected…');
     var all = h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { previewUpdate(S.docker.rows.filter(function (r) { return r.update === true && r.managed; }).map(function (r) { return r.name; })); } }, 'Update all pending…');
-    w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all));
+    var rmSel = h('button', { class: 'btn danger', disabled: S.ov.run.running || !selNames.length, onclick: function () { removeContainers(selNames); } }, 'Remove selected…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all, rmSel));
     var t = h('table', { class: 'resp' });
     var all_cb = h('input', { type: 'checkbox', checked: names.length && selNames.length === names.length, onchange: function () { names.forEach(function (n) { S.sel[n] = all_cb.checked; }); render(); } });
     t.appendChild(h('thead', null, h('tr', null, h('th', null, all_cb), h('th', null, 'Container'), h('th', null, 'Status'), h('th', null, 'Image'), h('th', null, 'Policy'), h('th', null, 'Schedule / delay'), h('th', null, 'Last update'), h('th', null, ''))));
@@ -275,7 +276,8 @@
           r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
           r.rollback && !r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Go back to the image before the last update', onclick: function () { rollbackConfirm(r); } }, 'Roll back') : null,
           r.pinned ? h('button', { class: 'btn sm', title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
-          h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings')))));
+          h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings'),
+          h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Stop and remove this container', onclick: function () { removeContainers([r.name]); } }, 'Remove')))));
       if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
     });
     w.appendChild(t);
@@ -354,7 +356,8 @@
     var sel = rows.map(function (r) { return r.file; }).filter(function (n) { return S.psel[n]; });
     var bulk = h('select', { disabled: !sel.length, onchange: function () { if (!bulk.value) return; act('set_plugin', { files: sel, data: { policy: bulk.value } }, 'Policy set').then(function () { load('plugins'); }); } }, h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
     var up = h('button', { class: 'btn pri', disabled: S.ov.run.running || !sel.length, onclick: function () { confirmPlugins(sel); } }, 'Update selected…');
-    w.appendChild(h('div', { class: 'tools' }, q, f, bulk, h('span', { class: 'grow' }), up));
+    var rmSel = h('button', { class: 'btn danger', disabled: S.ov.run.running || !sel.length, onclick: function () { removePlugins(sel); } }, 'Remove selected…');
+    w.appendChild(h('div', { class: 'tools' }, q, f, bulk, h('span', { class: 'grow' }), up, rmSel));
     var t = h('table', { class: 'resp' });
     t.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Plugin'), h('th', null, 'Installed'), h('th', null, 'Available'), h('th', null, 'Status'), h('th', null, 'Policy'), h('th', null, 'Last update'), h('th', null, ''))));
     var tb = h('tbody'); t.appendChild(tb);
@@ -371,7 +374,8 @@
         h('td', null, h('div', { class: 'inl' }, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null,
           r.latest ? h('button', { class: 'btn sm', onclick: function () { notesModal('plugin', r.file, r.name); } }, 'Notes') : null,
           r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
-          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null))));
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null,
+          r.self ? null : h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Uninstall this plugin', onclick: function () { removePlugins([r.file]); } }, 'Remove')))));
     });
     w.appendChild(t);
     return w;
@@ -384,6 +388,35 @@
     rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', r.version + ' → ' + r.latest)); });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel'));
     m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('plugins', rows.map(function (r) { return r.file; }), 'Plugin update started'); } }, 'Update'));
+  }
+
+  /* ---------- remove containers / plugins (explicit, confirmed, run as a job) ---------- */
+  function removeContainers(names) {
+    var rows = S.docker.rows.filter(function (r) { return names.indexOf(r.name) >= 0; });
+    if (!rows.length) { toast('Nothing selected.'); return; }
+    var m = modal(rows.length === 1 ? 'Remove ' + rows[0].name + '?' : 'Remove ' + rows.length + ' containers?');
+    rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', h('span', { class: 'muted sm' }, r.image), r.run_state === 'running' ? h('span', { class: 'badge warn' }, 'running: will be stopped') : null, !r.managed ? h('span', { class: 'badge' }, 'not from an Unraid template') : null)); });
+    m.body.appendChild(h('p', { class: 'muted' }, 'Each container is stopped and removed. Its appdata folders are NOT deleted: afterwards the Cleanup tab can move unused ones to quarantine. A container that others use as their network is not removed.'));
+    var img = h('input', { type: 'checkbox', checked: true }), tpl = h('input', { type: 'checkbox' }), ok = h('input', { type: 'checkbox' });
+    m.body.appendChild(h('label', { class: 'switch' }, img, 'Also delete its image (kept automatically if another container uses it)'));
+    m.body.appendChild(h('label', { class: 'switch' }, tpl, 'Archive its saved template'));
+    m.body.appendChild(h('div', { class: 'muted sm' }, 'Off: the template stays, so you can reinstall it with the same settings from Apps > Previous Apps. On: it is moved to Cleanup > Saved templates, where it can be restored.'));
+    m.body.appendChild(h('label', { class: 'switch' }, ok, rows.length === 1 ? 'I want to remove this container' : 'I want to remove these ' + rows.length + ' containers'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); rows.forEach(function (r) { S.sel[r.name] = false; }); runJob('remove_docker', rows.map(function (r) { return r.name; }), 'Removal started', { confirm: '1', image: img.checked ? '1' : '', template: tpl.checked ? '1' : '' }); } }, 'Remove');
+    ok.addEventListener('change', function () { go.disabled = !ok.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+  function removePlugins(files) {
+    var rows = S.plugins.rows.filter(function (r) { return files.indexOf(r.file) >= 0 && !r.self; });
+    if (!rows.length) { toast('Nothing to remove.'); return; }
+    var m = modal(rows.length === 1 ? 'Remove the plugin ' + rows[0].name + '?' : 'Remove ' + rows.length + ' plugins?');
+    rows.forEach(function (r) { m.body.appendChild(h('div', null, h('b', null, r.name), ' ', h('span', { class: 'muted sm' }, r.version))); });
+    m.body.appendChild(h('p', { class: 'muted' }, 'Each plugin is uninstalled with Unraid\'s own plugin tool, the same as Plugins > Remove. What it leaves behind (usually its settings folder on the flash drive) is up to the plugin. Other plugins that need it may stop working.'));
+    var ok = h('input', { type: 'checkbox' });
+    m.body.appendChild(h('label', { class: 'switch' }, ok, rows.length === 1 ? 'I want to remove this plugin' : 'I want to remove these ' + rows.length + ' plugins'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); rows.forEach(function (r) { S.psel[r.file] = false; }); runJob('remove_plugins', rows.map(function (r) { return r.file; }), 'Removal started', { confirm: '1' }); } }, 'Remove');
+    ok.addEventListener('change', function () { go.disabled = !ok.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
 
   /* ---------- OS ---------- */

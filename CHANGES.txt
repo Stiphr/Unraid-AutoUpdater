@@ -1,3 +1,8 @@
+###2026.10.29
+- New: remove containers and plugins. Docker and Plugins tabs have a Remove button on each row and "Remove selected…" for several at once, always behind a confirmation.
+- Containers: stopped and removed (never forced). Optionally their image is deleted too (Docker keeps it if another container uses it), and optionally their saved template is archived to Cleanup, where it can be restored. By default the template stays, so Apps > Previous Apps can reinstall it with the same settings. Appdata folders are never deleted here: the Cleanup tab can quarantine unused ones afterwards. A container that other containers use as their network is not removed.
+- Plugins: uninstalled with Unraid's own plugin tool (the same as Plugins > Remove) and checked afterwards. This plugin and Unraid itself cannot be removed from here.
+- Every removal is listed in Activity; a failed one also sends a notification.
 ###2026.10.28
 - Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
 - New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
