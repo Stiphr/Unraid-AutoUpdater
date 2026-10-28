@@ -120,3 +120,13 @@
 .dau h3.csec{margin:26px 0 10px;padding-top:6px}.dau h3.csec:first-child{margin-top:4px}
 .dau td.acts{white-space:nowrap}.dau td.acts .btn{margin:0 6px 4px 0}
 @media (max-width:820px){.dau td.acts{white-space:normal}}
+
+/* cleanup: folding sections and summary */
+.dau details.csec{margin:14px 0;border:1px solid var(--line);border-radius:10px;background:transparent}
+.dau details.csec>summary{cursor:pointer;list-style:none;display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:12px 16px;min-height:44px}
+.dau details.csec>summary::-webkit-details-marker{display:none}
+.dau details.csec>summary::before{content:'▸';margin-right:8px;color:var(--muted)}.dau details.csec[open]>summary::before{content:'▾'}
+.dau details.csec>summary b{flex:1}.dau details.csec .cbody{padding:0 16px 14px}
+.dau .big{font-size:30px;font-weight:700;line-height:1.2}.dau .rules{margin:6px 0 10px;flex-wrap:wrap}
+.dau .btn.sm{padding:4px 10px;min-height:30px;font-size:12px}
+@media (max-width:820px){.dau details.csec>summary{flex-wrap:wrap}.dau details.csec .cbody{padding:0 10px 12px}.dau .btn.sm{min-height:40px}}

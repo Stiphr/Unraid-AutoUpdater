@@ -10,13 +10,18 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
      so it must not be re-checked here: it is already gone. Mutations are POST-only. */
 }
 $json = function ($k) { $v = json_decode((string)($_POST[$k] ?? ''), true); return is_array($v) ? $v : null; };
+
+/** One line in the Activity tab for a cleanup action (the details are in the log). */
+function api_clean_hist($what, $result, $message = '') {
+  dau_history_add(['type' => 'cleanup', 'name' => $what, 'action' => 'cleanup', 'result' => $result, 'started' => dau_now(), 'finished' => dau_now(), 'trigger' => 'manual', 'message' => $message, 'error' => $result === 'failed' ? $message : ''], dau_load_config()['history']['max_entries']);
+}
 
 /** Row data for the Docker table. */
 function api_docker_rows($cfg, $st) {
@@ -81,7 +86,7 @@ switch ($action) {
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
         'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
-        'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
@@ -120,6 +125,7 @@ switch ($action) {
   case 'appdata_scan': { out(dau_appdata_scan()); }
   case 'quarantine_list': { out(dau_quarantine_list()); }
   case 'tpl_scan': { out(dau_tpl_scan()); }
+  case 'appdata_peek': { out(dau_appdata_peek((string)($_POST['id'] ?? $_GET['id'] ?? ''))); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
   case 'status': { out(['run' => dau_run_info()]); }
@@ -251,13 +257,31 @@ switch ($action) {
 
   case 'cleanup_run': {
     if (($_POST['confirm'] ?? '') !== '1') fail('Cleanup needs an explicit confirmation.');
-    $imgs = $json('images') ?? []; $cons = $json('containers') ?? [];
+    $imgs = $json('images') ?? []; $cons = $json('containers') ?? []; $vols = array_values(array_filter($json('volumes') ?? [], 'dau_valid_name'));
     $imgs = array_values(array_filter($imgs, function ($i) { return is_string($i) && preg_match('/^sha256:[0-9a-f]{64}$/', $i); }));
     $cons = array_values(array_filter($cons, 'dau_valid_name'));
-    if (!$imgs && !$cons) fail('Nothing selected');
+    if (!$imgs && !$cons && !$vols) fail('Nothing selected');
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
-    try { $r = dau_cleanup_run($imgs, $cons); } finally { dau_lock_release($lock); }
+    try { $r = dau_cleanup_run($imgs, $cons, $vols); } finally { dau_lock_release($lock); }
     dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
+    if (!empty($r['removed'])) api_clean_hist(count($r['removed']) . ' image / container / volume item(s) removed', 'cleaned', 'Freed about ' . ($r['freed_text'] ?? ''));
+    out($r);
+  }
+
+  case 'cleanup_all': {
+    /* one scan of everything: Docker images / containers / volumes and appdata; the counts are stored for the tab badge */
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try {
+      $a = dau_appdata_scan(); $d = dau_cleanup_scan(); $st = dau_state_load();
+      $prev = $st['cleanup']; $st['cleanup'] = dau_cleanup_summary($a, $d); $st['cleanup']['reported'] = $prev['reported'] ?? ''; $st['cleanup']['reported_at'] = (int)($prev['reported_at'] ?? 0);
+      dau_state_save($st);
+    } finally { dau_lock_release($lock); }
+    out(['appdata' => $a, 'docker' => $d, 'summary' => $st['cleanup']]);
+  }
+
+  case 'appdata_ignore': {
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_appdata_ignore((string)($_POST['name'] ?? ''), ($_POST['add'] ?? '1') === '1'); } finally { dau_lock_release($lock); }
     out($r);
   }
 
@@ -269,6 +293,7 @@ switch ($action) {
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
     try { $r = dau_appdata_run($ids, (string)($_POST['mode'] ?? 'quarantine'), $dry, ($_POST['confirm_delete'] ?? '') === '1'); } finally { dau_lock_release($lock); }
     if (!$dry && !empty($r['ok'])) dau_log('info', 'cleanup', '-', $r['mode'] === 'delete' ? 'appdata delete' : 'appdata quarantine', empty($r['failed']) ? 'ok' : 'partial', count($r['done']) . ' folder(s)' . ($r['mode'] === 'delete' ? ', ' . $r['freed_text'] : ''));
+    if (!$dry && !empty($r['ok']) && !empty($r['done'])) api_clean_hist(count($r['done']) . ' appdata folder(s) ' . ($r['mode'] === 'delete' ? 'deleted' : 'moved to quarantine'), 'cleaned', implode(', ', array_slice($r['done'], 0, 10)));
     out($r);
   }
 
@@ -278,7 +303,7 @@ switch ($action) {
     if (($_POST['confirm'] ?? '') !== '1') fail('This needs an explicit confirmation.');
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
     try { $r = dau_quarantine_act($id, $act, ($_POST['suffix'] ?? '') === '1'); } finally { dau_lock_release($lock); }
-    if (!empty($r['ok'])) dau_log('info', 'cleanup', '-', 'quarantine ' . $act, 'ok', $id);
+    if (!empty($r['ok'])) { dau_log('info', 'cleanup', '-', 'quarantine ' . $act, 'ok', $id); api_clean_hist('Quarantine: folder ' . ($act === 'purge' ? 'deleted' : 'restored'), 'cleaned', $id); }
     out($r);
   }
 
@@ -289,7 +314,7 @@ switch ($action) {
     $name = (string)($_POST['name'] ?? ''); if ($act === 'archive' && !dau_valid_name($name)) fail('Bad name');
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
     try { $r = dau_tpl_act($act, $name, (string)($_POST['file'] ?? '')); } finally { dau_lock_release($lock); }
-    if (!empty($r['ok'])) dau_log('info', 'cleanup', $name, 'template ' . $act, 'ok', (string)($_POST['file'] ?? ''));
+    if (!empty($r['ok'])) { dau_log('info', 'cleanup', $name, 'template ' . $act, 'ok', (string)($_POST['file'] ?? '')); api_clean_hist('Saved template ' . ($act === 'archive' ? 'archived' : ($act === 'restore' ? 'restored' : 'backup deleted')), 'cleaned', $name); }
     out($r);
   }
 

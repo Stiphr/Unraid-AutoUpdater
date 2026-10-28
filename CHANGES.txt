@@ -1,3 +1,8 @@
+###2026.10.31b3
+- BETA. Cleanup tab improved: one "Scan everything" button with a total of what can be freed, folding sections (empty ones start folded), a badge on the tab, and a "Recent cleanups" list (also in Activity).
+- Appdata: "Contents" shows what is inside a folder, "Never offer" keeps a folder off the list, folders changed in the last 30 days are flagged, and quick selections (all, not changed for 6 months).
+- Optional: delete quarantined folders after N days, and a weekly report (Discord / Unraid notification) of what could be freed. Both are off by default; the report never removes anything.
+- Unused Docker volumes can now be reviewed and removed (never forced) next to images and containers.
 ###2026.10.31b2
 - BETA. Cleanup tab now has four parts: Appdata folders, Quarantine, Images and containers, Saved templates.
 - Appdata folders: finds folders in your appdata share that no container (running or stopped) uses, with size, age and a preview. Safe mode (default) moves them to a hidden quarantine folder; deleting for good needs Safe mode off and a confirmation. Symbolic links, separate mount points and folders any container maps are never offered.

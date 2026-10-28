@@ -82,7 +82,8 @@ function dau_appdata_scan(array $cfg = null) {
   $mounts = dau_appdata_mounts();
   if ($mounts === null) return ['ok' => false, 'error' => 'The Docker service is not running, so it cannot be checked which folders are still in use. Nothing is offered for cleanup.'];
   $tpls = dau_templates_read();
-  $now = dau_now(); $orph = []; $busy = []; $prot = []; $broad = [];
+  $now = dau_now(); $orph = []; $busy = []; $prot = []; $broad = []; $ignored = [];
+  $ign = array_flip($cfg['appdata']['ignore'] ?? []);
   $qroots = [];
   foreach ($roots as $ri => $root) {
     $rreal = realpath($root); $rdev = @stat($rreal)['dev'] ?? 0; $rtail = dau_path_tail($rreal);
@@ -91,6 +92,7 @@ function dau_appdata_scan(array $cfg = null) {
     foreach ($entries as $e) {
       if ($e === '.' || $e === '..' || $e[0] === '.') continue;
       if (preg_match('/[\x00-\x1F\x7F]/', $e)) continue;
+      if (isset($ign[$e])) { $ignored[] = $e; continue; }
       $path = $root . '/' . $e;
       $row = ['id' => $ri . ':' . $e, 'root' => $ri, 'name' => $e, 'path' => $path, 'size' => 0, 'age' => 0, 'by' => [], 'tpl' => [], 'why' => ''];
       if (is_link($path)) { $row['why'] = 'symbolic link'; $prot[] = $row; continue; }
@@ -105,16 +107,18 @@ function dau_appdata_scan(array $cfg = null) {
         if (dau_path_in($real, $sreal) || dau_path_in($tail, $stail)) $broad[$c['name']] = true;     // maps a parent (like /mnt/user): shown, never ownership
       }
       foreach ($tpls as $tn => $t) foreach ($t['paths'] as $p) if (dau_path_in(dau_path_tail($p), $tail) || dau_path_in($p, $path)) { $row['tpl'][] = $tn; break; }
+      $row['recent'] = false;
       $row['by'] = array_values(array_unique($row['by'])); $row['tpl'] = array_values(array_unique($row['tpl']));
       $row['age'] = $st ? max(0, $now - (int)$st['mtime']) : 0;
       if ($row['by']) { $busy[] = $row; continue; }
       $row['size'] = dau_dir_size($path);
+      $row['recent'] = $row['age'] < 30 * 86400;
       $orph[] = $row;
     }
   }
   usort($orph, function ($a, $b) { return $b['size'] <=> $a['size']; });
   $total = 0; foreach ($orph as $o) $total += $o['size'];
-  return ['ok' => true, 'roots' => $roots, 'orphans' => $orph, 'in_use' => count($busy), 'protected' => $prot, 'broad' => array_keys($broad),
+  return ['ok' => true, 'roots' => $roots, 'orphans' => $orph, 'in_use' => count($busy), 'protected' => $prot, 'broad' => array_keys($broad), 'ignored' => array_values(array_unique($ignored)),
           'total' => $total, 'total_text' => dau_bytes_text($total), 'safe_mode' => !empty($cfg['appdata']['safe_mode'])];
 }
 
@@ -245,4 +249,67 @@ function dau_tpl_act($act, $name, $file = '') {
   }
   if ($act === 'drop') { @unlink($bf); return ['ok' => !is_file($bf)]; }
   return ['ok' => false, 'error' => 'Unknown action'];
+}
+
+
+/* ---------------- look inside a folder, ignore list, scheduled report, quarantine expiry ---------------- */
+
+/** The biggest things directly inside an unused folder, so you can see what you are about to remove. */
+function dau_appdata_peek($id) {
+  if (!is_string($id) || !preg_match('/^(\d):([^\/\x00-\x1F\x7F]{1,255})$/', $id, $m) || $m[2] === '.' || $m[2] === '..') return ['ok' => false, 'error' => 'Bad folder'];
+  $roots = dau_appdata_roots(); $root = $roots[(int)$m[1]] ?? null;
+  if ($root === null) return ['ok' => false, 'error' => 'Unknown appdata folder'];
+  $path = $root . '/' . $m[2]; $real = @realpath($path); $rr = @realpath($root);
+  if ($real === false || $rr === false || dirname($real) !== $rr || is_link($path) || !is_dir($real)) return ['ok' => false, 'error' => 'The folder is not directly inside the appdata folder'];
+  $items = []; $n = 0;
+  foreach (@scandir($real) ?: [] as $e) {
+    if ($e === '.' || $e === '..') continue;
+    $n++; if (count($items) >= 200) continue;
+    $p = $real . '/' . $e; $link = is_link($p); $dir = !$link && is_dir($p);
+    $items[] = ['name' => $e, 'dir' => $dir, 'link' => $link, 'size' => $link ? 0 : ($dir ? 0 : (int)@filesize($p))];
+  }
+  /* folder sizes only for the biggest-looking dozen, to keep this quick */
+  foreach ($items as $i => $it) if ($it['dir'] && $i < 25) $items[$i]['size'] = dau_dir_size($real . '/' . $it['name']);
+  usort($items, function ($a, $b) { return $b['size'] <=> $a['size']; });
+  return ['ok' => true, 'name' => $m[2], 'count' => $n, 'items' => array_slice($items, 0, 15), 'more' => max(0, $n - 15)];
+}
+
+/** Never offer this folder again (or offer it again). Only the folder's name is stored. */
+function dau_appdata_ignore($name, $add) {
+  if (!is_string($name) || !preg_match('#^[^/\x00-\x1F\x7F.][^/\x00-\x1F\x7F]{0,254}$#', $name)) return ['ok' => false, 'error' => 'Bad folder name'];
+  $cfg = dau_load_config(); $l = $cfg['appdata']['ignore'] ?? [];
+  $l = array_values(array_diff($l, [$name])); if ($add) $l[] = $name;
+  if (count($l) > 100) return ['ok' => false, 'error' => 'The ignore list is full (100).'];
+  $cfg['appdata']['ignore'] = $l; dau_save_config($cfg);
+  return ['ok' => true];
+}
+
+/** Quarantined folders older than appdata.purge_days are deleted (only when the person set that). Returns how many were removed. */
+function dau_quarantine_expire(array $cfg) {
+  $days = (int)($cfg['appdata']['purge_days'] ?? 0); if ($days < 1) return 0;
+  $n = 0;
+  foreach (dau_quarantine_load() as $e) {
+    if (dau_now() - (int)($e['at'] ?? 0) < $days * 86400) continue;
+    $r = dau_quarantine_act((string)($e['id'] ?? ''), 'purge');
+    if (!empty($r['ok'])) { $n++; dau_log('info', 'cleanup', $e['name'] ?? '-', 'quarantine expired', 'ok', "older than $days days"); }
+  }
+  return $n;
+}
+
+/**
+ * Counts for the tab badge and the report. Looks only (never removes). Returns the summary stored in state.
+ * The scan is not repeated on every page view: the tab badge reads what the last scan stored.
+ */
+function dau_cleanup_summary($a = null, $d = null) {
+  $cfg = dau_load_config(); $z = ['n' => 0, 'size' => 0];
+  $sum = ['at' => dau_now(), 'appdata' => $z, 'images' => $z, 'volumes' => $z, 'containers' => $z, 'quarantine' => count(dau_quarantine_load())];
+  $a = $a ?: dau_appdata_scan($cfg);
+  if (!empty($a['ok'])) $sum['appdata'] = ['n' => count($a['orphans']), 'size' => $a['total']];
+  $d = $d ?: dau_cleanup_scan();
+  if (!empty($d['ok'])) {
+    $sum['images'] = ['n' => count($d['images']), 'size' => array_sum(array_column($d['images'], 'size'))];
+    $sum['containers'] = ['n' => count($d['containers']), 'size' => array_sum(array_column($d['containers'], 'size'))];
+    $sum['volumes'] = ['n' => count($d['volumes'] ?? []), 'size' => array_sum(array_column($d['volumes'] ?? [], 'size'))];
+  }
+  return $sum;
 }

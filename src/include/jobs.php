@@ -279,7 +279,7 @@ function dau_job_finish(array &$J) {
   $nu = $cfg['notify_unraid']; $sent = 0; $more = 0;
   foreach ($ev as $e) {
     $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified', 'os_awaiting', 'os_prereq_failed', 'os_aborted'], true);   // reboots and failed installs are never silent
-    if (!empty($e['silent']) || !empty($e['silent_native']) || (!$important && empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$e['type']]]))) continue;
+    if (!empty($e['silent']) || !empty($e['silent_native']) || (!$important && empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os', 'cleanup' => 'docker'][$e['type']]]))) continue;
     if ($sent >= 8) { $more++; continue; }
     $label = dau_type_label($e['type']) . ' ' . $e['name'];
     $map = ['available' => ['update available', 'normal'], 'updated' => ['updated', 'normal'], 'failed' => ['update FAILED', 'alert'], 'retrying' => ['update failed, will retry', 'warning'],
@@ -287,11 +287,11 @@ function dau_job_finish(array &$J) {
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
             'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
-            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
-    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : '/Docker'));
+    dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : ($e['type'] === 'cleanup' ? '/Settings/UnraidAutoUpdater' : '/Docker')));
     $sent++;
   }
   if ($more) dau_unraid_notify("Unraid AutoUpdater: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
@@ -302,6 +302,31 @@ function dau_job_finish(array &$J) {
   $J['st']['last_run'] = dau_now(); $J['st']['last_trigger'] = $J['trigger'];
   $J['st']['last_result'] = ['docker' => $sum['docker'], 'plugins' => $sum['plugins'], 'status' => $sum['status'], 'ts' => dau_now()];
   dau_state_save($J['st']);
+}
+
+/* ---------------- cleanup report (looks only; deletes nothing except quarantine that outlived its time, if you set one) ---------------- */
+
+function dau_cleanup_due(array $cfg, array $st, $now) {
+  if (empty($cfg['appdata']['report']) && (int)($cfg['appdata']['purge_days'] ?? 0) < 1) return false;
+  return $now - (int)($st['cleanup']['at'] ?? 0) >= 86400;
+}
+
+function dau_job_cleanup(array &$J) {
+  $cfg = $J['cfg']; $prev = $J['st']['cleanup']; $now = dau_now();
+  try {
+    dau_quarantine_expire($cfg);
+    $sum = dau_cleanup_summary();
+    $sum['reported'] = $prev['reported'] ?? ''; $sum['reported_at'] = (int)($prev['reported_at'] ?? 0);
+    $items = $sum['appdata']['n'] + $sum['images']['n'] + $sum['volumes']['n'] + $sum['containers']['n'];
+    $sig = md5(json_encode([$sum['appdata']['n'], $sum['images']['n'], $sum['volumes']['n'], $sum['containers']['n']]));
+    if (!empty($cfg['appdata']['report']) && $items > 0 && $sig !== $sum['reported'] && $now - $sum['reported_at'] >= 7 * 86400) {
+      $line = function ($t, $x) { return $x['n'] ? "$t: " . $x['n'] . ' (' . dau_bytes_text($x['size']) . ')' : null; };
+      $detail = implode("\n", array_filter([$line('Unused appdata folders', $sum['appdata']), $line('Unused images', $sum['images']), $line('Unused volumes', $sum['volumes']), $line('Leftover containers', $sum['containers'])]));
+      $J['events'][] = dau_ev('cleanup', 'Appdata, images and volumes', 'cleanup_report', ['detail' => $detail, 'error' => '', 'reason' => 'Nothing was removed. Open the Cleanup tab to review.']);
+      $sum['reported'] = $sig; $sum['reported_at'] = $now;
+    }
+    $J['st']['cleanup'] = $sum;
+  } catch (Throwable $e) { dau_log('warn', 'cleanup', '-', 'report', 'fail', $e->getMessage()); $J['st']['cleanup']['at'] = $now; }
 }
 
 /* ---------------- entry points ---------------- */
@@ -358,10 +383,12 @@ function dau_job_main($action, array $o = []) {
       if (!$doPlug && (int)$J['st']['plugins']['deferred_at'] > 0 && (int)$J['st']['plugins']['deferred_at'] <= $now) $doPlug = true;
       $doDocker = array_values(array_unique($doDocker));
       if (!$doOs && (int)$J['st']['os']['deferred_at'] > 0 && (int)$J['st']['os']['deferred_at'] <= $now) $doOs = true;
+      $doClean = dau_cleanup_due($cfg, $J['st'], $now);
       if ($doDocker) dau_job_docker($J, ['names' => $doDocker, 'update' => true, 'manual' => false]);
       if ($doPlug) dau_job_plugins($J, ['update' => true]);
       if ($doOs) dau_job_os($J, ['install' => $osInstall]);
-      if (!$doDocker && !$doPlug && !$doOs && !$announced) { dau_state_save($J['st']); dau_lock_release($lock); return 0; }
+      if ($doClean) dau_job_cleanup($J);
+      if (!$doDocker && !$doPlug && !$doOs && !$doClean && !$announced) { dau_state_save($J['st']); dau_lock_release($lock); return 0; }
     } elseif ($action === 'check') {
       dau_job_docker($J, ['update' => false]); dau_job_plugins($J, ['update' => false]); dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'docker') {

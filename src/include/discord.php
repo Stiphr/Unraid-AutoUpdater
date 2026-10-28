@@ -13,7 +13,7 @@ const DAU_DISCORD_EMBEDS_PER_MSG = 10;
 const DAU_DISCORD_CHARS_PER_MSG  = 5600;   // hard limit is 6000 characters across all embeds of a message
 
 function dau_type_label($t) {
-  return ['docker' => 'Docker container', 'plugin' => 'Unraid plugin', 'os' => 'Unraid OS'][$t] ?? $t;
+  return ['docker' => 'Docker container', 'plugin' => 'Unraid plugin', 'os' => 'Unraid OS', 'cleanup' => 'Cleanup'][$t] ?? $t;
 }
 
 /* ---------- transport ---------- */
@@ -151,12 +151,14 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_aborted'      => ['⏹️', 'OS update aborted', 0xE67E22],
     'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
     'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
+    'cleanup_report'  => ['🧹', 'Cleanup: things you can free', 0x3498DB],
     'major_jump'      => ['🛑', 'Major version update held back', 0xE67E22],
     'rolled_back'     => ['⏪', 'Rolled back to the earlier image', 0xE67E22],
     'rollback_failed' => ['❌', 'Rollback failed', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
   $name = dau_clean_text($ev['name'] ?? '', 120);
-  $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type'])), dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name)];
+  $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type']))];
+  if ($ev['type'] !== 'cleanup') $f[] = dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name);
   if (isset($ev['installed']) && $ev['installed'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'Previous' : 'Installed', dau_clean_text($ev['installed'], 200));
   if (isset($ev['available']) && $ev['available'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'New' : 'Available', dau_clean_text($ev['available'], 200));
   if (isset($ev['duration'])) $f[] = dau_field('Duration', dau_duration_text($ev['duration']));
@@ -239,7 +241,7 @@ function dau_event_toggle($kind) {
 
 function dau_discord_wants(array $dc, array $ev) {
   if (empty($dc['enabled']) || !empty($ev['silent'])) return false;
-  $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$ev['type']] ?? null;
+  $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os', 'cleanup' => 'docker'][$ev['type']] ?? null;
   if (!$cat || empty($dc['events'][$cat])) return false;
   if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_workflow_started', 'os_workflow_done', 'os_awaiting', 'os_aborted'], true)) return true;   // a pending reboot must never be missed
   return !empty($dc['types'][dau_event_toggle($ev['kind'])]);

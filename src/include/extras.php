@@ -260,14 +260,29 @@ function dau_cleanup_scan() {
       $orph[] = ['name' => $n, 'image' => (string)($d['Config']['Image'] ?? ''), 'state' => (string)($d['State']['Status'] ?? ''), 'size' => (int)($d['SizeRw'] ?? 0), 'finished' => (string)($d['State']['FinishedAt'] ?? '')];
     }
   }
+  /* volumes no container uses (Docker itself says "dangling"); anonymous ones have a 64-character hex name */
+  $vols = [];
+  $r = dau_docker(['volume', 'ls', '-q', '-f', 'dangling=true'], 30);
+  $vn = array_values(array_filter(array_map('trim', preg_split('/\R/', $r['out'])), function ($n) { return preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $n) === 1; }));
+  if ($r['code'] === 0 && $vn) {
+    $r = dau_docker(array_merge(['volume', 'inspect'], array_slice($vn, 0, 200)), 60);
+    $vd = json_decode($r['out'], true);
+    foreach (is_array($vd) ? $vd : [] as $v) {
+      $n = (string)($v['Name'] ?? ''); $mp = (string)($v['Mountpoint'] ?? '');
+      if (!in_array($n, $vn, true)) continue;
+      $size = ($mp !== '' && strpos($mp, '/var/lib/docker/volumes/') === 0 && strpos($mp, '..') === false) ? dau_dir_size($mp) : 0;
+      $vols[] = ['name' => $n, 'anonymous' => preg_match('/^[0-9a-f]{64}$/', $n) === 1, 'size' => $size, 'created' => (string)($v['CreatedAt'] ?? '')];
+    }
+    usort($vols, function ($a, $b) { return $b['size'] <=> $a['size']; });
+  }
   $imgs = array_values($imgs);
   usort($imgs, function ($a, $b) { return $b['size'] <=> $a['size']; });
-  $total = 0; foreach ($imgs as $i) $total += $i['size']; foreach ($orph as $o) $total += $o['size'];
-  return ['ok' => true, 'images' => $imgs, 'containers' => $orph, 'total' => $total, 'total_text' => dau_bytes_text($total)];
+  $total = 0; foreach ($imgs as $i) $total += $i['size']; foreach ($orph as $o) $total += $o['size']; foreach ($vols as $v) $total += $v['size'];
+  return ['ok' => true, 'images' => $imgs, 'containers' => $orph, 'volumes' => $vols, 'total' => $total, 'total_text' => dau_bytes_text($total)];
 }
 
 /** Remove exactly the chosen items, each re-checked against a fresh scan. Never forced. */
-function dau_cleanup_run(array $imageIds, array $containerNames) {
+function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNames = []) {
   $scan = dau_cleanup_scan();
   if (!$scan['ok']) return $scan;
   $okImg = []; foreach ($scan['images'] as $i) $okImg[$i['id']] = $i;
@@ -283,6 +298,12 @@ function dau_cleanup_run(array $imageIds, array $containerNames) {
     $r = dau_docker(['image', 'rm', $id], 120);
     $label = $okImg[$id]['tags'] ? implode(', ', $okImg[$id]['tags']) : $okImg[$id]['short'];
     if ($r['code'] === 0) { $out['removed'][] = 'image ' . $label; $out['freed'] += $okImg[$id]['size']; } else $out['failed'][] = ['what' => $label, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
+  }
+  $okVol = []; foreach ($scan['volumes'] ?? [] as $v) $okVol[$v['name']] = $v;
+  foreach ($volumeNames as $n) {
+    if (!isset($okVol[$n])) { $out['failed'][] = ['what' => (string)$n, 'why' => 'now in use or already removed']; continue; }
+    $r = dau_docker(['volume', 'rm', $n], 60);   // never forced: Docker refuses a volume that is in use
+    if ($r['code'] === 0) { $out['removed'][] = 'volume ' . $n; $out['freed'] += $okVol[$n]['size']; } else $out['failed'][] = ['what' => $n, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
   }
   $out['freed_text'] = dau_bytes_text($out['freed']);
   return $out;

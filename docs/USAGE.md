@@ -169,3 +169,10 @@ Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins
 - **Quarantine**: *Restore* puts a folder back and never overwrites; if the place is taken you can restore it as `name-restored`. *Delete* removes it for good.
 - **Saved templates**: Unraid keeps a template for every container you ever created. *Archive* saves a verified backup in the plugin's own folder and removes the template; *Restore* brings it back while the name is free.
 - Not included (compared with Appdata Cleanup Plus): ZFS dataset handling, purge timers, exporting backups and translations.
+
+### Cleanup extras
+
+- **Scan everything** scans appdata, images, volumes and leftover containers in one go and shows the total. Nothing is removed by scanning. The tab badge shows what the last scan found.
+- **Contents** lists what is inside an unused folder; **Never offer** hides a folder for good (undo with the ✕ next to the ignored name). Folders changed in the last 30 days are marked *recently changed*.
+- **Delete quarantined folders after N days** (Settings > Cleanup, off by default) lets the scheduled run delete old quarantine entries for you. **Weekly report** sends one notification when there is something to clean up and the numbers changed; it follows your Docker notification settings and quiet hours.
+- **Volumes**: unused volumes are listed with their size. Unnamed ones are usually leftovers; named ones were made on purpose. Docker refuses to remove a volume that is in use and nothing is forced.
