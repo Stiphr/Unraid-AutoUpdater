@@ -10,8 +10,12 @@ function dau_state_defaults() {
     'last_trigger' => '',
     'last_result'  => [],
     'current'      => null,    // component being changed right now (detects interrupted jobs after a reboot/kill)
-    'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => []],
-    'plugins' => ['deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
+    'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => [],
+                  'skipped' => [],      // name => remote digest the person chose to skip
+                  'rollback' => [],     // name => how to go back to the image before the last update
+                  'pinned' => [],
+                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump      // name => template Repository that was replaced by a rollback (restored by "unpin")
+    'plugins' => ['skipped' => [], 'notes' => [], 'deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
     'os'      => ['installed' => null, 'available' => null, 'first_seen' => 0, 'notified' => null, 'withdrawn_notified' => false,
                   'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false,
                   'pending' => null,        // ['from','to','at','reboot'] installed, waiting for a reboot
@@ -19,8 +23,10 @@ function dau_state_defaults() {
                   'rebooted_for' => '',     // target version an automatic reboot was already started for
                   'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null,
                   'workflow' => null,       // pre-OS workflow in progress / waiting for a confirmation (see workflow.php)
-                  'last_report' => null],
-    'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat],
+                  'last_report' => null, 'skipped' => ''],
+    'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat, 'daily' => [], 'per' => []],
+    'summary' => ['containers' => 0, 'docker_updates' => 0, 'plugin_updates' => 0, 'at' => 0],     // numbers for the dashboard widget (no Docker call needed to show them)
+    'queue'   => [],      // notifications held back by quiet hours
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];
 }
@@ -31,7 +37,7 @@ function dau_state_load() {
   foreach (['docker', 'plugins', 'os', 'stats', 'discord'] as $k) {
     if (isset($s[$k]) && is_array($s[$k])) $d[$k] = array_replace_recursive($d[$k], $s[$k]);
   }
-  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current'] as $k) {
+  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current', 'queue', 'summary'] as $k) {
     if (array_key_exists($k, $s) && (is_array($s[$k]) || !is_array($d[$k]))) $d[$k] = $s[$k];
   }
   if (!is_array($d['slots'])) $d['slots'] = [];
@@ -40,12 +46,13 @@ function dau_state_load() {
 
 function dau_state_save(array $st) {
   /* keep the maps bounded */
-  foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) {
+  foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'rollback', 'pinned', 'major'] as $k) {
     if (count($st['docker'][$k]) > 1000) $st['docker'][$k] = array_slice($st['docker'][$k], -1000, null, true);
   }
-  foreach (['seen', 'notified', 'blocked', 'available'] as $k) {
+  foreach (['seen', 'notified', 'blocked', 'available', 'skipped'] as $k) {
     if (count($st['plugins'][$k]) > 1000) $st['plugins'][$k] = array_slice($st['plugins'][$k], -1000, null, true);
   }
+  if (count($st['queue']) > 60) $st['queue'] = array_slice($st['queue'], -60);
   return dau_write_json(DAU_STATE, $st);
 }
 
@@ -109,21 +116,49 @@ function dau_history_last_by_name($type) {
 
 /* ---------- statistics (persistent counters; history alone is bounded) ---------- */
 
-function dau_stats_record(array &$st, $type, $ok, $duration) {
+function dau_stats_record(array &$st, $type, $ok, $duration, $name = '') {
   if (!isset($st['stats'][$type])) $st['stats'][$type] = ['ok' => 0, 'failed' => 0, 'dur' => 0];
   $st['stats'][$type][$ok ? 'ok' : 'failed']++;
   if ($ok) $st['stats'][$type]['dur'] += max(0, (int)$duration);
+  /* over time: one counter per day (kept 90 days) and per component (top 200) */
+  $day = gmdate('Y-m-d', dau_now());
+  $d =& $st['stats']['daily'][$day][$type];
+  if (!is_array($d)) $d = ['ok' => 0, 'failed' => 0];
+  $d[$ok ? 'ok' : 'failed']++;
+  unset($d);
+  if (count($st['stats']['daily']) > 90) { ksort($st['stats']['daily']); $st['stats']['daily'] = array_slice($st['stats']['daily'], -90, null, true); }
+  if ($name !== '') {
+    $k = $type . ':' . $name;
+    $p = $st['stats']['per'][$k] ?? ['type' => $type, 'name' => $name, 'ok' => 0, 'failed' => 0, 'last' => 0];
+    $p[$ok ? 'ok' : 'failed']++; $p['last'] = dau_now();
+    $st['stats']['per'][$k] = $p;
+    if (count($st['stats']['per']) > 200) { uasort($st['stats']['per'], function ($a, $b) { return $b['last'] <=> $a['last']; }); $st['stats']['per'] = array_slice($st['stats']['per'], 0, 200, true); }
+  }
 }
 
 function dau_stats_summary(array $st) {
   $out = ['total_ok' => 0, 'total_failed' => 0, 'by_type' => [], 'avg_duration' => 0];
   $dur = 0; $n = 0;
   foreach ($st['stats'] as $t => $s) {
+    if ($t === 'daily' || $t === 'per') continue;
     $out['by_type'][$t] = ['ok' => (int)$s['ok'], 'failed' => (int)$s['failed'], 'avg_duration' => $s['ok'] ? (int)round($s['dur'] / $s['ok']) : 0];
     $out['total_ok'] += (int)$s['ok']; $out['total_failed'] += (int)$s['failed'];
     $dur += (int)$s['dur']; $n += (int)$s['ok'];
   }
   $out['avg_duration'] = $n ? (int)round($dur / $n) : 0;
+  /* the last 30 days, oldest first, and the most active / most failing components */
+  $days = [];
+  for ($i = 29; $i >= 0; $i--) {
+    $k = gmdate('Y-m-d', dau_now() - $i * 86400); $r = $st['stats']['daily'][$k] ?? [];
+    $days[] = ['day' => $k, 'ok' => (int)(($r['docker']['ok'] ?? 0) + ($r['plugin']['ok'] ?? 0) + ($r['os']['ok'] ?? 0)), 'failed' => (int)(($r['docker']['failed'] ?? 0) + ($r['plugin']['failed'] ?? 0) + ($r['os']['failed'] ?? 0))];
+  }
+  $out['daily'] = $days;
+  $per = array_values($st['stats']['per'] ?? []);
+  usort($per, function ($a, $b) { return ($b['ok'] + $b['failed']) <=> ($a['ok'] + $a['failed']); });
+  $out['top'] = array_slice($per, 0, 8);
+  $fail = array_values(array_filter($per, function ($p) { return $p['failed'] > 0; }));
+  usort($fail, function ($a, $b) { return $b['failed'] <=> $a['failed']; });
+  $out['top_failing'] = array_slice($fail, 0, 5);
   return $out;
 }
 

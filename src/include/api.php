@@ -10,7 +10,7 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
@@ -28,7 +28,11 @@ function api_docker_rows($cfg, $st) {
     $rows[] = ['run_state' => $c['state']] + array_diff_key($c, ['state' => 1]) + ['cfg' => $cc, 'state' => $ev['state'], 'reason' => $ev['reason'], 'eta' => $ev['eta'], 'delay_hours' => $ev['delay_hours'],
       'schedule_text' => $sched ? dau_sched_text($sched) : null, 'last' => $last[$c['name']] ?? null,
       'first_seen' => $st['docker']['seen'][$c['name']]['first'] ?? null, 'approved' => ($st['docker']['approved'][$c['name']] ?? '') === (string)$c['remote'] && $c['remote'],
-      'retry' => $st['docker']['retry'][$c['name']] ?? null];
+      'retry' => $st['docker']['retry'][$c['name']] ?? null,
+      'skipped' => $c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote'],
+      'pinned' => $st['docker']['pinned'][$c['name']] ?? null,
+      'rollback' => isset($st['docker']['rollback'][$c['name']]) ? ['at' => $st['docker']['rollback'][$c['name']]['at'], 'from' => $st['docker']['rollback'][$c['name']]['from'] ?? '', 'to' => $st['docker']['rollback'][$c['name']]['to'] ?? '', 'ref' => $st['docker']['rollback'][$c['name']]['ref'] ?? ''] : null,
+      'major' => ($st['docker']['major'][$c['name']]['remote'] ?? '') === (string)$c['remote'] && $c['remote'] ? $st['docker']['major'][$c['name']] : null];
   }
   return $rows;
 }
@@ -40,7 +44,7 @@ function api_plugin_rows($cfg, $st) {
     $ev = $latest ? dau_plugin_eval($cfg, $st, $p, $latest, $now, false) : ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
     $rows[] = ['file' => $f, 'name' => $p['name'], 'version' => $p['version'], 'latest' => $latest, 'self' => $p['self'], 'policy' => dau_plugin_policy($cfg, $f),
       'explicit' => $cfg['plugins']['items'][$f]['policy'] ?? null, 'state' => $ev['state'], 'reason' => $ev['reason'], 'eta' => $ev['eta'], 'last' => $last[$p['name']] ?? null,
-      'first_seen' => $st['plugins']['seen'][$f]['first'] ?? null];
+      'first_seen' => $st['plugins']['seen'][$f]['first'] ?? null, 'skipped' => $latest && ($st['plugins']['skipped'][$f] ?? '') === $latest];
   }
   return $rows;
 }
@@ -76,7 +80,7 @@ switch ($action) {
         'docker_auto' => $cnt($rows, function ($r) { return $r['cfg']['policy'] === 'auto'; }),
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
-        'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st),
+        'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
@@ -93,9 +97,26 @@ switch ($action) {
     $av = $st['os']['available'];
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
-         'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
+         'skipped' => $av && ($st['os']['skipped'] ?? '') === $av, 'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
          'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
   }
+  case 'notes': {
+    $type = (string)($_GET['type'] ?? $_POST['type'] ?? ''); $n = (string)($_GET['name'] ?? $_POST['name'] ?? ''); $st = dau_state_load();
+    if ($type === 'os') out(['text' => (string)$st['os']['notes'], 'version' => (string)$st['os']['available']]);
+    if ($type === 'plugin') {
+      foreach (dau_plugins_installed() as $f => $p) if ($f === $n || $p['name'] === $n) out(['text' => $st['plugins']['notes'][$f] ?? dau_plugin_notes($f, $p['version']), 'version' => (string)($st['plugins']['available'][$f] ?? '')]);
+      out(['text' => '']);
+    }
+    if ($type === 'docker' && dau_valid_name($n)) { foreach (dau_containers() ?? [] as $c) if ($c['name'] === $n) out(dau_docker_notes($c)); out(['text' => '']); }
+    fail('Unknown type');
+  }
+  case 'widget': {       // light: state files only, no Docker call (used by the Dashboard tile)
+    $st = dau_state_load(); $cfg = dau_load_config();
+    out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
+         'os' => $st['os']['available'], 'os_installed' => dau_os_version(), 'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
+         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
+  }
+  case 'cleanup_scan': { out(dau_cleanup_scan()); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
   case 'status': { out(['run' => dau_run_info()]); }
@@ -184,9 +205,57 @@ switch ($action) {
       $ok = array_values(array_filter($names, $what === 'docker' ? 'dau_valid_name' : 'dau_valid_plg'));
       if (!$ok) fail('Invalid names');
       $args = ['--update-' . $what . '=' . implode(',', $ok)];
+      if ($what === 'docker' && ($_POST['allow_major'] ?? '') === '1') $args[] = '--allow-major=' . implode(',', $ok);
+    } elseif ($what === 'rollback') {
+      $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
+      if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');
+      $st = dau_state_load(); if (empty($st['docker']['rollback'][$n])) fail('There is no earlier image recorded for this container.');
+      $args = ['--rollback=' . $n];
     } else fail('Unknown job');
     if (!dau_spawn($args)) fail('Another job is already running.', 409);
     out(['ok' => true]);
+  }
+
+  /* skip one specific version (a newer one is announced again) */
+  case 'skip': case 'unskip': {
+    $type = (string)($_POST['type'] ?? ''); $n = (string)($_POST['name'] ?? ''); $st = dau_state_load(); $skip = $action === 'skip';
+    if ($type === 'docker') {
+      if (!dau_valid_name($n)) fail('Invalid name');
+      $rem = ''; foreach (dau_containers() ?? [] as $c) if ($c['name'] === $n) $rem = (string)$c['remote'];
+      if ($skip && $rem === '') fail('No pending update with a known image to skip for this container.');
+      if ($skip) $st['docker']['skipped'][$n] = $rem; else unset($st['docker']['skipped'][$n]);
+    } elseif ($type === 'plugin') {
+      $f = $n; if (!dau_valid_plg($f)) { $f = ''; foreach (dau_plugins_installed() as $pf => $p) if ($p['name'] === $n) $f = $pf; }
+      $latest = $f !== '' ? ($st['plugins']['available'][$f] ?? null) : null;
+      if ($skip && !$latest) fail('No pending update to skip for this plugin.');
+      if ($f === '') fail('Unknown plugin');
+      if ($skip) $st['plugins']['skipped'][$f] = $latest; else unset($st['plugins']['skipped'][$f]);
+    } elseif ($type === 'os') {
+      if ($skip && empty($st['os']['available'])) fail('No OS update to skip.');
+      $st['os']['skipped'] = $skip ? (string)$st['os']['available'] : '';
+    } else fail('Unknown type');
+    dau_state_save($st); out(['ok' => true]);
+  }
+
+  case 'unpin': {
+    $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    $st = dau_state_load(); $r = dau_docker_unpin($st, $n); if ($r['ok']) dau_state_save($st);
+    dau_lock_release($lock);
+    if (!$r['ok']) fail($r['error']);
+    out(['ok' => true]);
+  }
+
+  case 'cleanup_run': {
+    if (($_POST['confirm'] ?? '') !== '1') fail('Cleanup needs an explicit confirmation.');
+    $imgs = $json('images') ?? []; $cons = $json('containers') ?? [];
+    $imgs = array_values(array_filter($imgs, function ($i) { return is_string($i) && preg_match('/^sha256:[0-9a-f]{64}$/', $i); }));
+    $cons = array_values(array_filter($cons, 'dau_valid_name'));
+    if (!$imgs && !$cons) fail('Nothing selected');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_cleanup_run($imgs, $cons); } finally { dau_lock_release($lock); }
+    dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
+    out($r);
   }
 
   case 'os_abort': {

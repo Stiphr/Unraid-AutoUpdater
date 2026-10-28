@@ -117,6 +117,7 @@ function dau_plugin_eval(array $cfg, array $st, array $p, $latest, $now, $manual
   if ($p['self']) return ['state' => 'self', 'reason' => 'This plugin never updates itself automatically.', 'eta' => null];
   if (!dau_version_newer($latest, $p['version'])) return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
+  if (($st['plugins']['skipped'][$p['file']] ?? '') === $latest) return ['state' => 'skipped', 'reason' => 'You chose to skip this version. It is ignored until a newer one appears.', 'eta' => null];
   $policy = dau_plugin_policy($cfg, $p['file']);
   if (empty($pc['auto_update'])) return ['state' => $policy === 'ignore' ? 'ignored' : 'notify_only', 'reason' => 'Automatic plugin updates are switched off globally.', 'eta' => null];
   if ($policy === 'ignore') return ['state' => 'ignored', 'reason' => 'Policy is "ignore".', 'eta' => null];
@@ -142,7 +143,7 @@ function dau_plugins_track(array &$st, array $avail, $now) {
     $seen[$f] = (is_array($r) && ($r['version'] ?? '') === $latest) ? ['version' => $latest, 'first' => $r['first'], 'last' => $now] : ['version' => $latest, 'first' => $now, 'last' => $now];
   }
   $st['plugins']['seen'] = $seen;
-  foreach (['notified', 'blocked'] as $k) foreach (array_keys($st['plugins'][$k]) as $f) if (!isset($avail[$f])) unset($st['plugins'][$k][$f]);
+  foreach (['notified', 'blocked', 'skipped', 'notes'] as $k) foreach (array_keys($st['plugins'][$k]) as $f) if (!isset($avail[$f]) || ($k === 'skipped' && $st['plugins'][$k][$f] !== $avail[$f])) unset($st['plugins'][$k][$f]);
 }
 
 function dau_plugin_recovery_copy($p) {

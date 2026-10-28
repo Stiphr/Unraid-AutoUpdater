@@ -3,7 +3,7 @@
   'use strict';
   var API = '/plugins/unraid-autoupdater/include/api.php';
   var root = document.getElementById('dau');
-  var S = { tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
+  var S = { clean: null, csel: { img: {}, con: {} }, tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var FREQ = [['6h', 'Every 6 hours'], ['12h', 'Every 12 hours'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every two weeks'], ['monthly', 'Monthly']];
   var POL = [['auto', 'Auto update'], ['notify', 'Notify only'], ['ignore', 'Ignore']];
@@ -12,7 +12,7 @@
     external: ['Not managed by Unraid', ''], unknown: ['Status unknown', ''], up_to_date: ['Up to date', 'ok'], ignored: ['Ignored', ''], notify_only: ['Update available', 'acc'],
     stopped: ['Skipped: stopped', 'warn'], approval: ['Needs your approval', 'warn'], no_identity: ['Waiting: digest unknown', 'warn'], waiting_delay: ['Waiting for delay', 'warn'],
     retry_wait: ['Retry scheduled', 'warn'], retry_exhausted: ['Retries used up', 'bad'], window_closed: ['Waiting for window', 'warn'], ready: ['Ready to update', 'acc'],
-    blocked: ['Blocked', 'bad'], self: ['This plugin', '']
+    blocked: ['Blocked', 'bad'], self: ['This plugin', ''], pinned: ['Pinned (rolled back)', 'warn'], skipped: ['Version skipped', '']
   };
 
   function h(tag, p) {
@@ -77,8 +77,70 @@
     });
   }
 
+  /* ---------- appearance: theme, accent colour, custom CSS ---------- */
+  function applyTheme(ui) {
+    ui = ui || {};
+    root.setAttribute('data-theme', ui.theme || 'dark');
+    var st = document.getElementById('dau-user-css');
+    if (!st) { st = document.createElement('style'); st.id = 'dau-user-css'; document.head.appendChild(st); }
+    var acc = /^#[0-9a-f]{6}$/i.test(ui.accent || '') ? ui.accent : '#f15a2c';
+    st.textContent = '.dau{--accent:' + acc + ';--accent-hi:' + acc + '}\n' + String(ui.css || '').replace(/<\/?style/gi, '');
+  }
+
+  /* ---------- shared actions ---------- */
+  function skipAct(type, name, label, undo) {
+    act(undo ? 'unskip' : 'skip', { type: type, name: name }, undo ? 'Will be offered again: ' + label : 'Skipping this version of ' + label + '. A newer one is announced again.').then(function () { load(); });
+  }
+  function notesModal(type, name, title) {
+    var m = modal('What changed: ' + title);
+    var body = h('pre', { class: 'log' }, 'Loading…'); m.body.appendChild(body); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Close'));
+    api('notes', { type: type, name: name }).then(function (j) {
+      if (j.error) { body.textContent = j.error; return; }
+      body.textContent = j.text || (type === 'docker' ? '' : 'No release notes were published with this update.');
+      if (j.version) m.body.insertBefore(h('p', { class: 'muted' }, 'Version: ' + j.version), body);
+      if (type === 'docker') {
+        if (j.link) { body.textContent = 'This image publishes its notes with the project\'s releases.'; m.body.appendChild(h('p', null, h('a', { href: j.link, target: '_blank', rel: 'noopener noreferrer' }, 'Open the release notes'))); }
+        else if (!j.text) body.textContent = 'This image does not say where its release notes are.';
+      }
+      if (type === 'os') m.body.appendChild(h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes under Tools > Update OS.'));
+    });
+  }
+  function rollbackConfirm(r) {
+    var m = modal('Roll back ' + r.name + '?');
+    m.body.appendChild(h('p', null, 'The container is recreated with the image it used before its last update' + (r.rollback.from || r.rollback.to ? ' (' + (r.rollback.to || '?') + ' → ' + (r.rollback.from || '?') + ')' : '') + '.'));
+    m.body.appendChild(h('p', { class: 'muted' }, 'It restarts briefly. Afterwards it is pinned to that image and the newer version is skipped, so nothing updates it again until you click "Unpin". Data in its appdata folders is not changed, so after a major version jump an older program may not be able to read newer data: restore a backup if that happens.'));
+    var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I understand and want to roll back'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('rollback', [], 'Rollback started', { name: r.name, confirm: '1' }); } }, 'Roll back');
+    cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+
+  /* links from notifications: ?act=update|skip|approve|open&type=docker|plugin|os&name=… */
+  function deepLink() {
+    var q = new URLSearchParams(location.search), a = q.get('act'); if (!a) return;
+    var type = q.get('type') || '', name = q.get('name') || '';
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* ignore */ }
+    if (type === 'os') { S.tab = 'os'; if (a === 'skip') return load('os').then(function () { var m = modal('Skip this Unraid release?'); m.body.appendChild(h('p', null, 'No automatic action is taken for this release. A newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('os', '', 'Unraid OS'); } }, 'Skip')); }); return load('os'); }
+    if (type === 'docker') {
+      S.tab = 'docker';
+      return load('docker').then(function () {
+        if (a === 'update') previewUpdate([name]);
+        else if (a === 'approve') act('approve', { name: name }, 'Approved this image for ' + name).then(function () { load('docker'); });
+        else if (a === 'skip') { var m = modal('Skip this version of ' + name + '?'); m.body.appendChild(h('p', null, 'This image is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('docker', name, name); } }, 'Skip')); }
+      });
+    }
+    if (type === 'plugin') {
+      S.tab = 'plugins';
+      return load('plugins').then(function () {
+        var r = (S.plugins.rows || []).filter(function (x) { return x.name === name || x.file === name; })[0]; if (!r) return;
+        if (a === 'update') confirmPlugins([r.file]);
+        else if (a === 'skip') { var m = modal('Skip this version of ' + r.name + '?'); m.body.appendChild(h('p', null, 'This version is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('plugin', r.file, r.name); } }, 'Skip')); }
+      });
+    }
+  }
+
   /* ---------- shell ---------- */
-  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['settings', 'Settings'], ['activity', 'Activity']];
+  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['cleanup', 'Cleanup'], ['settings', 'Settings'], ['activity', 'Activity']];
   var runBar = h('div');
   function renderRunBar() {
     clear(runBar);
@@ -102,12 +164,24 @@
       tabs.appendChild(h('button', { class: 'tab' + (S.tab === t[0] ? ' on' : ''), onclick: function () { S.tab = t[0]; load(t[0]); } }, t[1], n ? h('span', { class: 'n' }, n) : null));
     });
     root.appendChild(tabs);
-    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, settings: vSettings, activity: vActivity }[S.tab]();
+    applyTheme(S.tab === 'settings' && S.draft ? S.draft.ui : S.ov.config.ui);
+    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, settings: vSettings, activity: vActivity }[S.tab]();
     root.appendChild(body);
   }
 
   /* ---------- overview ---------- */
   function card(k, v, s, cls) { return h('div', { class: 'card ' + (cls || '') }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), h('div', { class: 's' }, s || '')); }
+  /* last 30 days: green = updated, red = failed (plain bars; every bar has a text alternative) */
+  function chart(days) {
+    var max = 1; days.forEach(function (d) { max = Math.max(max, d.ok + d.failed); });
+    var box = h('div', { class: 'chart', role: 'img', 'aria-label': 'Updates per day over the last 30 days' });
+    days.forEach(function (d) {
+      var tot = d.ok + d.failed;
+      box.appendChild(h('div', { class: 'bar', title: d.day + ': ' + d.ok + ' updated, ' + d.failed + ' failed' },
+        h('i', { class: 'f', style: 'height:' + (d.failed ? Math.max(4, d.failed / max * 100) : 0) + '%' }), h('i', { class: 'o', style: 'height:' + (d.ok ? Math.max(4, d.ok / max * 100) : 0) + '%' })));
+    });
+    return h('div', null, h('h4', null, 'Updates per day (last 30 days)'), box, h('div', { class: 'inl sm muted' }, h('span', { class: 'key o' }), 'updated', h('span', { class: 'key f' }), 'failed'));
+  }
   function vOverview() {
     var c = S.ov.cards, w = h('div');
     w.appendChild(h('div', { class: 'cards' },
@@ -121,10 +195,13 @@
     if (!c.next.length) nx.appendChild(h('div', { class: 'muted' }, 'Nothing is scheduled. Turn on a schedule in Settings, or set a container to "Auto update".'));
     c.next.forEach(function (n) { nx.appendChild(h('div', { class: 'inl' }, h('b', null, n.label), h('span', { class: 'muted' }, n.text + (n.count > 1 || n.label === 'Docker' ? ' · ' + n.count + ' container(s)' : '')), h('span', { class: 'grow' }), h('span', null, n.next ? when(n.next) : '-'))); });
     w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Next scheduled checks'), nx));
+    if (c.queued) w.appendChild(h('div', { class: 'banner' }, c.queued + ' notification(s) are on hold' + (c.quiet_now ? ' during quiet hours and will be sent afterwards.' : ' and will go out with the next run.')));
     var st = S.ov.stats;
     w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Statistics'), h('div', { class: 'grid2' }, ['docker', 'plugin'].map(function (t) {
       var x = (st.by_type || {})[t] || {}; return h('div', null, h('b', null, t === 'docker' ? 'Docker' : 'Plugins'), h('div', { class: 'muted sm' }, (x.ok || 0) + ' updated · ' + (x.failed || 0) + ' failed · average ' + dur(x.avg_duration || 0)));
-    }))));
+    })), chart(st.daily || []), h('div', { class: 'grid2' },
+      h('div', null, h('h4', null, 'Most active'), (st.top || []).length ? (st.top || []).slice(0, 5).map(function (p) { return h('div', { class: 'inl sm' }, h('span', { class: 'grow' }, p.name), h('span', { class: 'muted' }, p.ok + ' ok' + (p.failed ? ' · ' + p.failed + ' failed' : ''))); }) : h('div', { class: 'muted sm' }, 'Nothing recorded yet.')),
+      h('div', null, h('h4', null, 'Most failures'), (st.top_failing || []).length ? st.top_failing.map(function (p) { return h('div', { class: 'inl sm' }, h('span', { class: 'grow' }, p.name), h('span', { class: 'badge bad' }, p.failed + ' failed')); }) : h('div', { class: 'muted sm' }, 'No failures recorded.')))));
     var d = S.ov.discord, cfg = S.ov.config.discord;
     if (cfg.enabled) w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Discord'), h('div', { class: d.invalid || d.last_error ? 'badge bad' : 'badge ok' }, d.invalid ? 'Webhook rejected: save it again' : d.last_error ? 'Last send failed' : 'Connected'), h('span', { class: 'muted sm' }, ' last success: ' + ago(d.last_ok) + (d.last_error ? ' · ' + d.last_error : ''))));
     w.appendChild(h('div', { class: 'muted sm' }, 'Checked: Docker ' + ago(S.ov.checked.docker) + ' · Plugins ' + ago(S.ov.checked.plugins) + ' · OS ' + ago(S.ov.checked.os)));
@@ -177,14 +254,20 @@
       tb.appendChild(h('tr', { class: 'row' + (open ? ' open' : '') },
         h('td', null, h('input', { type: 'checkbox', checked: !!S.sel[r.name], onchange: function (e) { S.sel[r.name] = e.target.checked; render(); } })),
         h('td', { class: 'name', 'data-l': 'Container' }, r.icon && /^https?:\/\//.test(r.icon) ? h('img', { class: 'ico', src: r.icon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null, h('span', { class: 'nm' }, r.name), h('div', { class: 'img' }, r.run_state || '')),
-        h('td', { 'data-l': 'Status' }, shortState(r), r.cfg.critical ? h('span', { class: 'badge warn', title: 'Needs manual approval' }, ' critical') : null, r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null),
+        h('td', { 'data-l': 'Status' }, shortState(r), r.cfg.critical ? h('span', { class: 'badge warn', title: 'Needs manual approval' }, ' critical') : null, r.major ? h('div', { class: 'badge warn', title: 'Version ' + (r.major.from || '?') + ' to ' + (r.major.to || '?') }, 'major update held: ' + (r.major.from || '?') + ' → ' + (r.major.to || '?')) : null, r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null),
         h('td', { 'data-l': 'Image' }, h('div', { class: 'img muted sm' }, r.image), r.update === true ? h('div', { class: 'digest' }, (r.local || '').slice(7, 19) + ' → ' + (r.remote || '').slice(7, 19)) : null),
         h('td', { 'data-l': 'Policy' }, r.managed ? polSel(r.cfg.policy, function (v) { act('set_container', { names: [r.name], data: { policy: v } }).then(function () { load('docker'); }); }) : h('span', { class: 'muted' }, '-')),
         h('td', { 'data-l': 'Schedule' }, h('div', { class: 'sm' }, r.schedule_text || 'Default schedule'), h('div', { class: 'muted sm' }, 'Delay: ' + (r.delay_hours ? r.delay_hours + ' h' : 'none'))),
         h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts), r.last.verification ? ' · ' + r.last.verification.result : '')) : h('span', { class: 'muted' }, '-')),
         h('td', null, h('div', { class: 'inl' },
           r.update === true && r.managed ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { previewUpdate([r.name]); } }, 'Update') : null,
+          r.major && r.managed ? h('button', { class: 'btn sm warn', disabled: S.ov.run.running, title: 'Install it although it changes the major version', onclick: function () { previewUpdate([r.name], { allow_major: true }); } }, 'Update anyway') : null,
           r.state === 'approval' ? h('button', { class: 'btn sm', onclick: function () { act('approve', { name: r.name }, 'Approved this image for ' + r.name).then(function () { load('docker'); }); } }, 'Approve') : null,
+          r.update === true && r.managed ? h('button', { class: 'btn sm', onclick: function () { notesModal('docker', r.name, r.name); } }, 'Notes') : null,
+          r.update === true && r.managed && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('docker', r.name, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
+          r.rollback && !r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Go back to the image before the last update', onclick: function () { rollbackConfirm(r); } }, 'Roll back') : null,
+          r.pinned ? h('button', { class: 'btn sm', title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
           h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings')))));
       if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
     });
@@ -199,14 +282,18 @@
     var cust = h('input', { type: 'number', min: 0, max: 720, placeholder: 'custom h', style: 'width:90px', value: c.delay_hours !== null && !DELAYS.some(function (d) { return d[0] === c.delay_hours; }) ? c.delay_hours : '' });
     var notify = h('input', { type: 'checkbox', checked: c.notify }), crit = h('input', { type: 'checkbox', checked: c.critical }), bk = h('input', { type: 'checkbox', checked: c.backup });
     var ownCb = h('input', { type: 'checkbox', checked: own });
+    var wm = h('input', { type: 'checkbox', checked: !!c.watch_major });
+    var after = h('select', { multiple: 'multiple', size: Math.min(6, Math.max(3, (S.docker.rows || []).length)), 'aria-label': 'Update after' });
+    (S.docker.rows || []).forEach(function (o) { if (o.name !== r.name) after.appendChild(h('option', { value: o.name, selected: (c.after || []).indexOf(o.name) >= 0 }, o.name)); });
     var sch = schedFields(c.schedule, true);
-    inner.appendChild(h('div', null, h('label', { class: 'switch' }, notify, 'Send notifications for this container'), h('label', { class: 'switch' }, crit, 'Critical: always ask me before updating'), h('label', { class: 'switch' }, bk, 'Back up before updating (needs backups enabled in Settings)')));
+    inner.appendChild(h('div', null, h('label', { class: 'switch' }, notify, 'Send notifications for this container'), h('label', { class: 'switch' }, crit, 'Critical: always ask me before updating'), h('label', { class: 'switch' }, bk, 'Back up before updating (needs backups enabled in Settings)'), h('label', { class: 'switch' }, wm, 'Watch major versions: hold back an update that jumps to a new major version (databases, for example)')));
+    inner.appendChild(h('div', null, h('div', { class: 'fld' }, h('label', null, 'Update after (dependencies)'), after, h('span', { class: 'hint' }, 'Hold ctrl / cmd to pick several. This container is updated only after the selected ones, and is left alone if one of them fails to update.'))));
     inner.appendChild(h('div', null, h('div', { class: 'fld' }, h('label', null, 'Wait after a new image appears'), h('div', { class: 'inl' }, del, cust), h('span', { class: 'hint' }, 'Counted from when this image was first seen, and not restarted by repeated checks.'))));
     inner.appendChild(h('div', null, h('label', { class: 'switch' }, ownCb, 'Use its own schedule'), h('div', { style: own ? '' : 'opacity:.5;pointer-events:none', id: 'own-' + r.name }, sch.el)));
     ownCb.addEventListener('change', function () { var e = inner.querySelector('[id="own-' + r.name + '"]'); e.style.opacity = ownCb.checked ? 1 : .5; e.style.pointerEvents = ownCb.checked ? 'auto' : 'none'; });
     inner.appendChild(h('div', null, h('button', { class: 'btn pri', onclick: function () {
       var d = cust.value !== '' ? parseInt(cust.value, 10) : (del.value === '' ? null : parseInt(del.value, 10));
-      act('set_container', { names: [r.name], data: { notify: notify.checked, critical: crit.checked, backup: bk.checked, delay_hours: d, schedule: ownCb.checked ? sch.get() : null } }, 'Saved ' + r.name).then(function () { S.open[r.name] = false; load('docker'); });
+      act('set_container', { names: [r.name], data: { notify: notify.checked, critical: crit.checked, backup: bk.checked, watch_major: wm.checked, after: Array.prototype.filter.call(after.options, function (o) { return o.selected; }).map(function (o) { return o.value; }), delay_hours: d, schedule: ownCb.checked ? sch.get() : null } }, 'Saved ' + r.name).then(function () { S.open[r.name] = false; load('docker'); });
     } }, 'Save'), ' ', h('button', { class: 'btn', onclick: function () { S.open[r.name] = false; render(); } }, 'Cancel')));
     return inner;
   }
@@ -222,19 +309,21 @@
   }
 
   /* ---------- update preview ---------- */
-  function previewUpdate(names) {
+  function previewUpdate(names, opts) {
+    opts = opts || {};
     if (!names.length) { toast('Nothing to update.'); return; }
     api('preview', { names: names.join(',') }).then(function (j) {
       if (j.error) { toast(j.error, true); return; }
       if (!j.rows.length) { toast('None of these containers has an update.'); return; }
       var m = modal('Update ' + j.rows.length + ' container(s)?');
       m.body.appendChild(h('p', { class: 'muted' }, 'Each container is stopped, recreated from its Unraid template with the new image, and started again. Short downtime is expected.' + (j.verify ? ' Afterwards its health is checked.' : '')));
+      if (opts.allow_major) m.body.appendChild(h('div', { class: 'banner' }, 'This installs a different MAJOR version. Back up its data first: databases usually cannot go back to an older version afterwards.'));
       var t = h('table'); t.appendChild(h('thead', null, h('tr', null, h('th', null, 'Container'), h('th', null, 'Current → new'), h('th', null, 'Notes'))));
       var tb = h('tbody'); j.rows.forEach(function (r) {
         tb.appendChild(h('tr', null, h('td', null, r.name, h('div', { class: 'muted sm' }, r.image)), h('td', { class: 'digest' }, r.current.slice(7) + ' → ' + r.new.slice(7)),
           h('td', null, !r.managed ? h('span', { class: 'badge bad' }, 'cannot be updated here') : null, r.critical ? h('span', { class: 'badge warn' }, 'critical') : null, r.backup ? h('span', { class: 'badge' }, 'backup first') : null, 'will restart')));
       }); t.appendChild(tb); m.body.appendChild(t);
-      var go = h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('docker', j.rows.filter(function (r) { return r.managed; }).map(function (r) { return r.name; }), 'Update started'); } }, 'Update now');
+      var go = h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('docker', j.rows.filter(function (r) { return r.managed; }).map(function (r) { return r.name; }), 'Update started', opts.allow_major ? { allow_major: '1' } : null); } }, opts.allow_major ? 'Update anyway' : 'Update now');
       m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
     });
   }
@@ -272,7 +361,10 @@
         h('td', { 'data-l': 'Status' }, h('span', { class: 'badge ' + st[1], title: r.reason }, st[0]), r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null, r.state === 'blocked' ? h('div', { class: 'muted sm' }, r.reason) : null),
         h('td', { 'data-l': 'Policy' }, r.self ? h('span', { class: 'muted' }, 'manual only') : polSel(r.policy, function (v) { act('set_plugin', { files: [r.file], data: { policy: v } }).then(function () { load('plugins'); }); })),
         h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts))) : '-'),
-        h('td', null, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null)));
+        h('td', null, h('div', { class: 'inl' }, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null,
+          r.latest ? h('button', { class: 'btn sm', onclick: function () { notesModal('plugin', r.file, r.name); } }, 'Notes') : null,
+          r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null))));
     });
     w.appendChild(t);
     return w;
@@ -289,7 +381,7 @@
 
   /* ---------- OS ---------- */
   var OSSTATE = { up_to_date: ['Up to date', 'ok'], notify_only: ['Notify only', ''], not_confirmed: ['Not confirmed', 'warn'], prerelease: ['Pre-release: manual only', 'warn'], blocked: ['Blocked', 'bad'],
-    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
+    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], skipped: ['Release skipped', ''], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
   function confirmOsInstall(reboot) {
     var o = S.os.os, m = modal(reboot ? 'Install Unraid ' + o.available + ' and reboot now?' : 'Install Unraid ' + o.available + ' now?');
     m.body.appendChild(h('p', null, 'Installed: ' + (S.os.installed || '?') + '  →  ' + o.available));
@@ -345,6 +437,7 @@
         h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes.')));
     }
     var busy = S.ov.run.running, acts = h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update'));
+    if (o.available && !o.pending) acts.appendChild(S.os.skipped ? h('button', { class: 'btn', onclick: function () { skipAct('os', '', 'Unraid OS', true); } }, 'Un-skip this release') : h('button', { class: 'btn', title: 'No automatic action for this release; a newer one is announced again', onclick: function () { skipAct('os', '', 'Unraid OS'); } }, 'Skip this release'));
     if (o.available && !o.pending) {
       acts.appendChild(h('button', { class: 'btn', disabled: busy, onclick: function () { confirmOsInstall(false); } }, 'Install update…'));
       acts.appendChild(h('button', { class: 'btn danger', disabled: busy, onclick: function () { confirmOsInstall(true); } }, 'Install and reboot…'));
@@ -354,19 +447,75 @@
     return w;
   }
 
+  /* ---------- Cleanup ---------- */
+  function bytes(b) { b = +b || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB'; }
+  function vCleanup() {
+    var w = h('div'), c = S.clean;
+    w.appendChild(h('div', { class: 'banner' }, 'Finds images that no container uses and leftover stopped containers that Unraid did not create. Nothing is removed until you select it and confirm. Volumes and appdata are never touched.'));
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', disabled: S.ov.run.running, onclick: function () {
+      api('cleanup_scan').then(function (j) {
+        if (j.error || j.ok === false) { toast(j.error || 'Scan failed', true); return; }
+        S.clean = j; S.csel = { img: {}, con: {} };
+        j.images.forEach(function (i) { if (i.dangling) S.csel.img[i.id] = true; });
+        render();
+      });
+    } }, c ? 'Scan again' : 'Scan now')));
+    if (!c) return w;
+    var selImg = c.images.filter(function (i) { return S.csel.img[i.id]; }), selCon = c.containers.filter(function (x) { return S.csel.con[x.name]; });
+    var total = 0; selImg.forEach(function (i) { total += i.size; }); selCon.forEach(function (x) { total += x.size; });
+    w.appendChild(h('div', { class: 'cards' }, card('Unused images', c.images.length, bytes(c.images.reduce(function (a, i) { return a + i.size; }, 0))), card('Leftover containers', c.containers.length, bytes(c.containers.reduce(function (a, x) { return a + x.size; }, 0))),
+      card('Selected', bytes(total), selImg.length + ' image(s) · ' + selCon.length + ' container(s)', total ? 'hot' : '')));
+    var t = h('table', { class: 'resp' }); t.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Image'), h('th', null, 'Kind'), h('th', null, 'Size'), h('th', null, 'Created'))));
+    var tb = h('tbody'); t.appendChild(tb);
+    if (!c.images.length) tb.appendChild(h('tr', null, h('td', { colspan: 5, class: 'muted' }, 'No unused images.')));
+    c.images.forEach(function (i) {
+      tb.appendChild(h('tr', { class: 'row' }, h('td', null, h('input', { type: 'checkbox', checked: !!S.csel.img[i.id], onchange: function (e) { S.csel.img[i.id] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Image' }, h('span', { class: 'nm' }, i.tags.length ? i.tags.join(', ') : '(no name)'), h('div', { class: 'img' }, i.short)),
+        h('td', { 'data-l': 'Kind' }, h('span', { class: 'badge ' + (i.dangling ? 'ok' : 'warn') }, i.dangling ? 'dangling' : 'tagged, unused')), h('td', { 'data-l': 'Size' }, bytes(i.size)), h('td', { 'data-l': 'Created' }, i.created)));
+    });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Unused images'), t, h('p', { class: 'muted sm' }, 'Dangling images have no name. "Tagged, unused" ones were pulled once and no container uses them now: check that you do not need one before selecting it. Images that share layers free less than the sizes added up.')));
+    var t2 = h('table', { class: 'resp' }); t2.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Container'), h('th', null, 'State'), h('th', null, 'Size'), h('th', null, 'Stopped'))));
+    var tb2 = h('tbody'); t2.appendChild(tb2);
+    if (!c.containers.length) tb2.appendChild(h('tr', null, h('td', { colspan: 5, class: 'muted' }, 'No leftover containers.')));
+    c.containers.forEach(function (x) {
+      tb2.appendChild(h('tr', { class: 'row' }, h('td', null, h('input', { type: 'checkbox', checked: !!S.csel.con[x.name], onchange: function (e) { S.csel.con[x.name] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Container' }, h('span', { class: 'nm' }, x.name), h('div', { class: 'img' }, x.image)), h('td', { 'data-l': 'State' }, x.state), h('td', { 'data-l': 'Size' }, bytes(x.size)), h('td', { 'data-l': 'Stopped' }, x.finished ? x.finished.slice(0, 10) : '-')));
+    });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Leftover containers'), t2, h('p', { class: 'muted sm' }, 'Stopped containers that were not created from an Unraid template and are not part of a compose project. A running container is never listed.')));
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn danger', disabled: S.ov.run.running || (!selImg.length && !selCon.length), onclick: function () {
+      var m = modal('Remove ' + (selImg.length + selCon.length) + ' item(s)?');
+      m.body.appendChild(h('p', null, 'About ' + bytes(total) + ' will be freed. This cannot be undone: removed images have to be downloaded again, removed containers are gone.'));
+      selCon.forEach(function (x) { m.body.appendChild(h('div', null, 'container ', h('b', null, x.name))); });
+      selImg.slice(0, 25).forEach(function (i) { m.body.appendChild(h('div', null, 'image ', h('b', null, i.tags.length ? i.tags.join(', ') : i.short), ' ', h('span', { class: 'muted' }, bytes(i.size)))); });
+      if (selImg.length > 25) m.body.appendChild(h('div', { class: 'muted' }, '… and ' + (selImg.length - 25) + ' more'));
+      var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I want to remove these'));
+      var go = h('button', { class: 'btn danger', disabled: true, onclick: function () {
+        m.close();
+        act('cleanup_run', { confirm: '1', images: selImg.map(function (i) { return i.id; }), containers: selCon.map(function (x) { return x.name; }) }).then(function (j) {
+          if (j.error) return;
+          toast('Removed ' + (j.removed || []).length + ' item(s), freed about ' + (j.freed_text || '0 kB') + (j.failed && j.failed.length ? '. ' + j.failed.length + ' could not be removed.' : '.'), !!(j.failed && j.failed.length));
+          api('cleanup_scan').then(function (n) { if (n.ok) { S.clean = n; S.csel = { img: {}, con: {} }; } render(); });
+        });
+      } }, 'Remove');
+      cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+      m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+    } }, 'Remove selected…')));
+    return w;
+  }
+
   /* ---------- Settings ---------- */
   function path(o, p) { var a = p.split('.'), x = o; for (var i = 0; i < a.length - 1; i++) x = x[a[i]]; return [x, a[a.length - 1]]; }
   function fSwitch(label, p, hint) { var r = path(S.draft, p); var cb = h('input', { type: 'checkbox', checked: !!r[0][r[1]], onchange: function () { r[0][r[1]] = cb.checked; } }); return h('div', null, h('label', { class: 'switch' }, cb, label), hint ? h('div', { class: 'hint muted sm' }, hint) : null); }
   function fNum(label, p, min, max, hint, unit) { var r = path(S.draft, p); var i = h('input', { type: 'number', min: min, max: max, value: r[0][r[1]], style: 'width:90px', onchange: function () { r[0][r[1]] = Math.max(min, Math.min(max, parseInt(i.value, 10) || 0)); } }); return h('div', { class: 'fld' }, h('label', null, label), h('div', { class: 'inl' }, i, unit ? h('span', { class: 'muted' }, unit) : null), hint ? h('span', { class: 'hint' }, hint) : null); }
   function fText(label, p, hint, ph) { var r = path(S.draft, p); var i = h('input', { type: 'text', value: r[0][r[1]] || '', placeholder: ph || '', style: 'width:100%;max-width:420px', onchange: function () { r[0][r[1]] = i.value; } }); return h('div', { class: 'fld' }, h('label', null, label), i, hint ? h('span', { class: 'hint' }, hint) : null); }
   function fSched(label, base) { var o = path(S.draft, base)[0][base.split('.').pop()]; var s = schedFields(o); var upd = function () { var v = s.get(); o.frequency = v.frequency; o.time = v.time; o.weekday = v.weekday; o.monthday = v.monthday; }; s.el.addEventListener('change', upd); s.el.addEventListener('input', upd); return h('div', { class: 'fld' }, h('label', null, label), s.el); }
-  function fWindow(label, base) {
+  function fWindow(label, base, swLabel, hintText) {
     var w = path(S.draft, base)[0][base.split('.').pop()];
     var en = h('input', { type: 'checkbox', checked: !!w.enabled, onchange: function () { w.enabled = en.checked; box.style.opacity = en.checked ? 1 : .5; } });
     var st = h('input', { type: 'time', value: w.start, onchange: function () { w.start = st.value; } }), ed = h('input', { type: 'time', value: w.end, onchange: function () { w.end = ed.value; } });
     var days = h('div', { class: 'inl' }); DAYS.forEach(function (d, i) { var cb = h('input', { type: 'checkbox', checked: w.days.indexOf(i) >= 0, onchange: function () { var s = w.days.filter(function (x) { return x !== i; }); if (cb.checked) s.push(i); w.days = s.sort(); } }); days.appendChild(h('label', { class: 'switch' }, cb, d.slice(0, 3))); });
     var box = h('div', { style: 'opacity:' + (w.enabled ? 1 : .5) }, h('div', { class: 'inl' }, 'from', st, 'to', ed), days);
-    return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, 'Only update inside this window'), box, h('span', { class: 'hint' }, 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
+    return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, swLabel || 'Only update inside this window'), box, h('span', { class: 'hint' }, hintText || 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
   }
   function section(title, kids) { return h('div', { class: 'panel' }, h('h3', null, title), kids); }
   function osModeField() {
@@ -420,6 +569,8 @@
     var bat = h('select', { onchange: function () { d.discord.batching = bat.value; } }, h('option', { value: 'combine', selected: d.discord.batching === 'combine' }, 'Combine into few messages'), h('option', { value: 'separate', selected: d.discord.batching === 'separate' }, 'One message per notification'));
     w.appendChild(section('Discord notifications', h('div', null,
       fSwitch('Send to Discord', 'discord.enabled'),
+      fText('Address of this server\'s web GUI (optional)', 'discord.ui_url', 'Used for the "Update now / Skip this version" links in messages. Empty = http://' + (S.ov.name ? '<server name>' : '') + '. Example: http://192.168.50.50', 'http://192.168.50.50'),
+      fSwitch('Add "Update now / Skip this version" links to update-available messages', 'discord.action_links', 'Discord webhooks cannot show real buttons, so these are links that open this plugin; they need your Unraid login and ask for confirmation.'),
       fText('Icon image URL (optional)', 'discord.icon_url', 'https image used as the webhook avatar and in the message header. Empty = the bundled orange-on-grey icon: ' + (dc.icon_default || ''), 'https://…'),
       h('div', { class: 'fld' }, h('label', null, 'Webhook URL'), url, h('span', { class: 'hint' }, 'Stored on the server only in a separate file and never shown again. Messages never contain secrets.')),
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: function () { act('test_discord', { url: url.value }).then(function (j) { if (j.ok) toast('Test message sent.'); else if (!j.error) toast('Test failed', true); }); } }, 'Send test message'),
@@ -428,6 +579,13 @@
         h('div', null, h('h4', null, 'Message types'), ty('available', 'Update available'), ty('success', 'Update succeeded'), ty('failed', 'Update failed / retries'), ty('summary', 'Run summary'))),
       h('div', { class: 'fld' }, h('label', null, 'Batching'), bat), fNum('Maximum messages per run', 'discord.max_messages', 1, 20))));
     w.appendChild(section('Unraid notifications', h('div', null, fSwitch('Docker events', 'notify_unraid.docker'), fSwitch('Plugin events', 'notify_unraid.plugins'), fSwitch('OS events', 'notify_unraid.os'))));
+    w.appendChild(section('Quiet hours', h('div', null, h('div', { class: 'grid2' }, h('div', null, fWindow('Hold notifications during these hours', 'quiet', 'Enable quiet hours', 'Discord and Unraid notifications wait and are sent together when quiet hours end. Updates themselves still run on their schedule. A window like 23:00-07:00 crosses midnight.')),
+      h('div', null, fSwitch('Let urgent messages through', 'quiet.urgent', 'Failures, and an OS update that needs a reboot, are sent right away.'))))));
+    w.appendChild(section('Appearance', h('div', { class: 'grid2' },
+      h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
+        (function () { var c = h('input', { type: 'color', value: d.ui.accent || '#f15a2c', 'aria-label': 'Accent colour', onchange: function () { d.ui.accent = c.value; applyTheme(d.ui); } }); return h('div', { class: 'fld' }, h('label', null, 'Accent colour'), h('div', { class: 'inl' }, c, h('button', { class: 'btn sm', onclick: function () { d.ui.accent = '#f15a2c'; render(); } }, 'Reset'))); })(),
+        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
+      h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
       h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'unraid-autoupdater-config.json' }, 'Export settings'),
         h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
@@ -467,5 +625,5 @@
     return w;
   }
 
-  load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); });
+  load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();

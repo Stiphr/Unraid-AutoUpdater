@@ -41,7 +41,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
   if (dau_version_newer($latest, $installed)) {
-    if ($os['available'] !== $latest) { $os['available'] = $latest; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
+    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
       $os['notified'] = $latest;
@@ -105,6 +105,7 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   $wf = $os['workflow'] ?? null;
   if (is_array($wf) && ($wf['state'] ?? '') === 'awaiting_confirmation' && ($wf['version'] ?? '') === $latest) return ['state' => 'awaiting_confirmation', 'reason' => 'Prerequisites passed; waiting for your confirmation.', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
+  if (($os['skipped'] ?? '') === (string)$latest) return ['state' => 'skipped', 'reason' => 'You chose to skip this release.', 'eta' => null];
   if ($o['mode'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Automatic installation is off (notify only).', 'eta' => null];
   if ($o['confirmed'] !== $o['mode']) return ['state' => 'not_confirmed', 'reason' => 'The automatic mode was not confirmed.', 'eta' => null];
   if (!empty($o['stable_only']) && !dau_os_is_stable($latest)) return ['state' => 'prerelease', 'reason' => 'Only stable releases are installed automatically.', 'eta' => null];

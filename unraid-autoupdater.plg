@@ -2,14 +2,26 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-autoupdater">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.30a">
+<!ENTITY version "2026.10.31b1">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/beta/unraid-autoupdater.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidAutoUpdater" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
+###2026.10.31b1
+- BETA. Dependency order: containers can be set to update after others (database before app); a dependant is skipped if its dependency failed.
+- Skip this version for a container, plugin or the OS release; it comes back with the next version.
+- Discord action links (Update now / Skip) straight from the notification; set the web GUI address in Settings.
+- Quiet hours: non-urgent notifications are held and sent after the window (failures and rollbacks can still go out).
+- Update statistics over time: 30-day chart, most active and most failing.
+- Dashboard tile with the number of waiting updates (can be turned off in Appearance).
+- One-click rollback for containers to the previous image; the container is pinned and that version skipped until you unpin.
+- Major-version guard for selected containers (e.g. postgres): the update is held until you choose Update anyway.
+- Release notes for plugins and Unraid OS in the same place, and what changed in Discord.
+- Cleanup tab: unused images and leftover containers with a size preview; nothing is removed without confirmation.
+- Mobile friendly layout, light/midnight themes, accent colour and custom CSS.
 ###2026.10.30a
 - Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
 - README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.
@@ -71,6 +83,54 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/a
 <SHA256>40e85b86815c68101d5a0707285b211f475c5135a6e8597a0b4f1658963a724e</SHA256>
 </FILE>
 
+<FILE Name="&emhttp;/UnraidAutoUpdaterDash.page" Mode="0644">
+<INLINE><![CDATA[Menu="Dashboard:9"
+---
+<?php
+/* Dashboard tile: how many updates are waiting. Reads only the plugin's own state, never calls Docker. Can be switched off in Settings > Appearance. */
+try {
+  $dau_on = true;
+  $dau_cf = @json_decode((string)@file_get_contents('/boot/config/plugins/unraid-autoupdater/config.json'), true);
+  if (is_array($dau_cf) && isset($dau_cf['ui']['widget']) && !$dau_cf['ui']['widget']) $dau_on = false;
+  if ($dau_on) {
+    $dau_csrf = json_encode($var['csrf_token'] ?? '');
+    $mytiles['unraid-autoupdater']['column2'] = <<<EOT
+<tbody title="Unraid AutoUpdater" id="dau-tile">
+<tr><td>
+<i class="fa fa-refresh f32"></i>
+<div class="section">Unraid AutoUpdater<br><span id="dau-w-sum" class="dau-w">Checking&hellip;</span></div>
+<a href="/Settings/UnraidAutoUpdater" title="Open Unraid AutoUpdater"><i class="fa fa-fw fa-cog chevron"></i></a>
+</td></tr>
+<tr><td><span class="w25">Docker</span><span id="dau-w-docker">-</span></td></tr>
+<tr><td><span class="w25">Plugins</span><span id="dau-w-plugins">-</span></td></tr>
+<tr><td><span class="w25">Unraid OS</span><span id="dau-w-os">-</span></td></tr>
+<tr><td><span class="w25">Last run</span><span id="dau-w-last">-</span></td></tr>
+<script>
+(function(){
+  function s(id,t){var e=document.getElementById(id); if(e) e.textContent=t;}
+  function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<5400) return Math.max(1,Math.round(d/60))+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
+  function n(c,x){ return c? c+' update'+(c>1?'s':'')+' available' : 'up to date'; }
+  var b=new URLSearchParams(); b.append('action','widget'); b.append('csrf_token',$dau_csrf);
+  fetch('/plugins/unraid-autoupdater/include/api.php',{method:'POST',body:b,credentials:'same-origin'}).then(function(r){return r.json();}).then(function(j){
+    if(!j||j.error) throw 0;
+    var total=(j.docker||0)+(j.plugins||0)+(j.os?1:0);
+    s('dau-w-sum', total? total+' update'+(total>1?'s':'')+' waiting' : 'Everything is up to date');
+    s('dau-w-docker', j.at? n(j.docker)+' ('+j.containers+' containers)' : 'not checked yet');
+    s('dau-w-plugins', n(j.plugins));
+    s('dau-w-os', j.os? 'Unraid '+j.os+' available' : 'Unraid '+(j.os_installed||'')+' is current');
+    s('dau-w-last', ago(j.last_run,j.now)+(j.last_status? ' ('+j.last_status+')':'')+(j.queued? ' - '+j.queued+' notification(s) on hold':''));
+  }).catch(function(){ s('dau-w-sum','Status not available'); });
+})();
+</script>
+</tbody>
+EOT;
+  }
+} catch (Throwable $e) { /* never break the Dashboard */ }
+?>
+]]></INLINE>
+<SHA256>6a4e5d87cfadc81743e5bfb917a975f428347ec6217465b55974141bd1b30ee9</SHA256>
+</FILE>
+
 <FILE Name="&emhttp;/include/lib.php" Mode="0644">
 <INLINE><![CDATA[<?php
 /*
@@ -86,7 +146,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/a
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.30a');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.10.31b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid AutoUpdater');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
@@ -333,13 +393,13 @@ function dau_valid_plg($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A
 
 } // DAU_LIB_LOADED
 
-foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'workflow', 'jobs'] as $__m) {
+foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'workflow', 'extras', 'jobs'] as $__m) {
   $__f = __DIR__ . '/' . $__m . '.php';
   if (is_file($__f)) require_once $__f;
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>4d5ae4ca2ede06c351fc66fa8ace984d9bd3f93ad42a8fa8bb7ac1f11e72903e</SHA256>
+<SHA256>d3ca25d250d1d294622f936d5e41819c07a23c6f8022b778ef131d26fff4822a</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -418,7 +478,12 @@ function dau_defaults() {
       'batching'   => 'combine',        // combine | separate
       'max_messages' => 5,
       'icon_url'   => '',               // optional https image for the webhook avatar; empty = bundled default
+      'ui_url'     => '',               // address of this server's web GUI (for the approve / skip links); empty = http://<server name>
+      'action_links' => true,           // add "Approve" / "Skip this version" links to update-available messages
     ],
+    /* notifications are held back during quiet hours and sent afterwards; failures and reboot notices can still come through */
+    'quiet' => ['enabled' => false, 'days' => [0, 1, 2, 3, 4, 5, 6], 'start' => '23:00', 'end' => '07:00', 'urgent' => true],
+    'ui' => ['theme' => 'dark', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -433,6 +498,8 @@ function dau_container_spec() {
     'delay_hours' => ['int_or_null', 0, 720],
     'backup'      => ['bool'],
     'schedule'    => ['obj_or_null', dau_sched_spec()],
+    'after'       => ['names'],       // update only after these containers (dependency order)
+    'watch_major' => ['bool'],        // hold back updates that jump to a new major version (databases, for example)
   ];
 }
 
@@ -457,6 +524,19 @@ function dau_clean_value($spec, $v, $cur) {
     case 'path': // absolute path under /mnt, no traversal, no control characters
       if ($v === '' || $v === null) return '';
       return dau_valid_dest($v) ? rtrim($v, '/') : $cur;
+    case 'names':
+      if (!is_array($v)) return $cur;
+      $o = [];
+      foreach ($v as $n) if (is_string($n) && dau_valid_name($n) && !in_array($n, $o, true) && count($o) < 20) $o[] = $n;
+      return $o;
+    case 'color': return (is_string($v) && preg_match('/^#[0-9a-fA-F]{6}$/', $v)) ? strtolower($v) : $cur;
+    case 'css':
+      if (!is_string($v)) return $cur;
+      if (strlen($v) > 8000 || preg_match('/@import|expression\s*\(|javascript:|<\/?[a-z!]|\\0|behavior\s*:|-moz-binding/i', $v)) return $cur;
+      return $v;
+    case 'url':
+      if ($v === '' || $v === null) return '';
+      return (is_string($v) && strlen($v) <= 200 && preg_match('#^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%/+-]*)?$#', $v)) ? rtrim($v, '/') : $cur;
     case 'icon':  return ($v === '' || $v === null) ? '' : (dau_icon_url_valid($v) ? $v : $cur);
     case 'obj':   return is_array($v) ? dau_apply_spec(is_array($cur) ? $cur : [], $v, $spec[1]) : $cur;
     case 'obj_or_null':
@@ -529,7 +609,7 @@ function dau_discord_spec() {
     'types'   => ['obj', ['success' => ['bool'], 'failed' => ['bool'], 'available' => ['bool'], 'summary' => ['bool']]],
     'batching' => ['enum', ['combine', 'separate']],
     'max_messages' => ['int', 1, 20],
-    'icon_url' => ['icon'],
+    'icon_url' => ['icon'], 'ui_url' => ['url'], 'action_links' => ['bool'],
   ];
 }
 
@@ -547,6 +627,8 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['notify_unraid']) && is_array($in['notify_unraid'])) {
     $cur['notify_unraid'] = dau_apply_spec($cur['notify_unraid'], $in['notify_unraid'], ['docker' => ['bool'], 'plugins' => ['bool'], 'os' => ['bool']]);
   }
+  if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {
@@ -635,7 +717,7 @@ function dau_save_config(array $cfg) {
 
 function dau_container_cfg(array $cfg, $name) {
   $c = is_array($cfg['containers'][$name] ?? null) ? $cfg['containers'][$name] : [];
-  return $c + ['policy' => 'ignore', 'notify' => true, 'critical' => false, 'delay_hours' => null, 'backup' => false, 'schedule' => null];
+  return $c + ['policy' => 'ignore', 'notify' => true, 'critical' => false, 'delay_hours' => null, 'backup' => false, 'schedule' => null, 'after' => [], 'watch_major' => false];
 }
 
 function dau_container_delay_hours(array $cfg, $name) {
@@ -679,7 +761,7 @@ function dau_export_config() {
   return ['exported_at' => dau_ts_iso(dau_now()), 'plugin_version' => DAU_VERSION, 'secrets_included' => false, 'config' => $cfg];
 }
 ]]></INLINE>
-<SHA256>142d488bc474fc463e332ab4b380b6ccde1c67ebc0ad2d3459afa555fed673ac</SHA256>
+<SHA256>c70f1c3d097f2f221a9887a21b36eb97307e40c3dbd0e0ee6cb04fc803c70710</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/schedule.php" Mode="0644">
@@ -870,8 +952,12 @@ function dau_state_defaults() {
     'last_trigger' => '',
     'last_result'  => [],
     'current'      => null,    // component being changed right now (detects interrupted jobs after a reboot/kill)
-    'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => []],
-    'plugins' => ['deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
+    'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => [],
+                  'skipped' => [],      // name => remote digest the person chose to skip
+                  'rollback' => [],     // name => how to go back to the image before the last update
+                  'pinned' => [],
+                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump      // name => template Repository that was replaced by a rollback (restored by "unpin")
+    'plugins' => ['skipped' => [], 'notes' => [], 'deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
     'os'      => ['installed' => null, 'available' => null, 'first_seen' => 0, 'notified' => null, 'withdrawn_notified' => false,
                   'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false,
                   'pending' => null,        // ['from','to','at','reboot'] installed, waiting for a reboot
@@ -879,8 +965,10 @@ function dau_state_defaults() {
                   'rebooted_for' => '',     // target version an automatic reboot was already started for
                   'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null,
                   'workflow' => null,       // pre-OS workflow in progress / waiting for a confirmation (see workflow.php)
-                  'last_report' => null],
-    'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat],
+                  'last_report' => null, 'skipped' => ''],
+    'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat, 'daily' => [], 'per' => []],
+    'summary' => ['containers' => 0, 'docker_updates' => 0, 'plugin_updates' => 0, 'at' => 0],     // numbers for the dashboard widget (no Docker call needed to show them)
+    'queue'   => [],      // notifications held back by quiet hours
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];
 }
@@ -891,7 +979,7 @@ function dau_state_load() {
   foreach (['docker', 'plugins', 'os', 'stats', 'discord'] as $k) {
     if (isset($s[$k]) && is_array($s[$k])) $d[$k] = array_replace_recursive($d[$k], $s[$k]);
   }
-  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current'] as $k) {
+  foreach (['slots', 'last_run', 'last_trigger', 'last_result', 'current', 'queue', 'summary'] as $k) {
     if (array_key_exists($k, $s) && (is_array($s[$k]) || !is_array($d[$k]))) $d[$k] = $s[$k];
   }
   if (!is_array($d['slots'])) $d['slots'] = [];
@@ -900,12 +988,13 @@ function dau_state_load() {
 
 function dau_state_save(array $st) {
   /* keep the maps bounded */
-  foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) {
+  foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'rollback', 'pinned', 'major'] as $k) {
     if (count($st['docker'][$k]) > 1000) $st['docker'][$k] = array_slice($st['docker'][$k], -1000, null, true);
   }
-  foreach (['seen', 'notified', 'blocked', 'available'] as $k) {
+  foreach (['seen', 'notified', 'blocked', 'available', 'skipped'] as $k) {
     if (count($st['plugins'][$k]) > 1000) $st['plugins'][$k] = array_slice($st['plugins'][$k], -1000, null, true);
   }
+  if (count($st['queue']) > 60) $st['queue'] = array_slice($st['queue'], -60);
   return dau_write_json(DAU_STATE, $st);
 }
 
@@ -969,21 +1058,49 @@ function dau_history_last_by_name($type) {
 
 /* ---------- statistics (persistent counters; history alone is bounded) ---------- */
 
-function dau_stats_record(array &$st, $type, $ok, $duration) {
+function dau_stats_record(array &$st, $type, $ok, $duration, $name = '') {
   if (!isset($st['stats'][$type])) $st['stats'][$type] = ['ok' => 0, 'failed' => 0, 'dur' => 0];
   $st['stats'][$type][$ok ? 'ok' : 'failed']++;
   if ($ok) $st['stats'][$type]['dur'] += max(0, (int)$duration);
+  /* over time: one counter per day (kept 90 days) and per component (top 200) */
+  $day = gmdate('Y-m-d', dau_now());
+  $d =& $st['stats']['daily'][$day][$type];
+  if (!is_array($d)) $d = ['ok' => 0, 'failed' => 0];
+  $d[$ok ? 'ok' : 'failed']++;
+  unset($d);
+  if (count($st['stats']['daily']) > 90) { ksort($st['stats']['daily']); $st['stats']['daily'] = array_slice($st['stats']['daily'], -90, null, true); }
+  if ($name !== '') {
+    $k = $type . ':' . $name;
+    $p = $st['stats']['per'][$k] ?? ['type' => $type, 'name' => $name, 'ok' => 0, 'failed' => 0, 'last' => 0];
+    $p[$ok ? 'ok' : 'failed']++; $p['last'] = dau_now();
+    $st['stats']['per'][$k] = $p;
+    if (count($st['stats']['per']) > 200) { uasort($st['stats']['per'], function ($a, $b) { return $b['last'] <=> $a['last']; }); $st['stats']['per'] = array_slice($st['stats']['per'], 0, 200, true); }
+  }
 }
 
 function dau_stats_summary(array $st) {
   $out = ['total_ok' => 0, 'total_failed' => 0, 'by_type' => [], 'avg_duration' => 0];
   $dur = 0; $n = 0;
   foreach ($st['stats'] as $t => $s) {
+    if ($t === 'daily' || $t === 'per') continue;
     $out['by_type'][$t] = ['ok' => (int)$s['ok'], 'failed' => (int)$s['failed'], 'avg_duration' => $s['ok'] ? (int)round($s['dur'] / $s['ok']) : 0];
     $out['total_ok'] += (int)$s['ok']; $out['total_failed'] += (int)$s['failed'];
     $dur += (int)$s['dur']; $n += (int)$s['ok'];
   }
   $out['avg_duration'] = $n ? (int)round($dur / $n) : 0;
+  /* the last 30 days, oldest first, and the most active / most failing components */
+  $days = [];
+  for ($i = 29; $i >= 0; $i--) {
+    $k = gmdate('Y-m-d', dau_now() - $i * 86400); $r = $st['stats']['daily'][$k] ?? [];
+    $days[] = ['day' => $k, 'ok' => (int)(($r['docker']['ok'] ?? 0) + ($r['plugin']['ok'] ?? 0) + ($r['os']['ok'] ?? 0)), 'failed' => (int)(($r['docker']['failed'] ?? 0) + ($r['plugin']['failed'] ?? 0) + ($r['os']['failed'] ?? 0))];
+  }
+  $out['daily'] = $days;
+  $per = array_values($st['stats']['per'] ?? []);
+  usort($per, function ($a, $b) { return ($b['ok'] + $b['failed']) <=> ($a['ok'] + $a['failed']); });
+  $out['top'] = array_slice($per, 0, 8);
+  $fail = array_values(array_filter($per, function ($p) { return $p['failed'] > 0; }));
+  usort($fail, function ($a, $b) { return $b['failed'] <=> $a['failed']; });
+  $out['top_failing'] = array_slice($fail, 0, 5);
   return $out;
 }
 
@@ -1014,7 +1131,7 @@ function dau_recover_interrupted(array &$st, $max) {
   return $c;
 }
 ]]></INLINE>
-<SHA256>0dbf3a49693ecfba9e4b7af385844b2fb6e9f3b1f4045074454ab80e0bfcb111</SHA256>
+<SHA256>4f8313a6faf5b924ea6918e959c978dbf2c35095a2fc11f1be3ef1a9859c0364</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/discord.php" Mode="0644">
@@ -1171,12 +1288,17 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_aborted'      => ['⏹️', 'OS update aborted', 0xE67E22],
     'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
     'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
+    'major_jump'      => ['🛑', 'Major version update held back', 0xE67E22],
+    'rolled_back'     => ['⏪', 'Rolled back to the earlier image', 0xE67E22],
+    'rollback_failed' => ['❌', 'Rollback failed', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
   $name = dau_clean_text($ev['name'] ?? '', 120);
   $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type'])), dau_field(ucfirst($ev['type'] === 'os' ? 'System' : $ev['type']), $name)];
   if (isset($ev['installed']) && $ev['installed'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'Previous' : 'Installed', dau_clean_text($ev['installed'], 200));
   if (isset($ev['available']) && $ev['available'] !== '') $f[] = dau_field(in_array($kind, ['updated', 'os_installed', 'os_verified', 'os_staged', 'os_rebooting'], true) ? 'New' : 'Available', dau_clean_text($ev['available'], 200));
   if (isset($ev['duration'])) $f[] = dau_field('Duration', dau_duration_text($ev['duration']));
+  if (!empty($ev['versions'])) $f[] = dau_field('Version', dau_clean_text($ev['versions'], 120));
+  if (!empty($ev['notes'])) $f[] = dau_field('What changed', "```\n" . str_replace('```', "'''", dau_clean_text($ev['notes'], 600)) . "\n```", false);
   if (!empty($ev['verification'])) $f[] = dau_field('Verification', dau_clean_text($ev['verification'], 300), false);
   if (!empty($ev['stage'])) $f[] = dau_field('Failed at', dau_clean_text($ev['stage'], 100));
   if (!empty($ev['reason'])) $f[] = dau_field($kind === 'available' ? 'Pending because' : 'Reason', dau_clean_text($ev['reason'], 500), false);
@@ -1185,6 +1307,8 @@ function dau_discord_event_embed(array $ev, $server) {
   if (!empty($ev['retry'])) $f[] = dau_field('Retry', dau_clean_text($ev['retry'], 200), false);
   if (!empty($ev['log'])) $f[] = dau_field('Log', "```\n" . str_replace('```', "'''", dau_clean_text($ev['log'], 600)) . "\n```", false);
   if (!empty($ev['next'])) $f[] = dau_field('Suggested next steps', dau_clean_text($ev['next'], 500), false);
+  $links = dau_action_links($GLOBALS['DAU_CFG_NOW'] ?? dau_load_config(), $ev);
+  if ($links !== '') $f[] = dau_field('Actions', $links, false);
   return dau_discord_brand([
     'title' => dau_clip($style[0] . ' ' . $style[1] . ' — ' . $name, 256),
     'color' => $style[2],
@@ -1244,8 +1368,8 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 
 function dau_event_toggle($kind) {
   switch ($kind) {
-    case 'updated': case 'os_installed': case 'os_verified': return 'success';
-    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
+    case 'updated': case 'os_installed': case 'os_verified': case 'rolled_back': return 'success';
+    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': case 'rollback_failed': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
@@ -1277,10 +1401,11 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
   if (!empty($st['discord']['invalid'])) { $out['error'] = 'webhook was rejected earlier; save the URL again to retry'; return $out; }
   $server = dau_server_name();
   $GLOBALS['DAU_ICON'] = dau_discord_icon($cfg);
+  $GLOBALS['DAU_CFG_NOW'] = $cfg;
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['rollback_failed' => 0, 'major_jump' => 2, 'failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];
@@ -1327,7 +1452,7 @@ function dau_discord_test(array &$st, $urlOverride = null) {
   return ['ok' => false, 'error' => $r['error']];
 }
 ]]></INLINE>
-<SHA256>247095259e41a2370ba17ad8ce8ab3391ff7a3c0eedd793814b575b4844fba29</SHA256>
+<SHA256>b5247e02af012111c03b52dbe967da506c5b47975f34bd1100fdee7f91d9d336</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/backup.php" Mode="0644">
@@ -1533,15 +1658,17 @@ function dau_docker_track(array &$st, array $containers, $now) {
       if (!is_array($rec) || ($rec['remote'] ?? '') !== $c['remote']) {
         $st['docker']['seen'][$n] = ['remote' => $c['remote'], 'local' => $c['local'], 'first' => $now, 'last' => $now];
         unset($st['docker']['retry'][$n], $st['docker']['deferred'][$n]);       // a different image: old retry/approval state is void
+        if (($st['docker']['skipped'][$n] ?? '') !== $c['remote']) unset($st['docker']['skipped'][$n]);
+        unset($st['docker']['major'][$n]);
         if (($st['docker']['approved'][$n] ?? '') !== $c['remote']) unset($st['docker']['approved'][$n]);
       } else {
         $st['docker']['seen'][$n]['last'] = $now;
       }
     } elseif ($c['update'] === false) {
-      foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) unset($st['docker'][$k][$n]);
+      foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'major'] as $k) unset($st['docker'][$k][$n]);
     }
   }
-  foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) {
+  foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'rollback', 'pinned', 'major'] as $k) {
     foreach (array_keys($st['docker'][$k]) as $n) if (!isset($names[$n])) unset($st['docker'][$k][$n]);
   }
 }
@@ -1550,7 +1677,7 @@ function dau_docker_track(array &$st, array $containers, $now) {
 
 /**
  * Decide what may happen to one container right now.
- * state: external | unknown | up_to_date | ignored | notify_only | stopped | approval | no_identity |
+ * state: external | unknown | up_to_date | pinned | skipped | ignored | notify_only | stopped | approval | no_identity |
  *        waiting_delay | retry_wait | retry_exhausted | window_closed | ready
  * $manual = the user asked for it explicitly: policy, delay, approval and window are overridden (never "external").
  */
@@ -1562,6 +1689,8 @@ function dau_docker_eval(array $cfg, array $st, array $c, $now, $manual = false)
   if ($c['update'] === null) return ['state' => 'unknown', 'reason' => 'Update status not available yet. Run a check.'] + $r;
   if ($c['update'] === false) return ['state' => 'up_to_date', 'reason' => ''] + $r;
   if ($manual) return $r;
+  if (isset($st['docker']['pinned'][$c['name']])) return ['state' => 'pinned', 'reason' => 'Pinned to the previous image after a rollback. Unpin it on the Docker tab to resume updates.'] + $r;
+  if ($c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote']) return ['state' => 'skipped', 'reason' => 'You chose to skip this version. It is ignored until a newer one appears.'] + $r;
   if ($cc['policy'] === 'ignore') return ['state' => 'ignored', 'reason' => 'Policy is "ignore": no automatic action.'] + $r;
   if ($cc['policy'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Policy is "notify only".'] + $r;
   if (!empty($g['skip_stopped']) && $c['state'] !== 'running') return ['state' => 'stopped', 'reason' => 'Container is not running and "skip stopped containers" is on.'] + $r;
@@ -1745,6 +1874,16 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $out['new']['id'] = dau_short_id($newId);
   if ($newId === $oldId) { $out['result'] = 'unchanged'; $out['stage'] = ''; return $done(); }   // already running the newest image: do not restart it for nothing
 
+  /* versions of both images; a jump to a new major version is held back for containers marked "watch major versions" */
+  $verFrom = dau_image_version($oldId); $verTo = dau_image_version($newId);
+  $out['versions'] = ['from' => $verFrom['version'], 'to' => $verTo['version']];
+  if (!empty($cc['watch_major']) && dau_major_jump($verFrom, $verTo) && empty($c['allow_major'])) {
+    $out['stage'] = 'impact'; $out['result'] = 'blocked'; $out['major'] = ['from' => $verFrom['version'], 'to' => $verTo['version']];
+    $out['error'] = 'Major version change (' . $verFrom['version'] . ' -> ' . $verTo['version'] . '): the update was not applied. The new image is downloaded, the container was not touched.';
+    $out['next'] = 'Read the release notes and back up first (databases often need a migration). Then use "Update anyway" on the Docker tab.';
+    return $done();
+  }
+
   /* apply with Unraid's own routine (keeps the template, network and extra settings). From here on, never auto-retry. */
   $out['stage'] = 'apply';
   $a = dau_run([DAU_PHP, $script, rawurlencode($name)], DAU_APPLY_TIMEOUT);
@@ -1760,6 +1899,8 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $prevRef = $image . ($out['prev']['digest'] ? '@' . $out['prev']['digest'] : '');
   if ($v['ok'] || $v['result'] === 'timeout') {
     $out['result'] = 'updated'; $out['stage'] = '';
+    /* how to go back: the digest reference of the image that was running before */
+    $out['rollback'] = is_array($rd) && !empty($rd[0]) && dau_valid_image_ref($rd[0]) ? ['ref' => $rd[0], 'prev_id' => $oldId, 'prev_digest' => $out['prev']['digest'], 'new_digest' => (string)$c['remote'], 'image' => $image, 'at' => dau_now(), 'from' => $verFrom['version'], 'to' => $verTo['version']] : null;
     if ($v['result'] === 'timeout') $out['next'] = 'Check the container\'s logs; it may simply need longer to become healthy. Increase the verification timeout in Settings if this is normal.';
     /* targeted cleanup: only the replaced image, never forced, so Docker itself refuses if anything still uses it */
     if (!empty($g['cleanup']) && $v['ok'] && $oldId !== '' && $oldId !== $newId) {
@@ -1794,7 +1935,7 @@ function dau_docker_retry_after_failure(array $cfg, array &$st, $name, array $c,
   return 'scheduled';
 }
 ]]></INLINE>
-<SHA256>4d2c751218a6d1e634f8c46f2392573ef10e82a9f0ed109f07f59a3744740427</SHA256>
+<SHA256>d6878c87dc602e39c7c6523f73260ebde69279c55023bcc06fdaae03afb219bc</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/plugins.php" Mode="0644">
@@ -1917,6 +2058,7 @@ function dau_plugin_eval(array $cfg, array $st, array $p, $latest, $now, $manual
   if ($p['self']) return ['state' => 'self', 'reason' => 'This plugin never updates itself automatically.', 'eta' => null];
   if (!dau_version_newer($latest, $p['version'])) return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
+  if (($st['plugins']['skipped'][$p['file']] ?? '') === $latest) return ['state' => 'skipped', 'reason' => 'You chose to skip this version. It is ignored until a newer one appears.', 'eta' => null];
   $policy = dau_plugin_policy($cfg, $p['file']);
   if (empty($pc['auto_update'])) return ['state' => $policy === 'ignore' ? 'ignored' : 'notify_only', 'reason' => 'Automatic plugin updates are switched off globally.', 'eta' => null];
   if ($policy === 'ignore') return ['state' => 'ignored', 'reason' => 'Policy is "ignore".', 'eta' => null];
@@ -1942,7 +2084,7 @@ function dau_plugins_track(array &$st, array $avail, $now) {
     $seen[$f] = (is_array($r) && ($r['version'] ?? '') === $latest) ? ['version' => $latest, 'first' => $r['first'], 'last' => $now] : ['version' => $latest, 'first' => $now, 'last' => $now];
   }
   $st['plugins']['seen'] = $seen;
-  foreach (['notified', 'blocked'] as $k) foreach (array_keys($st['plugins'][$k]) as $f) if (!isset($avail[$f])) unset($st['plugins'][$k][$f]);
+  foreach (['notified', 'blocked', 'skipped', 'notes'] as $k) foreach (array_keys($st['plugins'][$k]) as $f) if (!isset($avail[$f]) || ($k === 'skipped' && $st['plugins'][$k][$f] !== $avail[$f])) unset($st['plugins'][$k][$f]);
 }
 
 function dau_plugin_recovery_copy($p) {
@@ -2001,7 +2143,7 @@ function dau_plugin_slots(array $cfg) {
   return $s ? ['plugins' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>829ad201e0eb79cc327277109ed56ca75befdd967f7f2c4a043ac64dcaafc8d3</SHA256>
+<SHA256>04bb27d8f11e0301b2f8aec40d15b5d1d2cfd82dafc6721ce4c5f7da2551838e</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/os.php" Mode="0644">
@@ -2048,7 +2190,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
   if (dau_version_newer($latest, $installed)) {
-    if ($os['available'] !== $latest) { $os['available'] = $latest; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
+    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
       $os['notified'] = $latest;
@@ -2112,6 +2254,7 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
   $wf = $os['workflow'] ?? null;
   if (is_array($wf) && ($wf['state'] ?? '') === 'awaiting_confirmation' && ($wf['version'] ?? '') === $latest) return ['state' => 'awaiting_confirmation', 'reason' => 'Prerequisites passed; waiting for your confirmation.', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
+  if (($os['skipped'] ?? '') === (string)$latest) return ['state' => 'skipped', 'reason' => 'You chose to skip this release.', 'eta' => null];
   if ($o['mode'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Automatic installation is off (notify only).', 'eta' => null];
   if ($o['confirmed'] !== $o['mode']) return ['state' => 'not_confirmed', 'reason' => 'The automatic mode was not confirmed.', 'eta' => null];
   if (!empty($o['stable_only']) && !dau_os_is_stable($latest)) return ['state' => 'prerelease', 'reason' => 'Only stable releases are installed automatically.', 'eta' => null];
@@ -2193,7 +2336,7 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>05e25cb071e9b8253697db324d71930110660d4672cb4875d22aba20f74cd06e</SHA256>
+<SHA256>635437bd495d36eae9e65d91648010b4a544b456b321c2cd6facb35c94a373ab</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/workflow.php" Mode="0644">
@@ -2343,6 +2486,300 @@ function dau_os_report_text(array $r) {
 <SHA256>e68b0b97a872c2d726efec3be987e11aa87e8baf8fa06761749c3d171817e9b6</SHA256>
 </FILE>
 
+<FILE Name="&emhttp;/include/extras.php" Mode="0644">
+<INLINE><![CDATA[<?php
+/*
+ * Unraid AutoUpdater - extra features: dependency order, major-version flag, rollback, cleanup tools, release notes,
+ * quiet hours and the links used in notifications. Nothing here runs unless the matching setting or button is used.
+ */
+
+/* ---------------- quiet hours ---------------- */
+
+/** True while quiet hours are active. Notifications are held back (not lost) and sent afterwards. */
+function dau_quiet_now(array $cfg, $ts = null) {
+  $q = $cfg['quiet'] ?? null;
+  if (!is_array($q) || empty($q['enabled'])) return false;
+  return dau_window_open(['enabled' => true, 'days' => $q['days'], 'start' => $q['start'], 'end' => $q['end']], $ts ?? dau_now());
+}
+
+/** Events that may be sent during quiet hours when "let urgent messages through" is on. */
+function dau_event_urgent(array $ev) {
+  return in_array($ev['kind'], ['failed', 'retry_exhausted', 'os_install_failed', 'os_prereq_failed', 'os_unverified', 'os_rebooting', 'os_reboot_blocked', 'rollback_failed', 'os_staged'], true);
+}
+
+/** @return array [events to send now, events to hold] */
+function dau_quiet_split(array $cfg, array $events, $ts = null) {
+  if (!dau_quiet_now($cfg, $ts)) return [$events, []];
+  $now = []; $hold = [];
+  foreach ($events as $e) {
+    if (!empty($e['silent'])) { $now[] = $e; continue; }            // already muted: nothing to hold
+    if (!empty($cfg['quiet']['urgent']) && dau_event_urgent($e)) $now[] = $e; else $hold[] = $e;
+  }
+  return [$now, $hold];
+}
+
+/* ---------------- dependency order ---------------- */
+
+/**
+ * Put containers in the order they must be updated: a container with "update after X" waits for X when both are in the list.
+ * Stable for everything else; a cycle falls back to the original order. $todo items are [container, eval, silent].
+ */
+function dau_docker_order(array $todo, array $cfg) {
+  $byName = []; foreach ($todo as $i => $t) $byName[$t[0]['name']] = $i;
+  $deps = [];
+  foreach ($todo as $t) {
+    $n = $t[0]['name']; $cc = dau_container_cfg($cfg, $n);
+    $deps[$n] = array_values(array_filter((array)$cc['after'], function ($d) use ($byName, $n) { return $d !== $n && isset($byName[$d]); }));
+  }
+  $out = []; $done = [];
+  $left = array_keys($byName);
+  while ($left) {
+    $progress = false;
+    foreach ($left as $k => $n) {
+      $ok = true; foreach ($deps[$n] as $d) if (empty($done[$d])) { $ok = false; break; }
+      if ($ok) { $out[] = $todo[$byName[$n]]; $done[$n] = true; unset($left[$k]); $progress = true; break; }
+    }
+    if (!$progress) { foreach ($left as $n) $out[] = $todo[$byName[$n]]; break; }     // cycle
+  }
+  return $out;
+}
+
+/* ---------------- image versions (major-version flag) ---------------- */
+
+/** Version of an image from its labels / well-known environment variables. @return array ['version'=>string,'major'=>int|null] */
+function dau_image_version($imageId) {
+  $none = ['version' => '', 'major' => null, 'source' => ''];
+  if ($imageId === '' || $imageId === null) return $none;
+  $r = dau_docker(['image', 'inspect', '--format', '{{json .Config}}', $imageId], 30);
+  $c = json_decode($r['out'], true);
+  if (!is_array($c)) return $none;
+  $lab = is_array($c['Labels'] ?? null) ? $c['Labels'] : [];
+  $v = '';
+  foreach (['org.opencontainers.image.version', 'org.label-schema.version', 'version'] as $k) if (!empty($lab[$k]) && is_string($lab[$k])) { $v = $lab[$k]; break; }
+  if ($v === '' || $v === 'latest' || $v === 'edge' || $v === 'nightly') {
+    $env = [];
+    foreach ((array)($c['Env'] ?? []) as $e) if (is_string($e) && strpos($e, '=') !== false) { list($ek, $ev) = explode('=', $e, 2); $env[$ek] = $ev; }
+    foreach (['PG_MAJOR', 'PG_VERSION', 'MYSQL_MAJOR', 'MYSQL_VERSION', 'MARIADB_VERSION', 'MONGO_MAJOR', 'MONGO_VERSION', 'REDIS_VERSION', 'APP_VERSION', 'VERSION'] as $k) {
+      if (!empty($env[$k])) { $v = $env[$k]; break; }
+    }
+  }
+  $v = dau_clip(trim((string)$v), 60);
+  $src = (string)($lab['org.opencontainers.image.source'] ?? $lab['org.opencontainers.image.url'] ?? '');
+  $major = preg_match('/^v?(\d+)/i', $v, $m) ? (int)$m[1] : null;
+  return ['version' => $v, 'major' => $major, 'source' => preg_match('#^https://[A-Za-z0-9./_-]{3,150}$#', $src) ? $src : ''];
+}
+
+/** Is this a jump to a different major version? */
+function dau_major_jump(array $from, array $to) {
+  return $from['major'] !== null && $to['major'] !== null && $from['major'] !== $to['major'];
+}
+
+/* ---------------- release notes ---------------- */
+
+/** Changes of a plugin update (from the downloaded plg), only entries newer than the installed version. */
+function dau_plugin_notes($file, $installed) {
+  if (!dau_valid_plg($file)) return '';
+  $tmp = DAU_PLUGTMP . '/' . $file;
+  if (!is_file($tmp)) return '';
+  $text = (string)@file_get_contents($tmp);
+  if (!preg_match('#<CHANGES>(.*?)</CHANGES>#s', $text, $m)) return '';
+  $body = preg_replace('/^\s*<!\[CDATA\[|\]\]>\s*$/', '', trim($m[1]));
+  $parts = preg_split('/^(?=###)/m', $body);
+  $keep = [];
+  foreach ($parts as $p) {
+    $p = trim($p); if ($p === '') continue;
+    if (preg_match('/^###\s*(\S+)/', $p, $h)) { if (strcmp($h[1], (string)$installed) > 0) $keep[] = $p; }
+  }
+  if (!$keep) { $first = array_values(array_filter(array_map('trim', $parts))); $keep = array_slice($first, 0, 1); }
+  return dau_clip(dau_redact(implode("\n\n", array_slice($keep, 0, 6))), 3500);
+}
+
+/** Where the notes of a container image live: its source repository's releases page. */
+function dau_docker_notes(array $c) {
+  $v = dau_image_version($c['image_id'] ?? '');
+  $url = '';
+  if ($v['source'] !== '' && preg_match('#^https://(github\.com|gitlab\.com)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#', $v['source'], $m)) $url = rtrim(preg_replace('/\.git$/', '', $m[0]), '/') . ($m[1] === 'github.com' ? '/releases' : '/-/releases');
+  return ['version' => $v['version'], 'link' => $url, 'text' => $url ? '' : 'This image does not say where its release notes are. Look at its project page.'];
+}
+
+/* ---------------- links in notifications ---------------- */
+
+function dau_ui_base(array $cfg) {
+  $u = (string)($cfg['discord']['ui_url'] ?? '');
+  return $u !== '' ? rtrim($u, '/') : 'http://' . preg_replace('/[^A-Za-z0-9.-]/', '', dau_server_name());
+}
+
+/** "[Update now](...) · [Skip this version](...)" for an update-available message; '' when it does not apply. */
+function dau_action_links(array $cfg, array $ev) {
+  if (empty($cfg['discord']['action_links']) || ($ev['kind'] ?? '') !== 'available') return '';
+  $type = $ev['type'] ?? ''; $name = (string)($ev['name'] ?? '');
+  if (!in_array($type, ['docker', 'plugin', 'os'], true) || ($type !== 'os' && $name === '')) return '';
+  $base = dau_ui_base($cfg) . '/Settings/UnraidAutoUpdater';
+  $link = function ($label, $act) use ($base, $type, $name) { return '[' . $label . '](' . $base . '?' . http_build_query(['act' => $act, 'type' => $type, 'name' => $name]) . ')'; };
+  $o = [];
+  if ($type !== 'os') $o[] = $link('Update now', 'update');
+  if ($type === 'docker' && stripos((string)($ev['reason'] ?? ''), 'approval') !== false) $o[] = $link('Approve', 'approve');
+  $o[] = $link($type === 'os' ? 'Skip this release' : 'Skip this version', 'skip');
+  if ($type === 'os') $o[] = $link('Open Unraid OS tab', 'open');
+  return implode(' · ', $o);
+}
+
+/* ---------------- rollback ---------------- */
+
+function dau_template_path($name) { return DAU_TEMPLATES . '/my-' . $name . '.xml'; }
+
+/** Only a plain image reference may be written into a template. */
+function dau_valid_image_ref($r) { return is_string($r) && strlen($r) <= 300 && preg_match('#^[A-Za-z0-9][A-Za-z0-9._:/@-]*$#', $r) === 1; }
+
+function dau_template_repo($xml) { return preg_match('#<Repository>([^<]*)</Repository>#', $xml, $m) ? html_entity_decode(trim($m[1]), ENT_QUOTES) : null; }
+
+function dau_template_set_repo($xml, $repo) {
+  $new = preg_replace_callback('#<Repository>[^<]*</Repository>#', function () use ($repo) { return '<Repository>' . htmlspecialchars($repo, ENT_QUOTES) . '</Repository>'; }, $xml, 1, $n);
+  return $n === 1 ? $new : null;
+}
+
+/**
+ * Go back to the image the container used before its last update. The template's Repository is switched to the old
+ * image's digest and Unraid's own update routine recreates the container; the container is then pinned and the version
+ * that was rolled back is skipped, so nothing updates it again by itself. $res: result, error, next, verification.
+ */
+function dau_docker_rollback(array $cfg, array &$st, $name) {
+  $res = ['result' => 'failed', 'stage' => 'precheck', 'error' => '', 'next' => '', 'verification' => null, 'started' => dau_now(), 'finished' => 0, 'prev' => null, 'new' => null];
+  $done = function () use (&$res) { $res['finished'] = dau_now(); return $res; };
+  $rec = $st['docker']['rollback'][$name] ?? null;
+  if (!dau_valid_name($name) || !is_array($rec) || !dau_valid_image_ref($rec['ref'] ?? '')) { $res['error'] = 'There is no earlier image recorded for this container.'; $res['result'] = 'blocked'; return $done(); }
+  $script = DAU_DM . '/scripts/update_container';
+  $tp = dau_template_path($name);
+  if (!is_file($script) || !is_file($tp)) { $res['error'] = 'The container is not managed by an Unraid template, so it cannot be recreated here.'; $res['result'] = 'blocked'; return $done(); }
+  $before = dau_inspect_one($name);
+  if ($before === null) { $res['error'] = 'The container does not exist.'; $res['result'] = 'blocked'; return $done(); }
+  $wasRunning = !empty($before['State']['Running']);
+  $xml = (string)file_get_contents($tp);
+  $orig = dau_template_repo($xml);
+  if ($orig === null) { $res['error'] = 'The container template has no Repository entry.'; $res['result'] = 'blocked'; return $done(); }
+  $res['prev'] = ['id' => dau_short_id($before['Image'] ?? ''), 'digest' => (string)($rec['new_digest'] ?? '')];
+  $res['new'] = ['id' => dau_short_id($rec['prev_id'] ?? ''), 'digest' => (string)($rec['prev_digest'] ?? '')];
+
+  $res['stage'] = 'pull';
+  $p = dau_docker(['pull', $rec['ref']], DAU_PULL_TIMEOUT);
+  if ($p['timeout'] || $p['code'] !== 0) { $res['error'] = 'The earlier image could not be pulled: ' . dau_clip(dau_redact(trim($p['err'] . ' ' . $p['out'])), 250); $res['next'] = 'The container was not touched.'; return $done(); }
+  $r = dau_docker(['image', 'inspect', '--format', '{{.Id}}', $rec['ref']], 30);
+  $oldId = trim($r['out']);
+
+  /* keep a copy of the template, switch it to the old image, recreate */
+  $keep = DAU_DIR . '/rollback'; if (!is_dir($keep)) @mkdir($keep, 0755, true);
+  @file_put_contents($keep . '/my-' . $name . '.xml.' . dau_now() . '.bak', $xml);
+  foreach (array_slice(array_reverse(glob($keep . '/my-' . $name . '.xml.*.bak') ?: []), 3) as $old) @unlink($old);
+  $new = dau_template_set_repo($xml, $rec['ref']);
+  if ($new === null || @file_put_contents($tp, $new) === false) { $res['error'] = 'The container template could not be changed.'; return $done(); }
+  $res['stage'] = 'apply';
+  $a = dau_run([DAU_PHP, $script, rawurlencode($name)], DAU_APPLY_TIMEOUT);
+  $res['stage'] = 'verify';
+  $v = dau_docker_verify($name, $oldId !== '' ? $oldId : null, $wasRunning, !empty($cfg['global']['verify']['enabled']) ? (int)$cfg['global']['verify']['timeout'] : 10);
+  $res['verification'] = $v;
+  if ($v['ok'] || $v['result'] === 'timeout') {
+    $res['result'] = 'rolled_back'; $res['stage'] = '';
+    $st['docker']['pinned'][$name] = ['repository' => $orig, 'ref' => $rec['ref'], 'at' => dau_now()];
+    if (!empty($rec['new_digest'])) $st['docker']['skipped'][$name] = (string)$rec['new_digest'];
+    unset($st['docker']['rollback'][$name]);
+    $res['next'] = 'The container is pinned to the earlier image and the version you rolled back from is skipped. Use "Unpin" on the Docker tab to follow updates again.';
+    return $done();
+  }
+  @file_put_contents($tp, $xml);              // the template goes back to what it was; the container is not recreated again automatically
+  $res['error'] = $v['detail'];
+  $res['next'] = 'The template was restored but the container may need attention: check it in the Docker tab and its logs.';
+  return $done();
+}
+
+/** Undo the pin: the template gets its original Repository back (the container itself is not touched). */
+function dau_docker_unpin(array &$st, $name) {
+  $pin = $st['docker']['pinned'][$name] ?? null;
+  if (!is_array($pin) || !dau_valid_name($name)) return ['ok' => false, 'error' => 'This container is not pinned.'];
+  $tp = dau_template_path($name);
+  $xml = is_file($tp) ? (string)file_get_contents($tp) : '';
+  $cur = $xml !== '' ? dau_template_repo($xml) : null;
+  if ($cur === null) return ['ok' => false, 'error' => 'The container template was not found.'];
+  if ($cur === $pin['repository']) { unset($st['docker']['pinned'][$name]); return ['ok' => true]; }
+  $new = dau_template_set_repo($xml, (string)$pin['repository']);
+  if ($new === null || @file_put_contents($tp, $new) === false) return ['ok' => false, 'error' => 'The container template could not be changed.'];
+  unset($st['docker']['pinned'][$name]);
+  return ['ok' => true];
+}
+
+/* ---------------- cleanup tools ---------------- */
+
+function dau_bytes_text($b) {
+  $b = (float)$b;
+  if ($b >= 1073741824) return round($b / 1073741824, 2) . ' GB';
+  if ($b >= 1048576) return round($b / 1048576, 1) . ' MB';
+  return round($b / 1024) . ' kB';
+}
+
+/**
+ * Unused images and leftover containers, with sizes. Nothing is removed here.
+ * Images: dangling (no name) or not used by any container. Containers: stopped, not created from an Unraid template, not compose.
+ */
+function dau_cleanup_scan() {
+  $cs = dau_containers();
+  if ($cs === null) return ['ok' => false, 'error' => 'The Docker service is not running.'];
+  $used = [];
+  foreach ($cs as $c) $used[$c['image_id']] = true;
+  $r = dau_docker(['image', 'ls', '-a', '--no-trunc', '--format', '{{.ID}}|{{.Repository}}|{{.Tag}}|{{.CreatedSince}}'], 60);
+  $imgs = [];
+  foreach (preg_split('/\R/', trim($r['out'])) as $line) {
+    $f = explode('|', $line, 4); if (count($f) < 4 || !preg_match('/^sha256:[0-9a-f]{64}$/', $f[0])) continue;
+    if (isset($used[$f[0]])) continue;
+    $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0];
+    if ($f[1] !== '<none>') { $imgs[$f[0]]['tags'][] = $f[1] . ($f[2] !== '<none>' ? ':' . $f[2] : ''); $imgs[$f[0]]['dangling'] = false; }
+  }
+  if ($imgs) {
+    $r = dau_docker(array_merge(['image', 'inspect', '--format', '{{.Id}} {{.Size}}'], array_keys($imgs)), 60);
+    foreach (preg_split('/\R/', trim($r['out'])) as $line) { $p = explode(' ', trim($line)); if (count($p) === 2 && isset($imgs[$p[0]])) $imgs[$p[0]]['size'] = (int)$p[1]; }
+  }
+  $orph = [];
+  $names = [];
+  foreach ($cs as $c) if (!$c['managed'] && $c['state'] !== 'running' && in_array($c['state'], ['exited', 'created', 'dead'], true)) $names[] = $c['name'];
+  if ($names) {
+    $r = dau_docker(array_merge(['inspect', '-s'], $names), 60);
+    $data = json_decode($r['out'], true);
+    foreach (is_array($data) ? $data : [] as $d) {
+      $lab = $d['Config']['Labels'] ?? [];
+      if (isset($lab['com.docker.compose.project']) || !empty($lab['net.unraid.docker.managed'])) continue;
+      $n = ltrim($d['Name'] ?? '', '/'); if (!dau_valid_name($n)) continue;
+      $orph[] = ['name' => $n, 'image' => (string)($d['Config']['Image'] ?? ''), 'state' => (string)($d['State']['Status'] ?? ''), 'size' => (int)($d['SizeRw'] ?? 0), 'finished' => (string)($d['State']['FinishedAt'] ?? '')];
+    }
+  }
+  $imgs = array_values($imgs);
+  usort($imgs, function ($a, $b) { return $b['size'] <=> $a['size']; });
+  $total = 0; foreach ($imgs as $i) $total += $i['size']; foreach ($orph as $o) $total += $o['size'];
+  return ['ok' => true, 'images' => $imgs, 'containers' => $orph, 'total' => $total, 'total_text' => dau_bytes_text($total)];
+}
+
+/** Remove exactly the chosen items, each re-checked against a fresh scan. Never forced. */
+function dau_cleanup_run(array $imageIds, array $containerNames) {
+  $scan = dau_cleanup_scan();
+  if (!$scan['ok']) return $scan;
+  $okImg = []; foreach ($scan['images'] as $i) $okImg[$i['id']] = $i;
+  $okCon = []; foreach ($scan['containers'] as $c) $okCon[$c['name']] = $c;
+  $out = ['ok' => true, 'removed' => [], 'failed' => [], 'freed' => 0];
+  foreach ($containerNames as $n) {
+    if (!isset($okCon[$n])) { $out['failed'][] = ['what' => $n, 'why' => 'no longer a leftover container']; continue; }
+    $r = dau_docker(['rm', $n], 60);
+    if ($r['code'] === 0) { $out['removed'][] = 'container ' . $n; $out['freed'] += $okCon[$n]['size']; } else $out['failed'][] = ['what' => $n, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
+  }
+  foreach ($imageIds as $id) {
+    if (!isset($okImg[$id])) { $out['failed'][] = ['what' => dau_short_id($id), 'why' => 'now in use or already removed']; continue; }
+    $r = dau_docker(['image', 'rm', $id], 120);
+    $label = $okImg[$id]['tags'] ? implode(', ', $okImg[$id]['tags']) : $okImg[$id]['short'];
+    if ($r['code'] === 0) { $out['removed'][] = 'image ' . $label; $out['freed'] += $okImg[$id]['size']; } else $out['failed'][] = ['what' => $label, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
+  }
+  $out['freed_text'] = dau_bytes_text($out['freed']);
+  return $out;
+}
+]]></INLINE>
+<SHA256>fa5484fd004ae4af3dba0245cc622742cd4540cee4e497106fb76c3db0ea7078</SHA256>
+</FILE>
+
 <FILE Name="&emhttp;/include/jobs.php" Mode="0644">
 <INLINE><![CDATA[<?php
 /*
@@ -2384,6 +2821,7 @@ function dau_job_docker(array &$J, array $opts) {
   if ($cs === null) { dau_log('warn', 'docker', '-', 'check', 'skip', 'The Docker service is not running.'); return; }
   $now = dau_now();
   dau_docker_track($J['st'], $cs, $now);
+  $J['st']['summary']['containers'] = count($cs); $J['st']['summary']['docker_updates'] = count(array_filter($cs, function ($x) { return $x['update'] === true; })); $J['st']['summary']['at'] = $now;
   $todo = [];
   foreach ($cs as $c) {
     $n = $c['name'];
@@ -2408,10 +2846,19 @@ function dau_job_docker(array &$J, array $opts) {
     } elseif ($ev['state'] === 'approval' || $ev['state'] === 'retry_exhausted') { $J['sum']['docker']['skipped']++; }
   }
   $i = 0; $total = count($todo);
+  $todo = dau_docker_order($todo, $cfg);          // "update after" dependencies first
+  $failedNow = [];
   foreach ($todo as list($c, $ev, $silent)) {
     if (dau_stop_requested()) { dau_log('warn', 'job', '-', 'stop', 'info', 'Stopped on request; remaining containers were not updated.'); break; }
-    if ($i++ > 0 && (int)$g['delay'] > 0) dau_sleep((int)$g['delay']);
     $n = $c['name'];
+    $bad = array_values(array_filter((array)dau_container_cfg($cfg, $n)['after'], function ($d) use ($failedNow) { return !empty($failedNow[$d]); }));
+    if ($bad) {      // a container this one depends on did not update: leave this one alone for now
+      $J['sum']['docker']['skipped']++; $J['events'][] = dau_ev('docker', $n, 'skipped', ['reason' => 'It should update after ' . implode(', ', $bad) . ', which did not update successfully.', 'silent' => $silent]);
+      dau_log('warn', 'docker', $n, 'update', 'skip', 'dependency failed: ' . implode(', ', $bad));
+      continue;
+    }
+    if ($i++ > 0 && (int)$g['delay'] > 0) dau_sleep((int)$g['delay']);
+    $c['allow_major'] = in_array($n, (array)($opts['allow_major'] ?? []), true);
     dau_phase("Updating $n", ['done' => $i - 1, 'total' => $total, 'current' => $n]);
     dau_mark_current($J['st'], 'docker', $n, dau_now());
     $res = dau_docker_update($cfg, $n, $c);
@@ -2421,13 +2868,19 @@ function dau_job_docker(array &$J, array $opts) {
     $x = ['installed' => dau_short_digest($res['prev']['digest']) ?: $res['prev']['id'], 'available' => dau_short_digest($res['new']['digest']) ?: $res['new']['id'],
           'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification'], 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next'], 'silent' => $silent];
     if ($res['result'] === 'updated') {
-      dau_stats_record($J['st'], 'docker', true, $x['duration']); unset($J['st']['docker']['retry'][$n], $J['st']['docker']['notified'][$n]);
+      dau_stats_record($J['st'], 'docker', true, $x['duration'], $n); unset($J['st']['docker']['retry'][$n], $J['st']['docker']['notified'][$n], $J['st']['docker']['major'][$n]);
+      if (!empty($res['rollback'])) $J['st']['docker']['rollback'][$n] = $res['rollback'];
+      if (!empty($res['versions']['from']) || !empty($res['versions']['to'])) $x['versions'] = ($res['versions']['from'] ?: '?') . ' -> ' . ($res['versions']['to'] ?: '?');
+      unset($J['st']['docker']['skipped'][$n]);
       $J['sum']['docker']['updated']++; $J['events'][] = dau_ev('docker', $n, 'updated', $x);
       dau_hist($J, 'docker', $n, 'update', $res); dau_log('info', 'docker', $n, 'update', 'ok', ($res['verification']['result'] ?? '') . ' ' . implode(' | ', $res['warnings']));
     } elseif ($res['result'] === 'unchanged') {
       unset($J['st']['docker']['retry'][$n]); dau_log('info', 'docker', $n, 'update', 'skip', 'Already running the newest image.');
     } elseif ($res['result'] === 'blocked') {
-      $J['sum']['docker']['skipped']++; $J['events'][] = dau_ev('docker', $n, 'blocked', ['reason' => $res['error']] + $x);
+      $failedNow[$n] = true;
+      $J['sum']['docker']['skipped']++;
+      if (($res['stage'] ?? '') === 'impact') $J['st']['docker']['major'][$n] = ['from' => $res['major']['from'], 'to' => $res['major']['to'], 'remote' => (string)$c['remote']];
+      $J['events'][] = dau_ev('docker', $n, ($res['stage'] ?? '') === 'impact' ? 'major_jump' : 'blocked', ['reason' => $res['error']] + $x);
       dau_hist($J, 'docker', $n, 'update', $res); dau_log('warn', 'docker', $n, 'update', 'blocked', $res['error']);
     } else {
       $kind = 'failed'; $rn = 0;
@@ -2438,12 +2891,26 @@ function dau_job_docker(array &$J, array $opts) {
         elseif ($r === 'exhausted') { $kind = 'retry_exhausted'; $x['retry'] = ($rn - 1) . ' retries used'; }
       }
       $res['attempts'] = max(1, $rn);
-      dau_stats_record($J['st'], 'docker', false, 0);
+      dau_stats_record($J['st'], 'docker', false, 0, $n); $failedNow[$n] = true;
       $J['sum']['docker']['failed']++; $J['events'][] = dau_ev('docker', $n, $kind, $x);
       dau_hist($J, 'docker', $n, 'update', $res); dau_log('error', 'docker', $n, 'update', 'fail', $res['stage'] . ': ' . $res['error'], $rn);
     }
     dau_state_save($J['st']);
   }
+}
+
+/** Go back to the image a container used before its last update (see dau_docker_rollback). */
+function dau_job_rollback(array &$J, $name) {
+  dau_phase("Rolling back $name", ['current' => $name]);
+  dau_mark_current($J['st'], 'docker', $name, dau_now());
+  $res = dau_docker_rollback($J['cfg'], $J['st'], $name);
+  dau_clear_current($J['st']);
+  $x = ['installed' => $res['prev']['digest'] ?? '', 'available' => $res['new']['digest'] ?? '', 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification']['detail'] ?? null, 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
+  $J['events'][] = dau_ev('docker', $name, $res['result'] === 'rolled_back' ? 'rolled_back' : 'rollback_failed', $x);
+  if ($res['result'] === 'rolled_back') $J['sum']['docker']['updated']++; else $J['sum']['docker']['failed']++;
+  dau_hist($J, 'docker', $name, 'rollback', $res);
+  dau_log($res['result'] === 'rolled_back' ? 'info' : 'error', 'docker', $name, 'rollback', $res['result'], $res['error']);
+  dau_state_save($J['st']);
 }
 
 /* ---------------- Plugins ---------------- */
@@ -2461,6 +2928,8 @@ function dau_job_plugins(array &$J, array $opts) {
   foreach ($chk['errors'] as $f => $e) dau_log('warn', 'plugin', $f, 'check', 'fail', $e);
   dau_plugins_track($J['st'], $chk['avail'], $now);
   $J['st']['plugins']['available'] = $chk['avail'];
+  $J['st']['summary']['plugin_updates'] = count($chk['avail']);
+  foreach ($chk['avail'] as $f => $latest) { if (isset($inst[$f])) { $nt = dau_plugin_notes($f, $inst[$f]['version']); if ($nt !== '') $J['st']['plugins']['notes'][$f] = $nt; } }
   $next = 0; $todo = [];
   foreach ($chk['avail'] as $f => $latest) {
     if ($names !== null && !in_array($f, $names, true)) continue;
@@ -2472,7 +2941,7 @@ function dau_job_plugins(array &$J, array $opts) {
       $J['sum']['plugins']['available']++;
       if (($J['st']['plugins']['notified'][$f] ?? '') !== $latest) {
         $J['st']['plugins']['notified'][$f] = $latest;
-        $J['events'][] = dau_ev('plugin', $p['name'], 'available', ['installed' => $p['version'], 'available' => $latest, 'reason' => in_array($ev['state'], ['ready', 'notify_only', 'self'], true) ? '' : $ev['reason']]);
+        $J['events'][] = dau_ev('plugin', $p['name'], 'available', ['installed' => $p['version'], 'available' => $latest, 'notes' => dau_clip(dau_plugin_notes($f, $p['version']), 600), 'reason' => in_array($ev['state'], ['ready', 'notify_only', 'self'], true) ? '' : $ev['reason']]);
       }
     }
     if (empty($opts['update'])) continue;
@@ -2493,11 +2962,11 @@ function dau_job_plugins(array &$J, array $opts) {
     $res = dau_plugin_update($cfg, $p, $latest);
     dau_clear_current($J['st']);
     $x = ['installed' => $p['version'], 'available' => $latest, 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification'], 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
-    if ($res['result'] === 'updated') { dau_stats_record($J['st'], 'plugin', true, $x['duration']); $J['sum']['plugins']['updated']++; $J['events'][] = dau_ev('plugin', $p['name'], 'updated', $x); unset($J['st']['plugins']['notified'][$p['file']]); }
+    if ($res['result'] === 'updated') { dau_stats_record($J['st'], 'plugin', true, $x['duration'], $p['name']); $J['sum']['plugins']['updated']++; $J['events'][] = dau_ev('plugin', $p['name'], 'updated', $x); unset($J['st']['plugins']['notified'][$p['file']]); }
     elseif ($res['result'] === 'blocked') {
       $J['sum']['plugins']['skipped']++; $J['st']['plugins']['blocked'][$p['file']] = ['version' => $latest, 'reason' => $res['error']];
       $J['events'][] = dau_ev('plugin', $p['name'], 'blocked', ['reason' => $res['error']] + $x);
-    } else { dau_stats_record($J['st'], 'plugin', false, 0); $J['sum']['plugins']['failed']++; $J['events'][] = dau_ev('plugin', $p['name'], 'failed', $x); }
+    } else { dau_stats_record($J['st'], 'plugin', false, 0, $p['name']); $J['sum']['plugins']['failed']++; $J['events'][] = dau_ev('plugin', $p['name'], 'failed', $x); }
     dau_hist($J, 'plugin', $p['name'], 'update', $res);
     dau_log($res['result'] === 'updated' ? 'info' : 'error', 'plugin', $p['name'], 'update', $res['result'], $res['error']);
     dau_state_save($J['st']);
@@ -2536,7 +3005,7 @@ function dau_job_os(array &$J, array $opts = []) {
       $J['events'][] = dau_ev('os', 'Unraid OS', 'os_staged', $x);
     } else {
       $J['st']['os']['attempted'] = ['version' => $latest, 'result' => $res['result'], 'reason' => dau_clip($res['error'], 200), 'at' => dau_now()];
-      dau_stats_record($J['st'], 'os', false, 0);
+      dau_stats_record($J['st'], 'os', false, 0, 'Unraid OS');
       $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', $x);
     }
     dau_hist($J, 'os', 'Unraid OS', 'update', $res);
@@ -2576,7 +3045,15 @@ function dau_job_os(array &$J, array $opts = []) {
 /* ---------------- notifications ---------------- */
 
 function dau_job_finish(array &$J) {
-  $cfg = $J['cfg']; $sum = $J['sum']; $ev = $J['events'];
+  $cfg = $J['cfg']; $sum = $J['sum'];
+  /* quiet hours: everything that is not urgent waits in a queue and goes out after the quiet period */
+  list($ev, $hold) = dau_quiet_split($cfg, $J['events'], dau_now());
+  if ($hold) {
+    foreach ($hold as $h) $J['st']['queue'][] = $h;
+    $z = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'available' => 0];
+    $sumSend = ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]];
+    dau_log('info', 'notify', '-', 'quiet', 'hold', count($hold) . ' notification(s) held until quiet hours end');
+  } else $sumSend = $sum;
   $failed = $sum['docker']['failed'] + $sum['plugins']['failed'];
   foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified', 'os_prereq_failed'], true)) $failed++;
   $sum['status'] = $failed ? 'failed' : (($sum['docker']['skipped'] + $sum['plugins']['skipped']) ? 'warnings' : 'ok');
@@ -2593,7 +3070,7 @@ function dau_job_finish(array &$J) {
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
             'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
-            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -2602,7 +3079,8 @@ function dau_job_finish(array &$J) {
   }
   if ($more) dau_unraid_notify("Unraid AutoUpdater: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/UnraidAutoUpdater');
   /* Discord (never fails the job) */
-  try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sum); }
+  $sumSend['status'] = $sum['status']; $sumSend['trigger'] = $sum['trigger'];
+  try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sumSend); }
   catch (Throwable $e) { dau_log('warn', 'discord', '-', 'send', 'fail', $e->getMessage()); }
   $J['st']['last_run'] = dau_now(); $J['st']['last_trigger'] = $J['trigger'];
   $J['st']['last_result'] = ['docker' => $sum['docker'], 'plugins' => $sum['plugins'], 'status' => $sum['status'], 'ts' => dau_now()];
@@ -2643,6 +3121,10 @@ function dau_job_main($action, array $o = []) {
       $J['st']['os']['boot_result'] = null; $announced = true;
     }
 
+    if (!empty($J['st']['queue']) && !dau_quiet_now($cfg, $now)) {          // notifications held back by quiet hours
+      $J['events'] = array_merge($J['st']['queue'], $J['events']); $J['st']['queue'] = []; $announced = true;
+    }
+
     if ($action === 'tick') {
       $slots = []; $names = [];
       foreach (dau_docker_slots($cfg) as $k => $s) $slots['d:' . $k] = $s;
@@ -2666,7 +3148,9 @@ function dau_job_main($action, array $o = []) {
     } elseif ($action === 'check') {
       dau_job_docker($J, ['update' => false]); dau_job_plugins($J, ['update' => false]); dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'docker') {
-      dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true]);
+      dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true, 'allow_major' => $o['allow_major'] ?? []]);
+    } elseif ($action === 'rollback') {
+      dau_job_rollback($J, (string)($o['name'] ?? ''));
     } elseif ($action === 'plugins') {
       dau_job_plugins($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true]);
     } elseif ($action === 'os') {
@@ -2719,7 +3203,7 @@ function dau_install() {
     dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'update', 'result' => $ok ? 'updated' : 'failed', 'started' => (int)$r['at'], 'finished' => (int)$r['at'], 'trigger' => 'boot',
       'prev' => ['version' => $r['installed']], 'new' => ['version' => $r['running']], 'verification' => ['result' => $ok ? 'version_matches' : 'version_differs', 'ok' => $ok, 'detail' => 'After the reboot Unraid reports ' . ($r['running'] ?: 'unknown') . ' (expected ' . $r['available'] . ').'],
       'error' => $ok ? '' : 'The new release is not running after the reboot.'], $cfg['history']['max_entries']);
-    dau_stats_record($st, 'os', $ok, 0);
+    dau_stats_record($st, 'os', $ok, 0, 'Unraid OS');
     dau_unraid_notify(DAU_NAME . ': Unraid OS ' . ($ok ? 'update verified' : 'update NOT active'), 'Expected ' . $r['available'] . ', running ' . ($r['running'] ?: 'unknown') . '.', $ok ? 'normal' : 'alert', '/Tools');
     dau_log($ok ? 'info' : 'error', 'os', 'Unraid OS', 'boot-verify', $ok ? 'ok' : 'fail', 'expected ' . $r['available'] . ', running ' . $r['running']);
   }
@@ -2734,7 +3218,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>f1f599fbe6c17a35c5751c1dc97ac7f100d01b9d8d161e0d2709d220671b7b05</SHA256>
+<SHA256>5c814ebf0ce4f0943119a657d028bb4e3aad3884beedfcd39887e90baef292a4</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -2750,7 +3234,7 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
@@ -2768,7 +3252,11 @@ function api_docker_rows($cfg, $st) {
     $rows[] = ['run_state' => $c['state']] + array_diff_key($c, ['state' => 1]) + ['cfg' => $cc, 'state' => $ev['state'], 'reason' => $ev['reason'], 'eta' => $ev['eta'], 'delay_hours' => $ev['delay_hours'],
       'schedule_text' => $sched ? dau_sched_text($sched) : null, 'last' => $last[$c['name']] ?? null,
       'first_seen' => $st['docker']['seen'][$c['name']]['first'] ?? null, 'approved' => ($st['docker']['approved'][$c['name']] ?? '') === (string)$c['remote'] && $c['remote'],
-      'retry' => $st['docker']['retry'][$c['name']] ?? null];
+      'retry' => $st['docker']['retry'][$c['name']] ?? null,
+      'skipped' => $c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote'],
+      'pinned' => $st['docker']['pinned'][$c['name']] ?? null,
+      'rollback' => isset($st['docker']['rollback'][$c['name']]) ? ['at' => $st['docker']['rollback'][$c['name']]['at'], 'from' => $st['docker']['rollback'][$c['name']]['from'] ?? '', 'to' => $st['docker']['rollback'][$c['name']]['to'] ?? '', 'ref' => $st['docker']['rollback'][$c['name']]['ref'] ?? ''] : null,
+      'major' => ($st['docker']['major'][$c['name']]['remote'] ?? '') === (string)$c['remote'] && $c['remote'] ? $st['docker']['major'][$c['name']] : null];
   }
   return $rows;
 }
@@ -2780,7 +3268,7 @@ function api_plugin_rows($cfg, $st) {
     $ev = $latest ? dau_plugin_eval($cfg, $st, $p, $latest, $now, false) : ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
     $rows[] = ['file' => $f, 'name' => $p['name'], 'version' => $p['version'], 'latest' => $latest, 'self' => $p['self'], 'policy' => dau_plugin_policy($cfg, $f),
       'explicit' => $cfg['plugins']['items'][$f]['policy'] ?? null, 'state' => $ev['state'], 'reason' => $ev['reason'], 'eta' => $ev['eta'], 'last' => $last[$p['name']] ?? null,
-      'first_seen' => $st['plugins']['seen'][$f]['first'] ?? null];
+      'first_seen' => $st['plugins']['seen'][$f]['first'] ?? null, 'skipped' => $latest && ($st['plugins']['skipped'][$f] ?? '') === $latest];
   }
   return $rows;
 }
@@ -2816,7 +3304,7 @@ switch ($action) {
         'docker_auto' => $cnt($rows, function ($r) { return $r['cfg']['policy'] === 'auto'; }),
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
-        'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st),
+        'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
@@ -2833,9 +3321,26 @@ switch ($action) {
     $av = $st['os']['available'];
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
-         'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
+         'skipped' => $av && ($st['os']['skipped'] ?? '') === $av, 'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
          'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
   }
+  case 'notes': {
+    $type = (string)($_GET['type'] ?? $_POST['type'] ?? ''); $n = (string)($_GET['name'] ?? $_POST['name'] ?? ''); $st = dau_state_load();
+    if ($type === 'os') out(['text' => (string)$st['os']['notes'], 'version' => (string)$st['os']['available']]);
+    if ($type === 'plugin') {
+      foreach (dau_plugins_installed() as $f => $p) if ($f === $n || $p['name'] === $n) out(['text' => $st['plugins']['notes'][$f] ?? dau_plugin_notes($f, $p['version']), 'version' => (string)($st['plugins']['available'][$f] ?? '')]);
+      out(['text' => '']);
+    }
+    if ($type === 'docker' && dau_valid_name($n)) { foreach (dau_containers() ?? [] as $c) if ($c['name'] === $n) out(dau_docker_notes($c)); out(['text' => '']); }
+    fail('Unknown type');
+  }
+  case 'widget': {       // light: state files only, no Docker call (used by the Dashboard tile)
+    $st = dau_state_load(); $cfg = dau_load_config();
+    out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
+         'os' => $st['os']['available'], 'os_installed' => dau_os_version(), 'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
+         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
+  }
+  case 'cleanup_scan': { out(dau_cleanup_scan()); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
   case 'status': { out(['run' => dau_run_info()]); }
@@ -2924,9 +3429,57 @@ switch ($action) {
       $ok = array_values(array_filter($names, $what === 'docker' ? 'dau_valid_name' : 'dau_valid_plg'));
       if (!$ok) fail('Invalid names');
       $args = ['--update-' . $what . '=' . implode(',', $ok)];
+      if ($what === 'docker' && ($_POST['allow_major'] ?? '') === '1') $args[] = '--allow-major=' . implode(',', $ok);
+    } elseif ($what === 'rollback') {
+      $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
+      if (($_POST['confirm'] ?? '') !== '1') fail('A rollback needs an explicit confirmation.');
+      $st = dau_state_load(); if (empty($st['docker']['rollback'][$n])) fail('There is no earlier image recorded for this container.');
+      $args = ['--rollback=' . $n];
     } else fail('Unknown job');
     if (!dau_spawn($args)) fail('Another job is already running.', 409);
     out(['ok' => true]);
+  }
+
+  /* skip one specific version (a newer one is announced again) */
+  case 'skip': case 'unskip': {
+    $type = (string)($_POST['type'] ?? ''); $n = (string)($_POST['name'] ?? ''); $st = dau_state_load(); $skip = $action === 'skip';
+    if ($type === 'docker') {
+      if (!dau_valid_name($n)) fail('Invalid name');
+      $rem = ''; foreach (dau_containers() ?? [] as $c) if ($c['name'] === $n) $rem = (string)$c['remote'];
+      if ($skip && $rem === '') fail('No pending update with a known image to skip for this container.');
+      if ($skip) $st['docker']['skipped'][$n] = $rem; else unset($st['docker']['skipped'][$n]);
+    } elseif ($type === 'plugin') {
+      $f = $n; if (!dau_valid_plg($f)) { $f = ''; foreach (dau_plugins_installed() as $pf => $p) if ($p['name'] === $n) $f = $pf; }
+      $latest = $f !== '' ? ($st['plugins']['available'][$f] ?? null) : null;
+      if ($skip && !$latest) fail('No pending update to skip for this plugin.');
+      if ($f === '') fail('Unknown plugin');
+      if ($skip) $st['plugins']['skipped'][$f] = $latest; else unset($st['plugins']['skipped'][$f]);
+    } elseif ($type === 'os') {
+      if ($skip && empty($st['os']['available'])) fail('No OS update to skip.');
+      $st['os']['skipped'] = $skip ? (string)$st['os']['available'] : '';
+    } else fail('Unknown type');
+    dau_state_save($st); out(['ok' => true]);
+  }
+
+  case 'unpin': {
+    $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    $st = dau_state_load(); $r = dau_docker_unpin($st, $n); if ($r['ok']) dau_state_save($st);
+    dau_lock_release($lock);
+    if (!$r['ok']) fail($r['error']);
+    out(['ok' => true]);
+  }
+
+  case 'cleanup_run': {
+    if (($_POST['confirm'] ?? '') !== '1') fail('Cleanup needs an explicit confirmation.');
+    $imgs = $json('images') ?? []; $cons = $json('containers') ?? [];
+    $imgs = array_values(array_filter($imgs, function ($i) { return is_string($i) && preg_match('/^sha256:[0-9a-f]{64}$/', $i); }));
+    $cons = array_values(array_filter($cons, 'dau_valid_name'));
+    if (!$imgs && !$cons) fail('Nothing selected');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_cleanup_run($imgs, $cons); } finally { dau_lock_release($lock); }
+    dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
+    out($r);
   }
 
   case 'os_abort': {
@@ -2963,7 +3516,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>7bf7fa6c30e38adfc53c39941e677da1c8e9a21f46999f54030f36a947322538</SHA256>
+<SHA256>080951886589c641c48cf1b5291fde6ea8dfb54a1a2a445b38e1c6660b137948</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -2973,6 +3526,8 @@ switch ($action) {
  *   --tick                    cron dispatcher: runs whatever is due (called every 5 minutes)
  *   --check                   refresh Docker/plugin/OS update information, update nothing
  *   --update-docker=a,b       update these containers now (manual: policy, delay and window are bypassed)
+ *   --allow-major=a,b         with --update-docker: also allow a major-version jump for these containers
+ *   --rollback=name           go back to the image before the container's last update
  *   --update-plugins=a.plg,b  update these plugins now (after the usual safety validation)
  *   --os-check                check for an Unraid OS update (notify only)
  *   --os-install[-reboot]     install the available Unraid OS update now (manual; optionally reboot afterwards); --pre-plugins=0|1 --pre-docker=0|1 override the pre-OS steps
@@ -2984,7 +3539,7 @@ require_once '/usr/local/emhttp/plugins/unraid-autoupdater/include/lib.php';
 set_time_limit(0);
 ini_set('display_errors', '0');
 
-$o = getopt('', ['tick', 'check', 'update-docker:', 'update-plugins:', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
+$o = getopt('', ['tick', 'check', 'update-docker:', 'allow-major:', 'rollback:', 'update-plugins:', 'os-check', 'os-install', 'os-install-reboot', 'os-confirm', 'pre-plugins:', 'pre-docker:', 'install', 'uninstall']);
 $list = function ($k) use ($o) { return isset($o[$k]) ? array_values(array_filter(array_map('trim', explode(',', (string)$o[$k])))) : []; };
 
 if (isset($o['install']))   { dau_install(); exit(0); }
@@ -2996,26 +3551,33 @@ $flag = function ($k) use ($o) { return isset($o[$k]) ? ($o[$k] === '1') : null;
 if (isset($o['os-confirm']))        exit(dau_job_main('os_confirm'));
 if (isset($o['os-install']))        exit(dau_job_main('os_install', ['reboot' => false, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
 if (isset($o['os-install-reboot'])) exit(dau_job_main('os_install', ['reboot' => true, 'pre_plugins' => $flag('pre-plugins'), 'pre_docker' => $flag('pre-docker')]));
-if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name'))]));
+if (isset($o['rollback']))       exit(dau_job_main('rollback', ['name' => dau_valid_name((string)$o['rollback']) ? (string)$o['rollback'] : '']));
+if (isset($o['update-docker']))  exit(dau_job_main('docker',  ['names' => array_values(array_filter($list('update-docker'), 'dau_valid_name')), 'allow_major' => array_values(array_filter($list('allow-major'), 'dau_valid_name'))]));
 if (isset($o['update-plugins'])) exit(dau_job_main('plugins', ['names' => array_values(array_filter($list('update-plugins'), 'dau_valid_plg'))]));
 fwrite(STDERR, "usage: run.php --tick | --check | --update-docker=a,b | --update-plugins=a.plg | --os-check | --os-install | --os-install-reboot | --install | --uninstall\n");
 exit(64);
 ]]></INLINE>
-<SHA256>8415e1e5b36040f05fc011abd03ededc374f6c3ccce286f6a5c853a6320b4726</SHA256>
+<SHA256>90a86ecd84ed1fe3a9e90c6d2e3a4da8ca72eee37057e5a1b1750a545f3ba3ed</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.css" Mode="0644">
 <INLINE><![CDATA[/* Unraid AutoUpdater - dark grey UI matching the Unraid theme. Scoped to .dau so it never leaks into the page. */
 .dau{--bg:#1d1b1b;--panel:#222020;--bar:#262626;--field:#181616;--line:#333030;--line-2:#433f3f;--text:#e8e6e6;--muted:#9b9797;--accent:#f15a2c;--accent-hi:#ff7447;--amber:#e8b33c;--ok:#4ec38b;--bad:#ff6b5e;--link:#6f93e0;
+  --hover:#252323;--open:#201e1e;--banner:#2a2620;--banner-bad:#2a2120;--banner-ok:#202823;--pre:#cfcaca;--title:#fff;
   --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--text);font:14px/1.5 var(--font);padding:4px 0 24px;margin:0;text-align:left;position:relative}
 .dau *,.dau *::before,.dau *::after{box-sizing:border-box}
 .dau .grow{flex:1 1 auto;min-width:0}.dau .muted{color:var(--muted)}.dau .sm{font-size:12.5px}.dau b{font-weight:600;color:var(--text)}
 .dau-loading{padding:40px;text-align:center;color:var(--muted)}
 .dau .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+/* themes: dark follows Unraid's own page; light and midnight paint their own background */
+.dau[data-theme=light]{--bg:#f4f4f5;--panel:#fff;--bar:#ececee;--field:#fff;--line:#dcdce0;--line-2:#c3c3c9;--text:#1f1f23;--muted:#62626c;--ok:#16794c;--bad:#c4332a;--amber:#9a6b00;--link:#2457c5;--hover:#f0f0f3;--open:#f7f7f9;--banner:#fff6e0;--banner-bad:#fdeceb;--banner-ok:#e9f6ef;--pre:#33333a;--title:#1f1f23}
+.dau[data-theme=midnight]{--bg:#12151c;--panel:#181c25;--bar:#1e2330;--field:#10131a;--line:#262c3a;--line-2:#333b4d;--text:#e6e9f0;--muted:#8d96aa;--link:#7fa0ee;--hover:#1c2130;--open:#161a24;--banner:#262418;--banner-bad:#2a1d20;--banner-ok:#17261f;--pre:#cdd3e0}
+.dau[data-theme=light],.dau[data-theme=midnight]{background:var(--bg);padding:14px;border-radius:8px}
+.dau[data-theme=light] .badge.ok{border-color:#9bd3b8}.dau[data-theme=light] .badge.bad{border-color:#e6aaa5}.dau[data-theme=light] .badge.warn{border-color:#e4c776}.dau[data-theme=light] .btn.danger{color:var(--bad)!important}
 /* header: logo + title + orange version line */
 .dau .brand{display:flex;align-items:center;gap:16px;min-width:0}
 .dau .logo{width:64px;height:64px;border-radius:14px;flex:none;display:block}
-.dau .dau-name{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:600;line-height:1.15;letter-spacing:0;color:#fff;background:none;border:0;padding:0;margin:0;text-shadow:none}
+.dau .dau-name{font-family:Poppins,"Segoe UI",system-ui,-apple-system,sans-serif;font-size:28px;font-weight:600;line-height:1.15;letter-spacing:0;color:var(--title);background:none;border:0;padding:0;margin:0;text-shadow:none}
 .dau .ver{font-size:15px;font-weight:500;color:var(--accent);margin-top:4px}
 @media (max-width:600px){.dau .brand{gap:12px}.dau .logo{width:48px;height:48px;border-radius:11px}.dau .dau-name{font-size:21px}.dau .ver{font-size:13px}}
 .dau .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -3041,7 +3603,7 @@ exit(64);
 .dau table{width:100%;border-collapse:collapse;background:transparent;margin:0}
 .dau th{background:var(--bar)!important;color:var(--muted)!important;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:8px 10px!important;border-bottom:1px solid var(--line)!important;white-space:nowrap}
 .dau td{padding:8px 10px!important;border-bottom:1px solid var(--line)!important;vertical-align:middle;background:transparent!important;color:var(--text)}
-.dau tr.row:hover td{background:#252323!important}.dau tr.open td{background:#201e1e!important}
+.dau tr.row:hover td{background:var(--hover)!important}.dau tr.open td{background:var(--open)!important}
 .dau td.name .nm{font-weight:600}.dau td.name .img{color:var(--muted);font-size:12px;word-break:break-all}
 .dau .ico{width:26px;height:26px;border-radius:4px;vertical-align:middle;margin-right:8px;background:var(--field)}
 .dau .badge{display:inline-block;border-radius:10px;padding:1px 9px;font-size:11.5px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap}
@@ -3053,14 +3615,14 @@ exit(64);
 .dau .inl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .dau .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:4px 24px}
 .dau .switch{display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0}
-.dau .banner{border:1px solid var(--line-2);border-left:3px solid var(--amber);background:#2a2620;border-radius:4px;padding:8px 12px;margin-bottom:12px}
-.dau .banner.bad{border-left-color:var(--bad);background:#2a2120}.dau .banner.ok{border-left-color:var(--ok);background:#202823}
+.dau .banner{border:1px solid var(--line-2);border-left:3px solid var(--amber);background:var(--banner);border-radius:4px;padding:8px 12px;margin-bottom:12px}
+.dau .banner.bad{border-left-color:var(--bad);background:var(--banner-bad)}.dau .banner.ok{border-left-color:var(--ok);background:var(--banner-ok)}.dau .banner.warn{border-left-color:var(--amber)}
 .dau .progress{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:6px 0}.dau .progress i{display:block;height:100%;background:var(--accent);animation:dau-slide 1.2s infinite linear;width:30%}
 @keyframes dau-slide{0%{margin-left:-30%}100%{margin-left:100%}}
 .dau .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px}
 .dau .modal{background:var(--panel);border:1px solid var(--line-2);border-radius:8px;max-width:760px;width:100%;max-height:88vh;overflow:auto;padding:18px}
 .dau .modal h3{margin:0 0 10px;font-size:16px}.dau .modal .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
-.dau pre.log{background:var(--field);border:1px solid var(--line);border-radius:4px;padding:10px;max-height:460px;overflow:auto;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word;color:#cfcaca}
+.dau pre.log{background:var(--field);border:1px solid var(--line);border-radius:4px;padding:10px;max-height:460px;overflow:auto;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word;color:var(--pre)}
 .dau .toast{position:fixed;right:18px;bottom:18px;background:var(--bar);border:1px solid var(--line-2);border-left:3px solid var(--accent);padding:10px 14px;border-radius:4px;z-index:10001;max-width:420px}
 .dau .toast.bad{border-left-color:var(--bad)}
 .dau a{color:var(--link)}
@@ -3072,8 +3634,52 @@ exit(64);
   .dau table.resp td[data-l]::before{content:attr(data-l);display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
   .dau .drawer td{padding:0!important}
 }
+
+/* statistics chart */
+.dau .chart{display:flex;align-items:stretch;gap:3px;height:72px;margin:6px 0 4px}
+.dau .chart .bar{flex:1 1 0;min-width:0;display:flex;flex-direction:column-reverse;background:var(--field);border-radius:2px;overflow:hidden}
+.dau .chart .bar i{display:block;width:100%}.dau .chart .bar .o{background:var(--ok)}.dau .chart .bar .f{background:var(--bad)}
+.dau .key{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px}.dau .key.o{background:var(--ok)}.dau .key.f{background:var(--bad)}
+.dau .btn.warn{color:var(--amber)!important}
+.dau textarea{resize:vertical}
+.dau input[type=color]{padding:0!important;width:44px;height:32px;min-height:32px;cursor:pointer}
+.dau select[multiple]{width:100%;max-width:320px}
+
+/* phones and small tablets: bigger touch targets, one column, nothing wider than the screen */
+@media (max-width:820px){
+  .dau{padding-bottom:40px}
+  .dau .tabs{margin-left:-4px;margin-right:-4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}.dau .tabs::-webkit-scrollbar{display:none}
+  .dau .tab{padding:10px 12px!important}
+  .dau .head{align-items:flex-start}.dau .head .actions{width:100%}.dau .head .actions .btn{flex:1}
+  .dau .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dau .card .v{font-size:21px;overflow-wrap:anywhere}
+  .dau .tools{flex-direction:column;align-items:stretch}.dau .tools>*{width:100%!important;max-width:none}.dau .tools .grow{display:none}
+  .dau .tools .btn,.dau .tools select,.dau .tools input{min-height:42px!important}
+  .dau button.btn,.dau .btn{padding:9px 14px!important;font-size:14px!important;min-height:40px!important}
+  .dau .btn.sm{padding:7px 11px!important;font-size:13px!important;min-height:36px!important}
+  .dau input[type=text],.dau input[type=number],.dau input[type=time],.dau input[type=url],.dau input[type=password],.dau input[type=search],.dau select,.dau textarea{font-size:16px!important;min-height:42px;width:100%}
+  .dau input[type=number]{width:120px}.dau input[type=time]{width:auto}.dau input[type=color]{width:56px;min-height:42px}
+  .dau input[type=checkbox]{width:20px;height:20px}
+  .dau .switch{min-height:36px;margin:6px 0}
+  .dau .grid2{grid-template-columns:1fr}
+  .dau .inl{gap:8px}
+  .dau .panel{padding:12px}
+  .dau table.resp td.name{padding-top:8px!important}
+  .dau table.resp td:last-child .inl{padding-top:6px}
+  .dau .modal-bg{align-items:flex-end;padding:0}
+  .dau .modal{max-width:none;border-radius:14px 14px 0 0;max-height:92vh;padding:16px 14px 20px}
+  .dau .modal .foot .btn{flex:1}
+  .dau .toast{left:12px;right:12px;bottom:12px;max-width:none}
+  .dau .chart{height:60px;gap:2px}
+  .dau pre.log{max-height:320px}
+}
+@media (max-width:420px){
+  .dau .brand{gap:10px}.dau .logo{width:42px;height:42px;border-radius:10px}.dau .dau-name{font-size:19px}.dau .ver{font-size:12.5px}
+  .dau .cards{gap:8px}.dau .card{padding:10px 11px}
+}
+@media (prefers-reduced-motion:reduce){.dau .progress i{animation:none}}
 ]]></INLINE>
-<SHA256>e19b7f836a06104b0a920b01a58f2440db11f00892be2dd6600ba3b634cb3eb5</SHA256>
+<SHA256>dc0d9411f1eb700354fdc82607caf76328ba20295a40b25bedd11dcb1138d1b7</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/assets/app.js" Mode="0644">
@@ -3082,7 +3688,7 @@ exit(64);
   'use strict';
   var API = '/plugins/unraid-autoupdater/include/api.php';
   var root = document.getElementById('dau');
-  var S = { tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
+  var S = { clean: null, csel: { img: {}, con: {} }, tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var FREQ = [['6h', 'Every 6 hours'], ['12h', 'Every 12 hours'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every two weeks'], ['monthly', 'Monthly']];
   var POL = [['auto', 'Auto update'], ['notify', 'Notify only'], ['ignore', 'Ignore']];
@@ -3091,7 +3697,7 @@ exit(64);
     external: ['Not managed by Unraid', ''], unknown: ['Status unknown', ''], up_to_date: ['Up to date', 'ok'], ignored: ['Ignored', ''], notify_only: ['Update available', 'acc'],
     stopped: ['Skipped: stopped', 'warn'], approval: ['Needs your approval', 'warn'], no_identity: ['Waiting: digest unknown', 'warn'], waiting_delay: ['Waiting for delay', 'warn'],
     retry_wait: ['Retry scheduled', 'warn'], retry_exhausted: ['Retries used up', 'bad'], window_closed: ['Waiting for window', 'warn'], ready: ['Ready to update', 'acc'],
-    blocked: ['Blocked', 'bad'], self: ['This plugin', '']
+    blocked: ['Blocked', 'bad'], self: ['This plugin', ''], pinned: ['Pinned (rolled back)', 'warn'], skipped: ['Version skipped', '']
   };
 
   function h(tag, p) {
@@ -3156,8 +3762,70 @@ exit(64);
     });
   }
 
+  /* ---------- appearance: theme, accent colour, custom CSS ---------- */
+  function applyTheme(ui) {
+    ui = ui || {};
+    root.setAttribute('data-theme', ui.theme || 'dark');
+    var st = document.getElementById('dau-user-css');
+    if (!st) { st = document.createElement('style'); st.id = 'dau-user-css'; document.head.appendChild(st); }
+    var acc = /^#[0-9a-f]{6}$/i.test(ui.accent || '') ? ui.accent : '#f15a2c';
+    st.textContent = '.dau{--accent:' + acc + ';--accent-hi:' + acc + '}\n' + String(ui.css || '').replace(/<\/?style/gi, '');
+  }
+
+  /* ---------- shared actions ---------- */
+  function skipAct(type, name, label, undo) {
+    act(undo ? 'unskip' : 'skip', { type: type, name: name }, undo ? 'Will be offered again: ' + label : 'Skipping this version of ' + label + '. A newer one is announced again.').then(function () { load(); });
+  }
+  function notesModal(type, name, title) {
+    var m = modal('What changed: ' + title);
+    var body = h('pre', { class: 'log' }, 'Loading…'); m.body.appendChild(body); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Close'));
+    api('notes', { type: type, name: name }).then(function (j) {
+      if (j.error) { body.textContent = j.error; return; }
+      body.textContent = j.text || (type === 'docker' ? '' : 'No release notes were published with this update.');
+      if (j.version) m.body.insertBefore(h('p', { class: 'muted' }, 'Version: ' + j.version), body);
+      if (type === 'docker') {
+        if (j.link) { body.textContent = 'This image publishes its notes with the project\'s releases.'; m.body.appendChild(h('p', null, h('a', { href: j.link, target: '_blank', rel: 'noopener noreferrer' }, 'Open the release notes'))); }
+        else if (!j.text) body.textContent = 'This image does not say where its release notes are.';
+      }
+      if (type === 'os') m.body.appendChild(h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes under Tools > Update OS.'));
+    });
+  }
+  function rollbackConfirm(r) {
+    var m = modal('Roll back ' + r.name + '?');
+    m.body.appendChild(h('p', null, 'The container is recreated with the image it used before its last update' + (r.rollback.from || r.rollback.to ? ' (' + (r.rollback.to || '?') + ' → ' + (r.rollback.from || '?') + ')' : '') + '.'));
+    m.body.appendChild(h('p', { class: 'muted' }, 'It restarts briefly. Afterwards it is pinned to that image and the newer version is skipped, so nothing updates it again until you click "Unpin". Data in its appdata folders is not changed, so after a major version jump an older program may not be able to read newer data: restore a backup if that happens.'));
+    var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I understand and want to roll back'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('rollback', [], 'Rollback started', { name: r.name, confirm: '1' }); } }, 'Roll back');
+    cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+
+  /* links from notifications: ?act=update|skip|approve|open&type=docker|plugin|os&name=… */
+  function deepLink() {
+    var q = new URLSearchParams(location.search), a = q.get('act'); if (!a) return;
+    var type = q.get('type') || '', name = q.get('name') || '';
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* ignore */ }
+    if (type === 'os') { S.tab = 'os'; if (a === 'skip') return load('os').then(function () { var m = modal('Skip this Unraid release?'); m.body.appendChild(h('p', null, 'No automatic action is taken for this release. A newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('os', '', 'Unraid OS'); } }, 'Skip')); }); return load('os'); }
+    if (type === 'docker') {
+      S.tab = 'docker';
+      return load('docker').then(function () {
+        if (a === 'update') previewUpdate([name]);
+        else if (a === 'approve') act('approve', { name: name }, 'Approved this image for ' + name).then(function () { load('docker'); });
+        else if (a === 'skip') { var m = modal('Skip this version of ' + name + '?'); m.body.appendChild(h('p', null, 'This image is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('docker', name, name); } }, 'Skip')); }
+      });
+    }
+    if (type === 'plugin') {
+      S.tab = 'plugins';
+      return load('plugins').then(function () {
+        var r = (S.plugins.rows || []).filter(function (x) { return x.name === name || x.file === name; })[0]; if (!r) return;
+        if (a === 'update') confirmPlugins([r.file]);
+        else if (a === 'skip') { var m = modal('Skip this version of ' + r.name + '?'); m.body.appendChild(h('p', null, 'This version is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('plugin', r.file, r.name); } }, 'Skip')); }
+      });
+    }
+  }
+
   /* ---------- shell ---------- */
-  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['settings', 'Settings'], ['activity', 'Activity']];
+  var TABS = [['overview', 'Overview'], ['docker', 'Docker'], ['plugins', 'Plugins'], ['os', 'Unraid OS'], ['cleanup', 'Cleanup'], ['settings', 'Settings'], ['activity', 'Activity']];
   var runBar = h('div');
   function renderRunBar() {
     clear(runBar);
@@ -3181,12 +3849,24 @@ exit(64);
       tabs.appendChild(h('button', { class: 'tab' + (S.tab === t[0] ? ' on' : ''), onclick: function () { S.tab = t[0]; load(t[0]); } }, t[1], n ? h('span', { class: 'n' }, n) : null));
     });
     root.appendChild(tabs);
-    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, settings: vSettings, activity: vActivity }[S.tab]();
+    applyTheme(S.tab === 'settings' && S.draft ? S.draft.ui : S.ov.config.ui);
+    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, settings: vSettings, activity: vActivity }[S.tab]();
     root.appendChild(body);
   }
 
   /* ---------- overview ---------- */
   function card(k, v, s, cls) { return h('div', { class: 'card ' + (cls || '') }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), h('div', { class: 's' }, s || '')); }
+  /* last 30 days: green = updated, red = failed (plain bars; every bar has a text alternative) */
+  function chart(days) {
+    var max = 1; days.forEach(function (d) { max = Math.max(max, d.ok + d.failed); });
+    var box = h('div', { class: 'chart', role: 'img', 'aria-label': 'Updates per day over the last 30 days' });
+    days.forEach(function (d) {
+      var tot = d.ok + d.failed;
+      box.appendChild(h('div', { class: 'bar', title: d.day + ': ' + d.ok + ' updated, ' + d.failed + ' failed' },
+        h('i', { class: 'f', style: 'height:' + (d.failed ? Math.max(4, d.failed / max * 100) : 0) + '%' }), h('i', { class: 'o', style: 'height:' + (d.ok ? Math.max(4, d.ok / max * 100) : 0) + '%' })));
+    });
+    return h('div', null, h('h4', null, 'Updates per day (last 30 days)'), box, h('div', { class: 'inl sm muted' }, h('span', { class: 'key o' }), 'updated', h('span', { class: 'key f' }), 'failed'));
+  }
   function vOverview() {
     var c = S.ov.cards, w = h('div');
     w.appendChild(h('div', { class: 'cards' },
@@ -3200,10 +3880,13 @@ exit(64);
     if (!c.next.length) nx.appendChild(h('div', { class: 'muted' }, 'Nothing is scheduled. Turn on a schedule in Settings, or set a container to "Auto update".'));
     c.next.forEach(function (n) { nx.appendChild(h('div', { class: 'inl' }, h('b', null, n.label), h('span', { class: 'muted' }, n.text + (n.count > 1 || n.label === 'Docker' ? ' · ' + n.count + ' container(s)' : '')), h('span', { class: 'grow' }), h('span', null, n.next ? when(n.next) : '-'))); });
     w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Next scheduled checks'), nx));
+    if (c.queued) w.appendChild(h('div', { class: 'banner' }, c.queued + ' notification(s) are on hold' + (c.quiet_now ? ' during quiet hours and will be sent afterwards.' : ' and will go out with the next run.')));
     var st = S.ov.stats;
     w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Statistics'), h('div', { class: 'grid2' }, ['docker', 'plugin'].map(function (t) {
       var x = (st.by_type || {})[t] || {}; return h('div', null, h('b', null, t === 'docker' ? 'Docker' : 'Plugins'), h('div', { class: 'muted sm' }, (x.ok || 0) + ' updated · ' + (x.failed || 0) + ' failed · average ' + dur(x.avg_duration || 0)));
-    }))));
+    })), chart(st.daily || []), h('div', { class: 'grid2' },
+      h('div', null, h('h4', null, 'Most active'), (st.top || []).length ? (st.top || []).slice(0, 5).map(function (p) { return h('div', { class: 'inl sm' }, h('span', { class: 'grow' }, p.name), h('span', { class: 'muted' }, p.ok + ' ok' + (p.failed ? ' · ' + p.failed + ' failed' : ''))); }) : h('div', { class: 'muted sm' }, 'Nothing recorded yet.')),
+      h('div', null, h('h4', null, 'Most failures'), (st.top_failing || []).length ? st.top_failing.map(function (p) { return h('div', { class: 'inl sm' }, h('span', { class: 'grow' }, p.name), h('span', { class: 'badge bad' }, p.failed + ' failed')); }) : h('div', { class: 'muted sm' }, 'No failures recorded.')))));
     var d = S.ov.discord, cfg = S.ov.config.discord;
     if (cfg.enabled) w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Discord'), h('div', { class: d.invalid || d.last_error ? 'badge bad' : 'badge ok' }, d.invalid ? 'Webhook rejected: save it again' : d.last_error ? 'Last send failed' : 'Connected'), h('span', { class: 'muted sm' }, ' last success: ' + ago(d.last_ok) + (d.last_error ? ' · ' + d.last_error : ''))));
     w.appendChild(h('div', { class: 'muted sm' }, 'Checked: Docker ' + ago(S.ov.checked.docker) + ' · Plugins ' + ago(S.ov.checked.plugins) + ' · OS ' + ago(S.ov.checked.os)));
@@ -3256,14 +3939,20 @@ exit(64);
       tb.appendChild(h('tr', { class: 'row' + (open ? ' open' : '') },
         h('td', null, h('input', { type: 'checkbox', checked: !!S.sel[r.name], onchange: function (e) { S.sel[r.name] = e.target.checked; render(); } })),
         h('td', { class: 'name', 'data-l': 'Container' }, r.icon && /^https?:\/\//.test(r.icon) ? h('img', { class: 'ico', src: r.icon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null, h('span', { class: 'nm' }, r.name), h('div', { class: 'img' }, r.run_state || '')),
-        h('td', { 'data-l': 'Status' }, shortState(r), r.cfg.critical ? h('span', { class: 'badge warn', title: 'Needs manual approval' }, ' critical') : null, r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null),
+        h('td', { 'data-l': 'Status' }, shortState(r), r.cfg.critical ? h('span', { class: 'badge warn', title: 'Needs manual approval' }, ' critical') : null, r.major ? h('div', { class: 'badge warn', title: 'Version ' + (r.major.from || '?') + ' to ' + (r.major.to || '?') }, 'major update held: ' + (r.major.from || '?') + ' → ' + (r.major.to || '?')) : null, r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null),
         h('td', { 'data-l': 'Image' }, h('div', { class: 'img muted sm' }, r.image), r.update === true ? h('div', { class: 'digest' }, (r.local || '').slice(7, 19) + ' → ' + (r.remote || '').slice(7, 19)) : null),
         h('td', { 'data-l': 'Policy' }, r.managed ? polSel(r.cfg.policy, function (v) { act('set_container', { names: [r.name], data: { policy: v } }).then(function () { load('docker'); }); }) : h('span', { class: 'muted' }, '-')),
         h('td', { 'data-l': 'Schedule' }, h('div', { class: 'sm' }, r.schedule_text || 'Default schedule'), h('div', { class: 'muted sm' }, 'Delay: ' + (r.delay_hours ? r.delay_hours + ' h' : 'none'))),
         h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts), r.last.verification ? ' · ' + r.last.verification.result : '')) : h('span', { class: 'muted' }, '-')),
         h('td', null, h('div', { class: 'inl' },
           r.update === true && r.managed ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { previewUpdate([r.name]); } }, 'Update') : null,
+          r.major && r.managed ? h('button', { class: 'btn sm warn', disabled: S.ov.run.running, title: 'Install it although it changes the major version', onclick: function () { previewUpdate([r.name], { allow_major: true }); } }, 'Update anyway') : null,
           r.state === 'approval' ? h('button', { class: 'btn sm', onclick: function () { act('approve', { name: r.name }, 'Approved this image for ' + r.name).then(function () { load('docker'); }); } }, 'Approve') : null,
+          r.update === true && r.managed ? h('button', { class: 'btn sm', onclick: function () { notesModal('docker', r.name, r.name); } }, 'Notes') : null,
+          r.update === true && r.managed && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('docker', r.name, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
+          r.rollback && !r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Go back to the image before the last update', onclick: function () { rollbackConfirm(r); } }, 'Roll back') : null,
+          r.pinned ? h('button', { class: 'btn sm', title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
           h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings')))));
       if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
     });
@@ -3278,14 +3967,18 @@ exit(64);
     var cust = h('input', { type: 'number', min: 0, max: 720, placeholder: 'custom h', style: 'width:90px', value: c.delay_hours !== null && !DELAYS.some(function (d) { return d[0] === c.delay_hours; }) ? c.delay_hours : '' });
     var notify = h('input', { type: 'checkbox', checked: c.notify }), crit = h('input', { type: 'checkbox', checked: c.critical }), bk = h('input', { type: 'checkbox', checked: c.backup });
     var ownCb = h('input', { type: 'checkbox', checked: own });
+    var wm = h('input', { type: 'checkbox', checked: !!c.watch_major });
+    var after = h('select', { multiple: 'multiple', size: Math.min(6, Math.max(3, (S.docker.rows || []).length)), 'aria-label': 'Update after' });
+    (S.docker.rows || []).forEach(function (o) { if (o.name !== r.name) after.appendChild(h('option', { value: o.name, selected: (c.after || []).indexOf(o.name) >= 0 }, o.name)); });
     var sch = schedFields(c.schedule, true);
-    inner.appendChild(h('div', null, h('label', { class: 'switch' }, notify, 'Send notifications for this container'), h('label', { class: 'switch' }, crit, 'Critical: always ask me before updating'), h('label', { class: 'switch' }, bk, 'Back up before updating (needs backups enabled in Settings)')));
+    inner.appendChild(h('div', null, h('label', { class: 'switch' }, notify, 'Send notifications for this container'), h('label', { class: 'switch' }, crit, 'Critical: always ask me before updating'), h('label', { class: 'switch' }, bk, 'Back up before updating (needs backups enabled in Settings)'), h('label', { class: 'switch' }, wm, 'Watch major versions: hold back an update that jumps to a new major version (databases, for example)')));
+    inner.appendChild(h('div', null, h('div', { class: 'fld' }, h('label', null, 'Update after (dependencies)'), after, h('span', { class: 'hint' }, 'Hold ctrl / cmd to pick several. This container is updated only after the selected ones, and is left alone if one of them fails to update.'))));
     inner.appendChild(h('div', null, h('div', { class: 'fld' }, h('label', null, 'Wait after a new image appears'), h('div', { class: 'inl' }, del, cust), h('span', { class: 'hint' }, 'Counted from when this image was first seen, and not restarted by repeated checks.'))));
     inner.appendChild(h('div', null, h('label', { class: 'switch' }, ownCb, 'Use its own schedule'), h('div', { style: own ? '' : 'opacity:.5;pointer-events:none', id: 'own-' + r.name }, sch.el)));
     ownCb.addEventListener('change', function () { var e = inner.querySelector('[id="own-' + r.name + '"]'); e.style.opacity = ownCb.checked ? 1 : .5; e.style.pointerEvents = ownCb.checked ? 'auto' : 'none'; });
     inner.appendChild(h('div', null, h('button', { class: 'btn pri', onclick: function () {
       var d = cust.value !== '' ? parseInt(cust.value, 10) : (del.value === '' ? null : parseInt(del.value, 10));
-      act('set_container', { names: [r.name], data: { notify: notify.checked, critical: crit.checked, backup: bk.checked, delay_hours: d, schedule: ownCb.checked ? sch.get() : null } }, 'Saved ' + r.name).then(function () { S.open[r.name] = false; load('docker'); });
+      act('set_container', { names: [r.name], data: { notify: notify.checked, critical: crit.checked, backup: bk.checked, watch_major: wm.checked, after: Array.prototype.filter.call(after.options, function (o) { return o.selected; }).map(function (o) { return o.value; }), delay_hours: d, schedule: ownCb.checked ? sch.get() : null } }, 'Saved ' + r.name).then(function () { S.open[r.name] = false; load('docker'); });
     } }, 'Save'), ' ', h('button', { class: 'btn', onclick: function () { S.open[r.name] = false; render(); } }, 'Cancel')));
     return inner;
   }
@@ -3301,19 +3994,21 @@ exit(64);
   }
 
   /* ---------- update preview ---------- */
-  function previewUpdate(names) {
+  function previewUpdate(names, opts) {
+    opts = opts || {};
     if (!names.length) { toast('Nothing to update.'); return; }
     api('preview', { names: names.join(',') }).then(function (j) {
       if (j.error) { toast(j.error, true); return; }
       if (!j.rows.length) { toast('None of these containers has an update.'); return; }
       var m = modal('Update ' + j.rows.length + ' container(s)?');
       m.body.appendChild(h('p', { class: 'muted' }, 'Each container is stopped, recreated from its Unraid template with the new image, and started again. Short downtime is expected.' + (j.verify ? ' Afterwards its health is checked.' : '')));
+      if (opts.allow_major) m.body.appendChild(h('div', { class: 'banner' }, 'This installs a different MAJOR version. Back up its data first: databases usually cannot go back to an older version afterwards.'));
       var t = h('table'); t.appendChild(h('thead', null, h('tr', null, h('th', null, 'Container'), h('th', null, 'Current → new'), h('th', null, 'Notes'))));
       var tb = h('tbody'); j.rows.forEach(function (r) {
         tb.appendChild(h('tr', null, h('td', null, r.name, h('div', { class: 'muted sm' }, r.image)), h('td', { class: 'digest' }, r.current.slice(7) + ' → ' + r.new.slice(7)),
           h('td', null, !r.managed ? h('span', { class: 'badge bad' }, 'cannot be updated here') : null, r.critical ? h('span', { class: 'badge warn' }, 'critical') : null, r.backup ? h('span', { class: 'badge' }, 'backup first') : null, 'will restart')));
       }); t.appendChild(tb); m.body.appendChild(t);
-      var go = h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('docker', j.rows.filter(function (r) { return r.managed; }).map(function (r) { return r.name; }), 'Update started'); } }, 'Update now');
+      var go = h('button', { class: 'btn pri', onclick: function () { m.close(); runJob('docker', j.rows.filter(function (r) { return r.managed; }).map(function (r) { return r.name; }), 'Update started', opts.allow_major ? { allow_major: '1' } : null); } }, opts.allow_major ? 'Update anyway' : 'Update now');
       m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
     });
   }
@@ -3351,7 +4046,10 @@ exit(64);
         h('td', { 'data-l': 'Status' }, h('span', { class: 'badge ' + st[1], title: r.reason }, st[0]), r.eta ? h('div', { class: 'muted sm' }, 'until ' + when(r.eta)) : null, r.state === 'blocked' ? h('div', { class: 'muted sm' }, r.reason) : null),
         h('td', { 'data-l': 'Policy' }, r.self ? h('span', { class: 'muted' }, 'manual only') : polSel(r.policy, function (v) { act('set_plugin', { files: [r.file], data: { policy: v } }).then(function () { load('plugins'); }); })),
         h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts))) : '-'),
-        h('td', null, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null)));
+        h('td', null, h('div', { class: 'inl' }, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null,
+          r.latest ? h('button', { class: 'btn sm', onclick: function () { notesModal('plugin', r.file, r.name); } }, 'Notes') : null,
+          r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null))));
     });
     w.appendChild(t);
     return w;
@@ -3368,7 +4066,7 @@ exit(64);
 
   /* ---------- OS ---------- */
   var OSSTATE = { up_to_date: ['Up to date', 'ok'], notify_only: ['Notify only', ''], not_confirmed: ['Not confirmed', 'warn'], prerelease: ['Pre-release: manual only', 'warn'], blocked: ['Blocked', 'bad'],
-    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
+    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], skipped: ['Release skipped', ''], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
   function confirmOsInstall(reboot) {
     var o = S.os.os, m = modal(reboot ? 'Install Unraid ' + o.available + ' and reboot now?' : 'Install Unraid ' + o.available + ' now?');
     m.body.appendChild(h('p', null, 'Installed: ' + (S.os.installed || '?') + '  →  ' + o.available));
@@ -3424,6 +4122,7 @@ exit(64);
         h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes.')));
     }
     var busy = S.ov.run.running, acts = h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update'));
+    if (o.available && !o.pending) acts.appendChild(S.os.skipped ? h('button', { class: 'btn', onclick: function () { skipAct('os', '', 'Unraid OS', true); } }, 'Un-skip this release') : h('button', { class: 'btn', title: 'No automatic action for this release; a newer one is announced again', onclick: function () { skipAct('os', '', 'Unraid OS'); } }, 'Skip this release'));
     if (o.available && !o.pending) {
       acts.appendChild(h('button', { class: 'btn', disabled: busy, onclick: function () { confirmOsInstall(false); } }, 'Install update…'));
       acts.appendChild(h('button', { class: 'btn danger', disabled: busy, onclick: function () { confirmOsInstall(true); } }, 'Install and reboot…'));
@@ -3433,19 +4132,75 @@ exit(64);
     return w;
   }
 
+  /* ---------- Cleanup ---------- */
+  function bytes(b) { b = +b || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB'; }
+  function vCleanup() {
+    var w = h('div'), c = S.clean;
+    w.appendChild(h('div', { class: 'banner' }, 'Finds images that no container uses and leftover stopped containers that Unraid did not create. Nothing is removed until you select it and confirm. Volumes and appdata are never touched.'));
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', disabled: S.ov.run.running, onclick: function () {
+      api('cleanup_scan').then(function (j) {
+        if (j.error || j.ok === false) { toast(j.error || 'Scan failed', true); return; }
+        S.clean = j; S.csel = { img: {}, con: {} };
+        j.images.forEach(function (i) { if (i.dangling) S.csel.img[i.id] = true; });
+        render();
+      });
+    } }, c ? 'Scan again' : 'Scan now')));
+    if (!c) return w;
+    var selImg = c.images.filter(function (i) { return S.csel.img[i.id]; }), selCon = c.containers.filter(function (x) { return S.csel.con[x.name]; });
+    var total = 0; selImg.forEach(function (i) { total += i.size; }); selCon.forEach(function (x) { total += x.size; });
+    w.appendChild(h('div', { class: 'cards' }, card('Unused images', c.images.length, bytes(c.images.reduce(function (a, i) { return a + i.size; }, 0))), card('Leftover containers', c.containers.length, bytes(c.containers.reduce(function (a, x) { return a + x.size; }, 0))),
+      card('Selected', bytes(total), selImg.length + ' image(s) · ' + selCon.length + ' container(s)', total ? 'hot' : '')));
+    var t = h('table', { class: 'resp' }); t.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Image'), h('th', null, 'Kind'), h('th', null, 'Size'), h('th', null, 'Created'))));
+    var tb = h('tbody'); t.appendChild(tb);
+    if (!c.images.length) tb.appendChild(h('tr', null, h('td', { colspan: 5, class: 'muted' }, 'No unused images.')));
+    c.images.forEach(function (i) {
+      tb.appendChild(h('tr', { class: 'row' }, h('td', null, h('input', { type: 'checkbox', checked: !!S.csel.img[i.id], onchange: function (e) { S.csel.img[i.id] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Image' }, h('span', { class: 'nm' }, i.tags.length ? i.tags.join(', ') : '(no name)'), h('div', { class: 'img' }, i.short)),
+        h('td', { 'data-l': 'Kind' }, h('span', { class: 'badge ' + (i.dangling ? 'ok' : 'warn') }, i.dangling ? 'dangling' : 'tagged, unused')), h('td', { 'data-l': 'Size' }, bytes(i.size)), h('td', { 'data-l': 'Created' }, i.created)));
+    });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Unused images'), t, h('p', { class: 'muted sm' }, 'Dangling images have no name. "Tagged, unused" ones were pulled once and no container uses them now: check that you do not need one before selecting it. Images that share layers free less than the sizes added up.')));
+    var t2 = h('table', { class: 'resp' }); t2.appendChild(h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Container'), h('th', null, 'State'), h('th', null, 'Size'), h('th', null, 'Stopped'))));
+    var tb2 = h('tbody'); t2.appendChild(tb2);
+    if (!c.containers.length) tb2.appendChild(h('tr', null, h('td', { colspan: 5, class: 'muted' }, 'No leftover containers.')));
+    c.containers.forEach(function (x) {
+      tb2.appendChild(h('tr', { class: 'row' }, h('td', null, h('input', { type: 'checkbox', checked: !!S.csel.con[x.name], onchange: function (e) { S.csel.con[x.name] = e.target.checked; render(); } })),
+        h('td', { class: 'name', 'data-l': 'Container' }, h('span', { class: 'nm' }, x.name), h('div', { class: 'img' }, x.image)), h('td', { 'data-l': 'State' }, x.state), h('td', { 'data-l': 'Size' }, bytes(x.size)), h('td', { 'data-l': 'Stopped' }, x.finished ? x.finished.slice(0, 10) : '-')));
+    });
+    w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Leftover containers'), t2, h('p', { class: 'muted sm' }, 'Stopped containers that were not created from an Unraid template and are not part of a compose project. A running container is never listed.')));
+    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn danger', disabled: S.ov.run.running || (!selImg.length && !selCon.length), onclick: function () {
+      var m = modal('Remove ' + (selImg.length + selCon.length) + ' item(s)?');
+      m.body.appendChild(h('p', null, 'About ' + bytes(total) + ' will be freed. This cannot be undone: removed images have to be downloaded again, removed containers are gone.'));
+      selCon.forEach(function (x) { m.body.appendChild(h('div', null, 'container ', h('b', null, x.name))); });
+      selImg.slice(0, 25).forEach(function (i) { m.body.appendChild(h('div', null, 'image ', h('b', null, i.tags.length ? i.tags.join(', ') : i.short), ' ', h('span', { class: 'muted' }, bytes(i.size)))); });
+      if (selImg.length > 25) m.body.appendChild(h('div', { class: 'muted' }, '… and ' + (selImg.length - 25) + ' more'));
+      var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I want to remove these'));
+      var go = h('button', { class: 'btn danger', disabled: true, onclick: function () {
+        m.close();
+        act('cleanup_run', { confirm: '1', images: selImg.map(function (i) { return i.id; }), containers: selCon.map(function (x) { return x.name; }) }).then(function (j) {
+          if (j.error) return;
+          toast('Removed ' + (j.removed || []).length + ' item(s), freed about ' + (j.freed_text || '0 kB') + (j.failed && j.failed.length ? '. ' + j.failed.length + ' could not be removed.' : '.'), !!(j.failed && j.failed.length));
+          api('cleanup_scan').then(function (n) { if (n.ok) { S.clean = n; S.csel = { img: {}, con: {} }; } render(); });
+        });
+      } }, 'Remove');
+      cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+      m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+    } }, 'Remove selected…')));
+    return w;
+  }
+
   /* ---------- Settings ---------- */
   function path(o, p) { var a = p.split('.'), x = o; for (var i = 0; i < a.length - 1; i++) x = x[a[i]]; return [x, a[a.length - 1]]; }
   function fSwitch(label, p, hint) { var r = path(S.draft, p); var cb = h('input', { type: 'checkbox', checked: !!r[0][r[1]], onchange: function () { r[0][r[1]] = cb.checked; } }); return h('div', null, h('label', { class: 'switch' }, cb, label), hint ? h('div', { class: 'hint muted sm' }, hint) : null); }
   function fNum(label, p, min, max, hint, unit) { var r = path(S.draft, p); var i = h('input', { type: 'number', min: min, max: max, value: r[0][r[1]], style: 'width:90px', onchange: function () { r[0][r[1]] = Math.max(min, Math.min(max, parseInt(i.value, 10) || 0)); } }); return h('div', { class: 'fld' }, h('label', null, label), h('div', { class: 'inl' }, i, unit ? h('span', { class: 'muted' }, unit) : null), hint ? h('span', { class: 'hint' }, hint) : null); }
   function fText(label, p, hint, ph) { var r = path(S.draft, p); var i = h('input', { type: 'text', value: r[0][r[1]] || '', placeholder: ph || '', style: 'width:100%;max-width:420px', onchange: function () { r[0][r[1]] = i.value; } }); return h('div', { class: 'fld' }, h('label', null, label), i, hint ? h('span', { class: 'hint' }, hint) : null); }
   function fSched(label, base) { var o = path(S.draft, base)[0][base.split('.').pop()]; var s = schedFields(o); var upd = function () { var v = s.get(); o.frequency = v.frequency; o.time = v.time; o.weekday = v.weekday; o.monthday = v.monthday; }; s.el.addEventListener('change', upd); s.el.addEventListener('input', upd); return h('div', { class: 'fld' }, h('label', null, label), s.el); }
-  function fWindow(label, base) {
+  function fWindow(label, base, swLabel, hintText) {
     var w = path(S.draft, base)[0][base.split('.').pop()];
     var en = h('input', { type: 'checkbox', checked: !!w.enabled, onchange: function () { w.enabled = en.checked; box.style.opacity = en.checked ? 1 : .5; } });
     var st = h('input', { type: 'time', value: w.start, onchange: function () { w.start = st.value; } }), ed = h('input', { type: 'time', value: w.end, onchange: function () { w.end = ed.value; } });
     var days = h('div', { class: 'inl' }); DAYS.forEach(function (d, i) { var cb = h('input', { type: 'checkbox', checked: w.days.indexOf(i) >= 0, onchange: function () { var s = w.days.filter(function (x) { return x !== i; }); if (cb.checked) s.push(i); w.days = s.sort(); } }); days.appendChild(h('label', { class: 'switch' }, cb, d.slice(0, 3))); });
     var box = h('div', { style: 'opacity:' + (w.enabled ? 1 : .5) }, h('div', { class: 'inl' }, 'from', st, 'to', ed), days);
-    return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, 'Only update inside this window'), box, h('span', { class: 'hint' }, 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
+    return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, swLabel || 'Only update inside this window'), box, h('span', { class: 'hint' }, hintText || 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
   }
   function section(title, kids) { return h('div', { class: 'panel' }, h('h3', null, title), kids); }
   function osModeField() {
@@ -3499,6 +4254,8 @@ exit(64);
     var bat = h('select', { onchange: function () { d.discord.batching = bat.value; } }, h('option', { value: 'combine', selected: d.discord.batching === 'combine' }, 'Combine into few messages'), h('option', { value: 'separate', selected: d.discord.batching === 'separate' }, 'One message per notification'));
     w.appendChild(section('Discord notifications', h('div', null,
       fSwitch('Send to Discord', 'discord.enabled'),
+      fText('Address of this server\'s web GUI (optional)', 'discord.ui_url', 'Used for the "Update now / Skip this version" links in messages. Empty = http://' + (S.ov.name ? '<server name>' : '') + '. Example: http://192.168.50.50', 'http://192.168.50.50'),
+      fSwitch('Add "Update now / Skip this version" links to update-available messages', 'discord.action_links', 'Discord webhooks cannot show real buttons, so these are links that open this plugin; they need your Unraid login and ask for confirmation.'),
       fText('Icon image URL (optional)', 'discord.icon_url', 'https image used as the webhook avatar and in the message header. Empty = the bundled orange-on-grey icon: ' + (dc.icon_default || ''), 'https://…'),
       h('div', { class: 'fld' }, h('label', null, 'Webhook URL'), url, h('span', { class: 'hint' }, 'Stored on the server only in a separate file and never shown again. Messages never contain secrets.')),
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: function () { act('test_discord', { url: url.value }).then(function (j) { if (j.ok) toast('Test message sent.'); else if (!j.error) toast('Test failed', true); }); } }, 'Send test message'),
@@ -3507,6 +4264,13 @@ exit(64);
         h('div', null, h('h4', null, 'Message types'), ty('available', 'Update available'), ty('success', 'Update succeeded'), ty('failed', 'Update failed / retries'), ty('summary', 'Run summary'))),
       h('div', { class: 'fld' }, h('label', null, 'Batching'), bat), fNum('Maximum messages per run', 'discord.max_messages', 1, 20))));
     w.appendChild(section('Unraid notifications', h('div', null, fSwitch('Docker events', 'notify_unraid.docker'), fSwitch('Plugin events', 'notify_unraid.plugins'), fSwitch('OS events', 'notify_unraid.os'))));
+    w.appendChild(section('Quiet hours', h('div', null, h('div', { class: 'grid2' }, h('div', null, fWindow('Hold notifications during these hours', 'quiet', 'Enable quiet hours', 'Discord and Unraid notifications wait and are sent together when quiet hours end. Updates themselves still run on their schedule. A window like 23:00-07:00 crosses midnight.')),
+      h('div', null, fSwitch('Let urgent messages through', 'quiet.urgent', 'Failures, and an OS update that needs a reboot, are sent right away.'))))));
+    w.appendChild(section('Appearance', h('div', { class: 'grid2' },
+      h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
+        (function () { var c = h('input', { type: 'color', value: d.ui.accent || '#f15a2c', 'aria-label': 'Accent colour', onchange: function () { d.ui.accent = c.value; applyTheme(d.ui); } }); return h('div', { class: 'fld' }, h('label', null, 'Accent colour'), h('div', { class: 'inl' }, c, h('button', { class: 'btn sm', onclick: function () { d.ui.accent = '#f15a2c'; render(); } }, 'Reset'))); })(),
+        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
+      h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
       h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'unraid-autoupdater-config.json' }, 'Export settings'),
         h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
@@ -3546,10 +4310,10 @@ exit(64);
     return w;
   }
 
-  load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); });
+  load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>37c0edf56040eb9d363bdcec4ee7bb13dba433368eb9e134dd5901da8bdead1e</SHA256>
+<SHA256>878498b0a7dec41c31adbf204b01d24e4a3da549cc1d12ec514e16f6fed5129a</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

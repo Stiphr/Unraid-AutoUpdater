@@ -149,3 +149,15 @@ Activity tab shows history and the log. *Docker service is not running* banner: 
 ## Removal
 
 Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/unraid-autoupdater/` and can be deleted manually.
+
+
+## Beta features
+
+- **Update after**: in a container's settings, pick the containers that must be updated first. If one fails, its dependants are skipped.
+- **Skip this version**: Docker, Plugins and Unraid OS rows have *Skip*; *Un-skip* undoes it. A newer version clears the skip.
+- **Discord action links**: Discord webhooks cannot show real buttons, so messages contain links (Update now / Skip). They open the web GUI and need your Unraid login; set the web GUI address in Settings.
+- **Quiet hours**: non-urgent notifications are held and sent by the next run after the window ends.
+- **Rollback**: *Roll back* on a container restores the previous image. The container is then pinned and that new version skipped until you press *Unpin*. Check that your data is compatible with the older version.
+- **Major-version guard**: enable *watch major* for a container (e.g. postgres). A major jump is held; use *Update anyway* to allow it.
+- **Cleanup**: lists unused images and leftover containers with sizes. Nothing is removed until you select and confirm. Volumes and appdata are never touched.
+- **Appearance**: dark, midnight or light theme, accent colour, custom CSS and a switch for the Dashboard tile.

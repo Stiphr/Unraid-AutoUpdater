@@ -259,7 +259,7 @@ function dau_valid_plg($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A
 
 } // DAU_LIB_LOADED
 
-foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'workflow', 'jobs'] as $__m) {
+foreach (['config', 'schedule', 'state', 'discord', 'backup', 'docker', 'plugins', 'os', 'workflow', 'extras', 'jobs'] as $__m) {
   $__f = __DIR__ . '/' . $__m . '.php';
   if (is_file($__f)) require_once $__f;
 }

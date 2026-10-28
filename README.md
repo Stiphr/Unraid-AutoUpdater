@@ -34,6 +34,16 @@ Coming from *Docker Auto Update* (`docker.autoupdate`)? Just update it from the 
 
 By default nothing is changed automatically: Docker auto-updates are off until a container is set to *Auto update*, and OS updates are notify-only.
 
+## Beta
+
+New features are tested on the `beta` branch first. To try it, install this instead (to go back, install the stable URL above):
+
+```
+https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/beta/unraid-autoupdater.plg
+```
+
+Beta adds dependency order, skip-this-version, Discord action links, quiet hours, 30-day statistics, a Dashboard tile, one-click container rollback, a major-version guard, release notes, a Cleanup tab, a mobile layout and themes / custom CSS. See the [changelog](CHANGES.txt).
+
 ## More information
 
 - [Detailed guide](docs/USAGE.md) – defaults, policies, Docker and OS update steps, backups, Discord, scheduling, data, limitations, troubleshooting, removal

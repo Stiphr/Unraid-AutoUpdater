@@ -1,3 +1,15 @@
+###2026.10.31b1
+- BETA. Dependency order: containers can be set to update after others (database before app); a dependant is skipped if its dependency failed.
+- Skip this version for a container, plugin or the OS release; it comes back with the next version.
+- Discord action links (Update now / Skip) straight from the notification; set the web GUI address in Settings.
+- Quiet hours: non-urgent notifications are held and sent after the window (failures and rollbacks can still go out).
+- Update statistics over time: 30-day chart, most active and most failing.
+- Dashboard tile with the number of waiting updates (can be turned off in Appearance).
+- One-click rollback for containers to the previous image; the container is pinned and that version skipped until you unpin.
+- Major-version guard for selected containers (e.g. postgres): the update is held until you choose Update anyway.
+- Release notes for plugins and Unraid OS in the same place, and what changed in Discord.
+- Cleanup tab: unused images and leftover containers with a size preview; nothing is removed without confirmation.
+- Mobile friendly layout, light/midnight themes, accent colour and custom CSS.
 ###2026.10.30a
 - Dashboard header fix: removed the grey box behind the title and made it less bold (the title no longer picks up Unraid's own heading styles).
 - README rewritten to be short: description, features, dashboard screenshot, disclaimer, install and update. Details moved to docs/USAGE.md.

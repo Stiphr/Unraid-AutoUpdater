@@ -111,15 +111,17 @@ function dau_docker_track(array &$st, array $containers, $now) {
       if (!is_array($rec) || ($rec['remote'] ?? '') !== $c['remote']) {
         $st['docker']['seen'][$n] = ['remote' => $c['remote'], 'local' => $c['local'], 'first' => $now, 'last' => $now];
         unset($st['docker']['retry'][$n], $st['docker']['deferred'][$n]);       // a different image: old retry/approval state is void
+        if (($st['docker']['skipped'][$n] ?? '') !== $c['remote']) unset($st['docker']['skipped'][$n]);
+        unset($st['docker']['major'][$n]);
         if (($st['docker']['approved'][$n] ?? '') !== $c['remote']) unset($st['docker']['approved'][$n]);
       } else {
         $st['docker']['seen'][$n]['last'] = $now;
       }
     } elseif ($c['update'] === false) {
-      foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) unset($st['docker'][$k][$n]);
+      foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'major'] as $k) unset($st['docker'][$k][$n]);
     }
   }
-  foreach (['seen', 'retry', 'approved', 'notified', 'deferred'] as $k) {
+  foreach (['seen', 'retry', 'approved', 'notified', 'deferred', 'skipped', 'rollback', 'pinned', 'major'] as $k) {
     foreach (array_keys($st['docker'][$k]) as $n) if (!isset($names[$n])) unset($st['docker'][$k][$n]);
   }
 }
@@ -128,7 +130,7 @@ function dau_docker_track(array &$st, array $containers, $now) {
 
 /**
  * Decide what may happen to one container right now.
- * state: external | unknown | up_to_date | ignored | notify_only | stopped | approval | no_identity |
+ * state: external | unknown | up_to_date | pinned | skipped | ignored | notify_only | stopped | approval | no_identity |
  *        waiting_delay | retry_wait | retry_exhausted | window_closed | ready
  * $manual = the user asked for it explicitly: policy, delay, approval and window are overridden (never "external").
  */
@@ -140,6 +142,8 @@ function dau_docker_eval(array $cfg, array $st, array $c, $now, $manual = false)
   if ($c['update'] === null) return ['state' => 'unknown', 'reason' => 'Update status not available yet. Run a check.'] + $r;
   if ($c['update'] === false) return ['state' => 'up_to_date', 'reason' => ''] + $r;
   if ($manual) return $r;
+  if (isset($st['docker']['pinned'][$c['name']])) return ['state' => 'pinned', 'reason' => 'Pinned to the previous image after a rollback. Unpin it on the Docker tab to resume updates.'] + $r;
+  if ($c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote']) return ['state' => 'skipped', 'reason' => 'You chose to skip this version. It is ignored until a newer one appears.'] + $r;
   if ($cc['policy'] === 'ignore') return ['state' => 'ignored', 'reason' => 'Policy is "ignore": no automatic action.'] + $r;
   if ($cc['policy'] === 'notify') return ['state' => 'notify_only', 'reason' => 'Policy is "notify only".'] + $r;
   if (!empty($g['skip_stopped']) && $c['state'] !== 'running') return ['state' => 'stopped', 'reason' => 'Container is not running and "skip stopped containers" is on.'] + $r;
@@ -323,6 +327,16 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $out['new']['id'] = dau_short_id($newId);
   if ($newId === $oldId) { $out['result'] = 'unchanged'; $out['stage'] = ''; return $done(); }   // already running the newest image: do not restart it for nothing
 
+  /* versions of both images; a jump to a new major version is held back for containers marked "watch major versions" */
+  $verFrom = dau_image_version($oldId); $verTo = dau_image_version($newId);
+  $out['versions'] = ['from' => $verFrom['version'], 'to' => $verTo['version']];
+  if (!empty($cc['watch_major']) && dau_major_jump($verFrom, $verTo) && empty($c['allow_major'])) {
+    $out['stage'] = 'impact'; $out['result'] = 'blocked'; $out['major'] = ['from' => $verFrom['version'], 'to' => $verTo['version']];
+    $out['error'] = 'Major version change (' . $verFrom['version'] . ' -> ' . $verTo['version'] . '): the update was not applied. The new image is downloaded, the container was not touched.';
+    $out['next'] = 'Read the release notes and back up first (databases often need a migration). Then use "Update anyway" on the Docker tab.';
+    return $done();
+  }
+
   /* apply with Unraid's own routine (keeps the template, network and extra settings). From here on, never auto-retry. */
   $out['stage'] = 'apply';
   $a = dau_run([DAU_PHP, $script, rawurlencode($name)], DAU_APPLY_TIMEOUT);
@@ -338,6 +352,8 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $prevRef = $image . ($out['prev']['digest'] ? '@' . $out['prev']['digest'] : '');
   if ($v['ok'] || $v['result'] === 'timeout') {
     $out['result'] = 'updated'; $out['stage'] = '';
+    /* how to go back: the digest reference of the image that was running before */
+    $out['rollback'] = is_array($rd) && !empty($rd[0]) && dau_valid_image_ref($rd[0]) ? ['ref' => $rd[0], 'prev_id' => $oldId, 'prev_digest' => $out['prev']['digest'], 'new_digest' => (string)$c['remote'], 'image' => $image, 'at' => dau_now(), 'from' => $verFrom['version'], 'to' => $verTo['version']] : null;
     if ($v['result'] === 'timeout') $out['next'] = 'Check the container\'s logs; it may simply need longer to become healthy. Increase the verification timeout in Settings if this is normal.';
     /* targeted cleanup: only the replaced image, never forced, so Docker itself refuses if anything still uses it */
     if (!empty($g['cleanup']) && $v['ok'] && $oldId !== '' && $oldId !== $newId) {
