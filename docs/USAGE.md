@@ -161,3 +161,11 @@ Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins
 - **Major-version guard**: enable *watch major* for a container (e.g. postgres). A major jump is held; use *Update anyway* to allow it.
 - **Cleanup**: lists unused images and leftover containers with sizes. Nothing is removed until you select and confirm. Volumes and appdata are never touched.
 - **Appearance**: dark, midnight or light theme, accent colour, custom CSS and a switch for the Dashboard tile.
+
+### Cleanup: appdata, quarantine, templates
+
+- **Appdata folders** lists folders in the appdata share (default `/mnt/user/appdata`, change it in Settings > Cleanup) that no container maps. Stopped containers count as users. A container that maps a whole parent folder such as `/mnt/user` is listed but does not block anything. Symbolic links and separate mount points are never offered. If Docker is not running nothing is offered.
+- **Safe mode** (default): selected folders are moved into a hidden `.unraid-autoupdater-quarantine` folder inside the same share, so no space is freed until you delete them there. With Safe mode off you can delete for good after a confirmation. *Preview* shows what would happen without changing anything.
+- **Quarantine**: *Restore* puts a folder back and never overwrites; if the place is taken you can restore it as `name-restored`. *Delete* removes it for good.
+- **Saved templates**: Unraid keeps a template for every container you ever created. *Archive* saves a verified backup in the plugin's own folder and removes the template; *Restore* brings it back while the name is free.
+- Not included (compared with Appdata Cleanup Plus): ZFS dataset handling, purge timers, exporting backups and translations.

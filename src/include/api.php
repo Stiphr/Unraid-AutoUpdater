@@ -10,7 +10,7 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
@@ -117,6 +117,9 @@ switch ($action) {
          'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
   }
   case 'cleanup_scan': { out(dau_cleanup_scan()); }
+  case 'appdata_scan': { out(dau_appdata_scan()); }
+  case 'quarantine_list': { out(dau_quarantine_list()); }
+  case 'tpl_scan': { out(dau_tpl_scan()); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
   case 'status': { out(['run' => dau_run_info()]); }
@@ -255,6 +258,38 @@ switch ($action) {
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
     try { $r = dau_cleanup_run($imgs, $cons); } finally { dau_lock_release($lock); }
     dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
+    out($r);
+  }
+
+  case 'appdata_run': {
+    $ids = array_values(array_filter($json('ids') ?? [], function ($i) { return is_string($i) && preg_match('/^\d:[^\/\x00-\x1F]{1,255}$/', $i); }));
+    $dry = ($_POST['dry'] ?? '') === '1';
+    if (!$dry && ($_POST['confirm'] ?? '') !== '1') fail('This needs an explicit confirmation.');
+    if (!$ids) fail('Nothing selected');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_appdata_run($ids, (string)($_POST['mode'] ?? 'quarantine'), $dry, ($_POST['confirm_delete'] ?? '') === '1'); } finally { dau_lock_release($lock); }
+    if (!$dry && !empty($r['ok'])) dau_log('info', 'cleanup', '-', $r['mode'] === 'delete' ? 'appdata delete' : 'appdata quarantine', empty($r['failed']) ? 'ok' : 'partial', count($r['done']) . ' folder(s)' . ($r['mode'] === 'delete' ? ', ' . $r['freed_text'] : ''));
+    out($r);
+  }
+
+  case 'quarantine_act': {
+    $act = (string)($_POST['act'] ?? ''); $id = (string)($_POST['id'] ?? '');
+    if (!in_array($act, ['restore', 'purge'], true) || !preg_match('/^[0-9a-f]{12}$/', $id)) fail('Bad request');
+    if (($_POST['confirm'] ?? '') !== '1') fail('This needs an explicit confirmation.');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_quarantine_act($id, $act, ($_POST['suffix'] ?? '') === '1'); } finally { dau_lock_release($lock); }
+    if (!empty($r['ok'])) dau_log('info', 'cleanup', '-', 'quarantine ' . $act, 'ok', $id);
+    out($r);
+  }
+
+  case 'tpl_act': {
+    $act = (string)($_POST['act'] ?? '');
+    if (!in_array($act, ['archive', 'restore', 'drop'], true)) fail('Bad request');
+    if (($_POST['confirm'] ?? '') !== '1') fail('This needs an explicit confirmation.');
+    $name = (string)($_POST['name'] ?? ''); if ($act === 'archive' && !dau_valid_name($name)) fail('Bad name');
+    $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
+    try { $r = dau_tpl_act($act, $name, (string)($_POST['file'] ?? '')); } finally { dau_lock_release($lock); }
+    if (!empty($r['ok'])) dau_log('info', 'cleanup', $name, 'template ' . $act, 'ok', (string)($_POST['file'] ?? ''));
     out($r);
   }
 

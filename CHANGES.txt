@@ -1,3 +1,9 @@
+###2026.10.31b2
+- BETA. Cleanup tab now has four parts: Appdata folders, Quarantine, Images and containers, Saved templates.
+- Appdata folders: finds folders in your appdata share that no container (running or stopped) uses, with size, age and a preview. Safe mode (default) moves them to a hidden quarantine folder; deleting for good needs Safe mode off and a confirmation. Symbolic links, separate mount points and folders any container maps are never offered.
+- Quarantine: restore (never overwrites; offers a "-restored" name when the place is taken) or delete for good.
+- Saved templates: archive the saved template of a removed container with a verified backup, and restore it later.
+- New Settings > Cleanup (appdata): which folders to check and Safe mode.
 ###2026.10.31b1
 - BETA. Dependency order: containers can be set to update after others (database before app); a dependant is skipped if its dependency failed.
 - Skip this version for a container, plugin or the OS release; it comes back with the next version.
