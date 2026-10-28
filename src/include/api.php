@@ -118,7 +118,10 @@ switch ($action) {
   case 'widget': {       // light: state files only, no Docker call (used by the Dashboard tile)
     $st = dau_state_load(); $cfg = dau_load_config();
     out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
-         'os' => $st['os']['available'], 'os_installed' => dau_os_version(), 'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
+         'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
+         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+         'next' => (function () use ($cfg, $st) { $t = array_filter(array_column(api_next_runs($cfg, $st), 'next')); return $t ? min($t) : null; })(),
+         'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
          'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
   }
   case 'cleanup_scan': { out(dau_cleanup_scan()); }
@@ -264,15 +267,16 @@ switch ($action) {
   }
 
   case 'cleanup_run': {
-    if (($_POST['confirm'] ?? '') !== '1') fail('Cleanup needs an explicit confirmation.');
+    if (($_POST['confirm'] ?? '') !== '1' && ($_POST['dry'] ?? '') !== '1') fail('Cleanup needs an explicit confirmation.');
     $imgs = $json('images') ?? []; $cons = $json('containers') ?? []; $vols = array_values(array_filter($json('volumes') ?? [], 'dau_valid_name'));
     $imgs = array_values(array_filter($imgs, function ($i) { return is_string($i) && preg_match('/^sha256:[0-9a-f]{64}$/', $i); }));
     $cons = array_values(array_filter($cons, 'dau_valid_name'));
     if (!$imgs && !$cons && !$vols) fail('Nothing selected');
+    $dry = ($_POST['dry'] ?? '') === '1';
     $lock = dau_lock_try(); if (!$lock) fail('Another job is running.', 409);
-    try { $r = dau_cleanup_run($imgs, $cons, $vols); } finally { dau_lock_release($lock); }
-    dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
-    if (!empty($r['removed'])) api_clean_hist(count($r['removed']) . ' image / container / volume item(s) removed', 'cleaned', 'Freed about ' . ($r['freed_text'] ?? ''));
+    try { $r = dau_cleanup_run($imgs, $cons, $vols, $dry); } finally { dau_lock_release($lock); }
+    if (!$dry) dau_log('info', 'cleanup', '-', 'remove', empty($r['failed']) ? 'ok' : 'partial', count($r['removed'] ?? []) . ' removed, ' . ($r['freed_text'] ?? '0'));
+    if (!$dry && !empty($r['removed'])) api_clean_hist(count($r['removed']) . ' image / container / volume item(s) removed', 'cleaned', 'Freed about ' . ($r['freed_text'] ?? ''));
     out($r);
   }
 

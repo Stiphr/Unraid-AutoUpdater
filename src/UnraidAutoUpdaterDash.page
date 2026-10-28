@@ -1,7 +1,8 @@
 Menu="Dashboard:9"
 ---
 <?php
-/* Dashboard tile: how many updates are waiting. Reads only the plugin's own state, never calls Docker. Can be switched off in Settings > Appearance. */
+/* Dashboard tile: what is waiting, whether anything needs attention, when it last ran and runs next. Reads only the plugin's own state, never calls Docker.
+   The Unraid OS version is deliberately not shown here. Can be switched off in Settings > Appearance. */
 try {
   $dau_on = true;
   $dau_cf = @json_decode((string)@file_get_contents('/boot/config/plugins/unraid-autoupdater/config.json'), true);
@@ -11,28 +12,34 @@ try {
     $mytiles['unraid-autoupdater']['column2'] = <<<EOT
 <tbody title="Unraid AutoUpdater" id="dau-tile">
 <tr><td>
-<i class="fa fa-refresh f32"></i>
+<img id="dau-w-logo" class="img" src="/plugins/unraid-autoupdater/images/unraid-autoupdater.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
 <div class="section">Unraid AutoUpdater<br><span id="dau-w-sum" class="dau-w">Checking&hellip;</span></div>
 <a href="/Settings/UnraidAutoUpdater" title="Open Unraid AutoUpdater"><i class="fa fa-fw fa-cog chevron"></i></a>
 </td></tr>
-<tr><td><span class="w25">Docker</span><span id="dau-w-docker">-</span></td></tr>
-<tr><td><span class="w25">Plugins</span><span id="dau-w-plugins">-</span></td></tr>
-<tr><td><span class="w25">Unraid OS</span><span id="dau-w-os">-</span></td></tr>
-<tr><td><span class="w25">Last run</span><span id="dau-w-last">-</span></td></tr>
+<tr id="dau-r-docker"><td><span class="w25">Docker</span><span id="dau-w-docker">-</span></td></tr>
+<tr id="dau-r-plugins"><td><span class="w25">Plugins</span><span id="dau-w-plugins">-</span></td></tr>
+<tr id="dau-r-os" style="display:none"><td><span class="w25">Unraid OS</span><span id="dau-w-os">-</span></td></tr>
+<tr id="dau-r-fail" style="display:none"><td><span class="w25">Attention</span><span id="dau-w-fail">-</span></td></tr>
+<tr><td><span class="w25">Last check</span><span id="dau-w-last">-</span></td></tr>
+<tr><td><span class="w25">Next run</span><span id="dau-w-next">-</span></td></tr>
 <script>
 (function(){
   function s(id,t){var e=document.getElementById(id); if(e) e.textContent=t;}
-  function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<5400) return Math.max(1,Math.round(d/60))+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
-  function n(c,x){ return c? c+' update'+(c>1?'s':'')+' available' : 'up to date'; }
+  function show(id,on){var e=document.getElementById(id); if(e) e.style.display=on?'':'none';}
+  function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<90) return 'just now'; if(d<5400) return Math.round(d/60)+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
+  function inn(ts,now){ if(!ts) return 'not scheduled'; var d=ts-now; if(d<=60) return 'within a minute'; if(d<5400) return 'in '+Math.round(d/60)+' min'; if(d<86400) return 'in '+Math.round(d/3600)+' h'; return new Date(ts*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+  function n(c){ return c? c+' update'+(c>1?'s':'')+' available' : 'Up to date'; }
   var b=new URLSearchParams(); b.append('action','widget'); b.append('csrf_token',$dau_csrf);
   fetch('/plugins/unraid-autoupdater/include/api.php',{method:'POST',body:b,credentials:'same-origin'}).then(function(r){return r.json();}).then(function(j){
     if(!j||j.error) throw 0;
-    var total=(j.docker||0)+(j.plugins||0)+(j.os?1:0);
-    s('dau-w-sum', total? total+' update'+(total>1?'s':'')+' waiting' : 'Everything is up to date');
-    s('dau-w-docker', j.at? n(j.docker)+' ('+j.containers+' containers)' : 'not checked yet');
+    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0);
+    s('dau-w-sum', j.running? 'Working…' : j.failures? 'Needs attention' : total? total+' update'+(total>1?'s':'')+' waiting' : 'Everything is up to date');
+    s('dau-w-docker', j.at? n(j.docker)+' · '+j.containers+' containers' : 'Not checked yet');
     s('dau-w-plugins', n(j.plugins));
-    s('dau-w-os', j.os? 'Unraid '+j.os+' available' : 'Unraid '+(j.os_installed||'')+' is current');
-    s('dau-w-last', ago(j.last_run,j.now)+(j.last_status? ' ('+j.last_status+')':'')+(j.queued? ' - '+j.queued+' notification(s) on hold':''));
+    show('dau-r-os', !!j.os_update); s('dau-w-os','Update available');
+    show('dau-r-fail', !!j.failures); s('dau-w-fail', j.failures+' recent failure'+(j.failures>1?'s':'')+' – see Activity');
+    s('dau-w-last', ago(j.last_run,j.now)+(j.last_status? ' ('+j.last_status+')':'')+(j.queued? ' · '+j.queued+' notification(s) on hold':''));
+    s('dau-w-next', inn(j.next,j.now));
   }).catch(function(){ s('dau-w-sum','Status not available'); });
 })();
 </script>

@@ -240,8 +240,8 @@ function dau_cleanup_scan() {
   foreach (preg_split('/\R/', trim($r['out'])) as $line) {
     $f = explode('|', $line, 4); if (count($f) < 4 || !preg_match('/^sha256:[0-9a-f]{64}$/', $f[0])) continue;
     if (isset($used[$f[0]])) continue;
-    $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0];
-    if ($f[1] !== '<none>') { $imgs[$f[0]]['tags'][] = $f[1] . ($f[2] !== '<none>' ? ':' . $f[2] : ''); $imgs[$f[0]]['dangling'] = false; }
+    $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0, 'status' => 'eligible', 'reason' => 'It has no name or tag and no container uses it. This is usually a leftover from an update.'];
+    if ($f[1] !== '<none>') { $imgs[$f[0]]['tags'][] = $f[1] . ($f[2] !== '<none>' ? ':' . $f[2] : ''); $imgs[$f[0]]['dangling'] = false; $imgs[$f[0]]['status'] = 'review'; $imgs[$f[0]]['reason'] = 'It was downloaded earlier and no container uses it now. Check that you do not need it; it can be downloaded again.'; }
   }
   if ($imgs) {
     $r = dau_docker(array_merge(['image', 'inspect', '--format', '{{.Id}} {{.Size}}'], array_keys($imgs)), 60);
@@ -257,7 +257,7 @@ function dau_cleanup_scan() {
       $lab = $d['Config']['Labels'] ?? [];
       if (isset($lab['com.docker.compose.project']) || !empty($lab['net.unraid.docker.managed'])) continue;
       $n = ltrim($d['Name'] ?? '', '/'); if (!dau_valid_name($n)) continue;
-      $orph[] = ['name' => $n, 'image' => (string)($d['Config']['Image'] ?? ''), 'state' => (string)($d['State']['Status'] ?? ''), 'size' => (int)($d['SizeRw'] ?? 0), 'finished' => (string)($d['State']['FinishedAt'] ?? '')];
+      $orph[] = ['name' => $n, 'image' => (string)($d['Config']['Image'] ?? ''), 'state' => (string)($d['State']['Status'] ?? ''), 'size' => (int)($d['SizeRw'] ?? 0), 'finished' => (string)($d['State']['FinishedAt'] ?? ''), 'status' => 'review', 'reason' => 'A stopped container that was not created from an Unraid template. Removing it deletes the container, not its appdata.'];
     }
   }
   /* volumes no container uses (Docker itself says "dangling"); anonymous ones have a 64-character hex name */
@@ -271,41 +271,49 @@ function dau_cleanup_scan() {
       $n = (string)($v['Name'] ?? ''); $mp = (string)($v['Mountpoint'] ?? '');
       if (!in_array($n, $vn, true)) continue;
       $size = ($mp !== '' && strpos($mp, '/var/lib/docker/volumes/') === 0 && strpos($mp, '..') === false) ? dau_dir_size($mp) : 0;
-      $vols[] = ['name' => $n, 'anonymous' => preg_match('/^[0-9a-f]{64}$/', $n) === 1, 'size' => $size, 'created' => (string)($v['CreatedAt'] ?? '')];
+      $an = preg_match('/^[0-9a-f]{64}$/', $n) === 1;
+      $vols[] = ['name' => $n, 'anonymous' => $an, 'size' => $size, 'created' => (string)($v['CreatedAt'] ?? ''), 'status' => 'review', 'reason' => $an ? 'No container uses this unnamed volume. It may hold data of a removed container.' : 'No container uses this named volume. It was created on purpose, so it may hold data you want.'];
     }
     usort($vols, function ($a, $b) { return $b['size'] <=> $a['size']; });
   }
   $imgs = array_values($imgs);
   usort($imgs, function ($a, $b) { return $b['size'] <=> $a['size']; });
   $total = 0; foreach ($imgs as $i) $total += $i['size']; foreach ($orph as $o) $total += $o['size']; foreach ($vols as $v) $total += $v['size'];
-  return ['ok' => true, 'images' => $imgs, 'containers' => $orph, 'volumes' => $vols, 'total' => $total, 'total_text' => dau_bytes_text($total)];
+  return ['ok' => true, 'images' => $imgs, 'containers' => $orph, 'volumes' => $vols, 'in_use_images' => count($used), 'total' => $total, 'total_text' => dau_bytes_text($total)];
 }
 
-/** Remove exactly the chosen items, each re-checked against a fresh scan. Never forced. */
-function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNames = []) {
+/**
+ * Remove exactly the chosen items, each re-checked against a fresh scan. Never forced.
+ * $dry = only report what would be removed. 'skipped' = no longer valid (in use, gone); 'failed' = Docker refused.
+ * 'size_removed' is the size measured BEFORE removal (images share layers, so the space really freed can be smaller).
+ */
+function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNames = [], $dry = false) {
   $scan = dau_cleanup_scan();
   if (!$scan['ok']) return $scan;
   $okImg = []; foreach ($scan['images'] as $i) $okImg[$i['id']] = $i;
   $okCon = []; foreach ($scan['containers'] as $c) $okCon[$c['name']] = $c;
-  $out = ['ok' => true, 'removed' => [], 'failed' => [], 'freed' => 0];
+  $okVol = []; foreach ($scan['volumes'] ?? [] as $v) $okVol[$v['name']] = $v;
+  $out = ['ok' => true, 'dry' => (bool)$dry, 'removed' => [], 'failed' => [], 'skipped' => [], 'would' => [], 'freed' => 0, 'size_removed' => 0];
+  $do = function ($label, $size, callable $rm) use (&$out, $dry) {
+    if ($dry) { $out['would'][] = $label; $out['size_removed'] += $size; return; }
+    $r = $rm();
+    if ($r['code'] === 0) { $out['removed'][] = $label; $out['size_removed'] += $size; } else $out['failed'][] = ['what' => $label, 'why' => dau_clip(dau_redact(trim($r['err'])), 150) ?: 'Docker refused'];
+  };
   foreach ($containerNames as $n) {
-    if (!isset($okCon[$n])) { $out['failed'][] = ['what' => $n, 'why' => 'no longer a leftover container']; continue; }
-    $r = dau_docker(['rm', $n], 60);
-    if ($r['code'] === 0) { $out['removed'][] = 'container ' . $n; $out['freed'] += $okCon[$n]['size']; } else $out['failed'][] = ['what' => $n, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
+    if (!isset($okCon[$n])) { $out['skipped'][] = ['what' => (string)$n, 'why' => 'no longer a leftover container']; continue; }
+    $do('container ' . $n, $okCon[$n]['size'], function () use ($n) { return dau_docker(['rm', $n], 60); });
+  }
+  foreach ($volumeNames as $n) {
+    if (!isset($okVol[$n])) { $out['skipped'][] = ['what' => (string)$n, 'why' => 'now in use or already removed']; continue; }
+    $do('volume ' . $n, $okVol[$n]['size'], function () use ($n) { return dau_docker(['volume', 'rm', $n], 60); });   // never forced: Docker refuses a volume that is in use
   }
   foreach ($imageIds as $id) {
-    if (!isset($okImg[$id])) { $out['failed'][] = ['what' => dau_short_id($id), 'why' => 'now in use or already removed']; continue; }
-    $r = dau_docker(['image', 'rm', $id], 120);
+    if (!isset($okImg[$id])) { $out['skipped'][] = ['what' => dau_short_id($id), 'why' => 'now in use or already removed']; continue; }
     $label = $okImg[$id]['tags'] ? implode(', ', $okImg[$id]['tags']) : $okImg[$id]['short'];
-    if ($r['code'] === 0) { $out['removed'][] = 'image ' . $label; $out['freed'] += $okImg[$id]['size']; } else $out['failed'][] = ['what' => $label, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
+    $do('image ' . $label, $okImg[$id]['size'], function () use ($id) { return dau_docker(['image', 'rm', $id], 120); });
   }
-  $okVol = []; foreach ($scan['volumes'] ?? [] as $v) $okVol[$v['name']] = $v;
-  foreach ($volumeNames as $n) {
-    if (!isset($okVol[$n])) { $out['failed'][] = ['what' => (string)$n, 'why' => 'now in use or already removed']; continue; }
-    $r = dau_docker(['volume', 'rm', $n], 60);   // never forced: Docker refuses a volume that is in use
-    if ($r['code'] === 0) { $out['removed'][] = 'volume ' . $n; $out['freed'] += $okVol[$n]['size']; } else $out['failed'][] = ['what' => $n, 'why' => dau_clip(dau_redact(trim($r['err'])), 150)];
-  }
-  $out['freed_text'] = dau_bytes_text($out['freed']);
+  $out['freed'] = $out['size_removed'];           // kept for older callers; it is a measured-before size, not space read back from the disk
+  $out['freed_text'] = dau_bytes_text($out['size_removed']);
   return $out;
 }
 

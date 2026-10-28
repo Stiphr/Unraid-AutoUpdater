@@ -189,7 +189,7 @@ t('extras: cleanup scan and removal', function () {
   eq($GLOBALS['XS']['rm'], []); eq($GLOBALS['XS']['rmc'], []);
   $r = dau_cleanup_run([xid('dang'), xid('old-db'), xid('unused')], ['leftover', 'app']);
   eq($GLOBALS['XS']['rm'], [xid('dang'), xid('unused')], 'an image that is in use is refused'); eq($GLOBALS['XS']['rmc'], ['leftover'], 'a managed/running container is refused');
-  eq(count($r['failed']), 2); ok($r['freed'] > 0);
+  eq(count($r['skipped']), 2); eq($r['failed'], []); ok($r['freed'] > 0 && $r['size_removed'] === $r['freed']);
   $rm = calls_matching(' rm '); foreach ($rm as $a) ok(!in_array('-f', $a, true) && !in_array('--force', $a, true), 'never forced');
 });
 

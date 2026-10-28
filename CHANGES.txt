@@ -1,4 +1,7 @@
 ###2026.10.31b4
+- UI refresh (beta). Cleanup tab: Scan, Review, Clean steps; one "Scan for Cleanup Items" button; category cards; each item shows why it is listed and a status (Eligible, Review first, Protected, In use); "Select all eligible" never picks Review first or protected items; Preview (dry run); confirmation lists what can and cannot be undone; results show cleaned, skipped and failed.
+- Fixed unreadable badges such as "Skipped: stopped" (Unraid page style leaked into them) with measured AA contrast in all themes; badges also carry an icon, not only a colour.
+- Dashboard tile: uses the plugin logo at the right size, no longer shows the Unraid OS version, and shows updates, failures, last check and next run.
 - BETA. Settings > very bottom: choose the plugin branch (Stable or Beta) with a warning when Beta is picked, and a Force update that reinstalls the current branch.
 - Save settings to a file with a name of your choice (default Unraid-AutoUpdater-Settings-YYYY-MM-DD) and load them back from a file, with a summary before they are applied.
 ###2026.10.31b3

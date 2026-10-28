@@ -95,10 +95,10 @@ function dau_appdata_scan(array $cfg = null) {
       if (isset($ign[$e])) { $ignored[] = $e; continue; }
       $path = $root . '/' . $e;
       $row = ['id' => $ri . ':' . $e, 'root' => $ri, 'name' => $e, 'path' => $path, 'size' => 0, 'age' => 0, 'by' => [], 'tpl' => [], 'why' => ''];
-      if (is_link($path)) { $row['why'] = 'symbolic link'; $prot[] = $row; continue; }
+      if (is_link($path)) { $row['why'] = 'symbolic link'; $row['status'] = 'protected'; $row['reason'] = 'It is a symbolic link, so removing it could affect another location.'; $prot[] = $row; continue; }
       if (!is_dir($path)) continue;
       $st = @stat($path);
-      if ($st && $rdev && $st['dev'] !== $rdev) { $row['why'] = 'separate mount point'; $prot[] = $row; continue; }
+      if ($st && $rdev && $st['dev'] !== $rdev) { $row['why'] = 'separate mount point'; $row['status'] = 'protected'; $row['reason'] = 'It is a separate mount point (another disk or share).'; $prot[] = $row; continue; }
       $real = realpath($path); $tail = dau_path_tail($real ?: $path);
       foreach ($mounts as $c) foreach ($c['sources'] as $s) {
         $sreal = @realpath($s) ?: $s; $stail = dau_path_tail($sreal);
@@ -110,15 +110,17 @@ function dau_appdata_scan(array $cfg = null) {
       $row['recent'] = false;
       $row['by'] = array_values(array_unique($row['by'])); $row['tpl'] = array_values(array_unique($row['tpl']));
       $row['age'] = $st ? max(0, $now - (int)$st['mtime']) : 0;
-      if ($row['by']) { $busy[] = $row; continue; }
+      if ($row['by']) { $busy[] = ['name' => $e, 'by' => $row['by']]; continue; }
       $row['size'] = dau_dir_size($path);
       $row['recent'] = $row['age'] < 30 * 86400;
+      $why = ['No container (running or stopped) uses this folder.']; if ($row['recent']) $why[] = 'It changed in the last 30 days, so something may still write to it.'; if ($row['tpl']) $why[] = 'A saved template (' . implode(', ', $row['tpl']) . ') still points here.';
+      $row['status'] = ($row['recent'] || $row['tpl']) ? 'review' : 'eligible'; $row['reason'] = implode(' ', $why);
       $orph[] = $row;
     }
   }
   usort($orph, function ($a, $b) { return $b['size'] <=> $a['size']; });
   $total = 0; foreach ($orph as $o) $total += $o['size'];
-  return ['ok' => true, 'roots' => $roots, 'orphans' => $orph, 'in_use' => count($busy), 'protected' => $prot, 'broad' => array_keys($broad), 'ignored' => array_values(array_unique($ignored)),
+  return ['ok' => true, 'roots' => $roots, 'orphans' => $orph, 'in_use' => count($busy), 'in_use_rows' => array_slice($busy, 0, 300), 'protected' => $prot, 'broad' => array_keys($broad), 'ignored' => array_values(array_unique($ignored)),
           'total' => $total, 'total_text' => dau_bytes_text($total), 'safe_mode' => !empty($cfg['appdata']['safe_mode'])];
 }
 

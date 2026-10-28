@@ -129,7 +129,7 @@ t('appdata: quarantine expires only when a time was set', function () {
 t('appdata: unused volumes are listed and removed without force', function () {
   adenv([]); $GLOBALS['VOLRM'] = [];
   $s = dau_cleanup_scan(); ok(isset($s['volumes']), json_encode($s)); eq(array_column($s['volumes'], 'name'), ['unused-vol', str_repeat('a', 64)]); ok($s['volumes'][1]['anonymous']);
-  $r = dau_cleanup_run([], [], ['unused-vol', 'in-use-vol', '../x']); eq($GLOBALS['VOLRM'], ['unused-vol']); eq(count($r['failed']), 2); eq($r['removed'], ['volume unused-vol']);
+  $r = dau_cleanup_run([], [], ['unused-vol', 'in-use-vol', '../x']); eq($GLOBALS['VOLRM'], ['unused-vol']); eq(count($r['skipped']), 2); eq($r['removed'], ['volume unused-vol']);
   foreach (calls_matching(' volume rm') as $a) ok(!in_array('-f', $a, true) && !in_array('--force', $a, true), 'never forced');
 });
 
@@ -151,4 +151,27 @@ t('appdata: weekly report counts, notifies once and deletes nothing', function (
 t('appdata: report settings are validated', function () {
   $c = dau_sanitize_config(['appdata' => ['purge_days' => 9999, 'report' => '1', 'ignore' => ['ok', '../bad', '.hid', 'a/b', 'fine folder']]], dau_defaults());
   eq($c['appdata']['purge_days'], 365); eq($c['appdata']['report'], true); eq($c['appdata']['ignore'], ['ok', 'fine folder']);
+});
+
+
+t('cleanup: every item carries a status and a plain-language reason; in-use items are not offered', function () {
+  $root = adenv(['plex' => ['running', ['/mnt/dau-test/appdata/plex']]]); touch("$root/old-app", gmmktime(0, 0, 0, 1, 1, 2025)); touch("$root/tpl-only", dau_now() - 86400);
+  file_put_contents(DAU_TEMPLATES . '/my-gone.xml', '<Container><Name>gone</Name><Config Type="Path" Target="/c">/mnt/dau-test/appdata/nested/cfg</Config></Container>');
+  $s = dau_appdata_scan(); $by = []; foreach ($s['orphans'] as $o) $by[$o['name']] = $o;
+  eq($by['old-app']['status'], 'eligible'); eq($by['tpl-only']['status'], 'review', 'changed yesterday'); eq($by['nested']['status'], 'review', 'a template points here'); has($by['nested']['reason'], 'saved template');
+  eq($s['protected'][0]['status'], 'protected'); ok($s['protected'][0]['reason'] !== ''); eq($s['in_use_rows'], [['name' => 'plex', 'by' => ['plex']]]);
+  foreach ($by as $o) ok($o['reason'] !== '' && in_array($o['status'], ['eligible', 'review'], true));
+  $d = dau_cleanup_scan(); foreach ($d['volumes'] as $v) eq($v['status'], 'review', 'volumes are never pre-approved'); ok(isset($d['in_use_images']));
+});
+
+t('cleanup: a dry run of the Docker cleanup changes nothing and reports sizes', function () {
+  adenv([]); $GLOBALS['VOLRM'] = [];
+  $r = dau_cleanup_run([], [], ['unused-vol', 'nope'], true); eq($r['dry'], true); eq($r['would'], ['volume unused-vol']); eq($r['removed'], []); eq($GLOBALS['VOLRM'], [], 'nothing removed'); eq(count($r['skipped']), 1);
+  eq(calls_matching(' volume rm'), []);
+});
+
+t('widget: the Dashboard tile never shows the Unraid OS version and uses the plugin logo', function () {
+  $page = file_get_contents(__DIR__ . '/../src/UnraidAutoUpdaterDash.page'); $api = file_get_contents(__DIR__ . '/../src/include/api.php');
+  lacks($page, 'os_installed'); lacks($page, 'j.os+'); lacks($page, "'Unraid '+"); has($page, 'images/unraid-autoupdater.png'); has($page, 'class="img"'); lacks($page, 'fa-refresh f32"></i>\n<div');
+  $w = substr($api, strpos($api, "case 'widget'"), 1400); lacks($w, 'os_installed'); lacks($w, 'dau_os_version'); has($w, 'os_update');
 });
