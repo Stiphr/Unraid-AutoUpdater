@@ -91,7 +91,7 @@
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
-    root.appendChild(h('div', { class: 'head' }, h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active'))),
+    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/docker.autoupdate/images/docker.autoupdate.png' + (window.DAU_IMGV || ''), alt: '', width: 40, height: 40, onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
@@ -289,7 +289,7 @@
 
   /* ---------- OS ---------- */
   var OSSTATE = { up_to_date: ['Up to date', 'ok'], notify_only: ['Notify only', ''], not_confirmed: ['Not confirmed', 'warn'], prerelease: ['Pre-release: manual only', 'warn'], blocked: ['Blocked', 'bad'],
-    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], ready: ['Ready', 'ok'] };
+    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], awaiting_confirmation: ['Waiting for your confirmation', 'warn'], ready: ['Ready', 'ok'] };
   function confirmOsInstall(reboot) {
     var o = S.os.os, m = modal(reboot ? 'Install Unraid ' + o.available + ' and reboot now?' : 'Install Unraid ' + o.available + ' now?');
     m.body.appendChild(h('p', null, 'Installed: ' + (S.os.installed || '?') + '  →  ' + o.available));
@@ -297,9 +297,25 @@
     m.body.appendChild(h('p', { class: 'muted' }, 'Read the release notes first and make sure you have a recent flash drive backup.' + (S.os.stable === false ? ' This is a PRE-RELEASE.' : '')));
     var rb = S.os.reboot, ar = S.os.array;
     if (reboot && rb && !rb.ok) m.body.appendChild(h('div', { class: 'banner bad' }, 'A reboot would be postponed right now: ' + rb.reason));
+    var pre = S.os.pre || {}, pp = null, pd = null;
+    if (!o.pending) {
+      pp = h('input', { type: 'checkbox', checked: !!pre.plugins }); pd = h('input', { type: 'checkbox', checked: !!pre.docker });
+      m.body.appendChild(h('div', { class: 'panel' }, h('b', null, 'Before the OS update'),
+        h('label', { class: 'switch' }, pp, 'Update plugins first (only those set to Auto update, safety-checked as usual)'),
+        h('label', { class: 'switch' }, pd, 'Update Docker containers first (' + (S.os.pre_containers || 0) + ' set to Auto update, critical ones excluded)'),
+        h('div', { class: 'muted sm' }, 'The OS update only starts if the required steps succeeded and the system check passes. You can abort at any time before the install.')));
+    }
     var cb = h('input', { type: 'checkbox' });
     m.body.appendChild(h('label', { class: 'switch' }, cb, 'I have read this and want to continue'));
-    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('os_install', [], 'OS update started', { confirm: '1', reboot: reboot ? '1' : '0' }); } }, reboot ? 'Install and reboot' : 'Install');
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); var x = { confirm: '1', reboot: reboot ? '1' : '0' }; if (pp) { x.pre_plugins = pp.checked ? '1' : '0'; x.pre_docker = pd.checked ? '1' : '0'; } runJob('os_install', [], 'OS update started', x); } }, reboot ? 'Install and reboot' : 'Install');
+    cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
+  function confirmWorkflow(wf) {
+    var m = modal('Install Unraid ' + wf.version + (wf.reboot ? ' and reboot?' : '?'));
+    m.body.appendChild(h('p', { class: 'muted' }, 'The prerequisites passed. This installs the OS update through Unraid\'s own installer' + (wf.reboot ? ' and then REBOOTS the server (never during a parity check).' : '; it becomes active when you reboot.') + ' The previous release stays on the flash drive.'));
+    var cb = h('input', { type: 'checkbox' }); m.body.appendChild(h('label', { class: 'switch' }, cb, 'I want to continue'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('os_confirm', [], 'OS update started', { confirm: '1' }); } }, 'Install');
     cb.addEventListener('change', function () { go.disabled = !cb.checked; });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
@@ -309,6 +325,16 @@
     var o = S.os.os, mode = S.os.mode, es = S.os.eval || { state: 'up_to_date', reason: '' }, st = OSSTATE[es.state] || [es.state, ''];
     var modeText = { notify: 'Check and notify only. Nothing is installed and the server is never rebooted.', install: 'Install automatically, then wait for you to reboot.', install_reboot: 'Install automatically and reboot automatically (inside the maintenance window, never during a parity check).' }[mode] || '';
     w.appendChild(h('div', { class: 'banner' + (mode === 'notify' ? '' : ' warn') }, h('b', null, 'Mode: '), modeText, ' Change it in Settings.'));
+    var wf = S.os.workflow, rp = S.os.report;
+    if (wf && wf.state === 'awaiting_confirmation') {
+      w.appendChild(h('div', { class: 'banner warn' }, h('b', null, 'Ready to install Unraid ' + wf.version + '. '), 'The plugins were updated and the system check passed. Nothing has been installed yet.',
+        h('div', { class: 'actions' }, h('button', { class: 'btn pri', disabled: S.ov.run.running, onclick: function () { confirmWorkflow(wf); } }, wf.reboot ? 'Confirm: install and reboot…' : 'Confirm: install…'),
+          h('button', { class: 'btn', onclick: function () { act('os_abort', {}, 'Workflow cancelled. Nothing was installed.').then(function () { load('os'); }); } }, 'Abort'))));
+    } else if (wf && wf.state === 'running') {
+      w.appendChild(h('div', { class: 'banner' }, 'Pre-OS maintenance is running (plugins, then Docker if enabled). The OS update starts only if it succeeds. ', h('button', { class: 'btn sm danger', onclick: function () { act('os_abort', {}, 'Abort requested: stops after the current step. Nothing will be installed.'); } }, 'Abort')));
+    }
+    if (rp) w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Last pre-OS workflow'), h('div', { class: 'inl' }, h('span', { class: 'badge ' + ({ ok: 'ok', failed: 'bad', aborted: 'warn', waiting: 'warn' }[rp.result] || '') }, rp.result === 'ok' ? 'passed' : rp.result), h('span', { class: 'muted' }, 'for ' + rp.version + ' · ' + when(rp.at))),
+      h('pre', { class: 'log' }, 'Plugins: ' + (rp.plugins ? rp.plugins.updated + ' updated, ' + rp.plugins.failed + ' failed, ' + rp.plugins.skipped + ' skipped' : 'not part of this workflow') + '\nDocker: ' + (rp.docker ? rp.docker.updated + ' updated, ' + rp.docker.failed + ' failed, ' + rp.docker.skipped + ' skipped' : 'not part of this workflow') + (rp.health ? '\nSystem check: ' + rp.health : '') + (rp.issues && rp.issues.length ? '\nIssues: ' + rp.issues.join(' ') : ''))));
     if (o.pending) w.appendChild(h('div', { class: 'banner warn' }, 'Unraid ' + o.pending.to + ' is installed and waiting for a reboot (installed ' + when(o.pending.at) + '). After the reboot this plugin checks that the new release is running.'));
     w.appendChild(h('div', { class: 'cards' }, card('Installed', S.os.installed || '?'), card('Available', o.available || 'None', o.available ? 'since ' + when(o.first_seen) + (S.os.stable === false ? ' · pre-release' : '') : 'Up to date', o.available ? 'hot' : ''), card('Last check', ago(o.last_check), o.last_error ? 'Failed: ' + o.last_error : 'OK', o.last_error ? 'bad' : '')));
     if (o.available) {
@@ -381,7 +407,13 @@
     w.appendChild(section('Unraid OS', h('div', null,
       h('div', { class: 'grid2' },
         h('div', null, fSwitch('Check for OS updates on a schedule', 'os.check_enabled', 'Needed for everything below.'), fSched('Schedule', 'os'), osModeField()),
-        h('div', null, fNum('Wait after a release appears', 'os.delay_days', 0, 90, 'Counted from when the release was first seen. Applies to automatic installs only.', 'days'), fSwitch('Stable releases only', 'os.stable_only', 'Never install -rc, beta or next releases automatically.'), fWindow('Maintenance window (required for automatic installs)', 'os.window'))))));
+        h('div', null, fNum('Wait after a release appears', 'os.delay_days', 0, 90, 'Counted from when the release was first seen. Applies to automatic installs only.', 'days'), fSwitch('Stable releases only', 'os.stable_only', 'Never install -rc, beta or next releases automatically.'), fWindow('Maintenance window (required for automatic installs)', 'os.window'))),
+      h('h4', null, 'Before an OS update (pre-OS maintenance)'),
+      h('div', { class: 'grid2' },
+        h('div', null, fSwitch('Update plugins before the OS update', 'os.pre.plugins', 'Only plugins set to Auto update (or every non-ignored plugin, below). Each update is safety-checked.'), fSwitch('Require successful plugin updates', 'os.pre.require_plugins', 'If a plugin update fails, the OS update is NOT installed.'),
+          (function () { var s = h('select', { onchange: function () { d.os.pre.scope = s.value; } }, h('option', { value: 'auto' }, 'Only plugins set to Auto update'), h('option', { value: 'all' }, 'Every plugin that is not ignored')); s.value = d.os.pre.scope; return h('div', { class: 'fld' }, h('label', null, 'Which plugins'), s); })()),
+        h('div', null, fSwitch('Update Docker containers before the OS update', 'os.pre.docker', 'OFF by default. Only containers set to Auto update; critical containers are never included.'), fSwitch('Require successful Docker updates', 'os.pre.require_docker', 'If a container update fails, the OS update is NOT installed.'),
+          fSwitch('Ask for confirmation before the OS is installed', 'os.pre.confirm', 'The workflow pauses after the prerequisites and waits for you (Unraid OS tab). Manual installs are already confirmed.'), fSwitch('Notify when the workflow starts', 'os.pre.notify'))))));
     var dc = S.ov.config.discord;
     var url = h('input', { type: 'password', placeholder: dc.webhook_set ? 'A webhook is saved (hidden). Paste a new one to replace it.' : 'https://discord.com/api/webhooks/…', style: 'width:100%;max-width:520px', autocomplete: 'off' });
     var ev = function (k, l) { return fSwitch(l, 'discord.events.' + k); }, ty = function (k, l) { return fSwitch(l, 'discord.types.' + k); };

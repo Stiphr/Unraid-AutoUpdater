@@ -5,6 +5,8 @@
 .dau .grow{flex:1 1 auto;min-width:0}.dau .muted{color:var(--muted)}.dau .sm{font-size:12.5px}.dau b{font-weight:600;color:var(--text)}
 .dau-loading{padding:40px;text-align:center;color:var(--muted)}
 .dau .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.dau .brand{display:flex;align-items:center;gap:12px;min-width:0}.dau .logo{width:40px;height:40px;border-radius:9px;flex:none;display:block}
+@media (max-width:600px){.dau .logo{width:32px;height:32px}.dau .title{font-size:17px}}
 .dau .title{font-size:20px;font-weight:600;letter-spacing:.02em}
 .dau .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .dau .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}

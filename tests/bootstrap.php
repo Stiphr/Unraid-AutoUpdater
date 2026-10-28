@@ -54,6 +54,8 @@ function dau_test_rm($p) {
 }
 
 function t($name, $fn) {
+  $only = getenv('TFILTER');                       // TFILTER=text runs only the tests whose name contains it
+  if ($only !== false && $only !== '' && strpos($name, $only) === false) return;
   $GLOBALS['T']['current'] = $name;
   reset_env();
   try { $fn(); }

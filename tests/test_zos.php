@@ -207,3 +207,162 @@ t('discord: reboot and staged notices are always sent when OS events are on', fu
   foreach (['os_rebooting', 'os_staged', 'os_reboot_blocked'] as $k) ok(dau_discord_wants($dc, ['type' => 'os', 'kind' => $k]), $k);
   ok(!dau_discord_wants($dc, ['type' => 'os', 'kind' => 'os_verified'])); $dc['events']['os'] = false; ok(!dau_discord_wants($dc, ['type' => 'os', 'kind' => 'os_rebooting']));
 });
+
+/* ======================= pre-OS maintenance workflow ======================= */
+
+/** OS env + plugin foo (policy auto, update 1 -> 2) and optionally the docker mock. $o: foo_ok, docker(bool), pull_ok, stopflag_on_foo */
+function wf_env($o = []) {
+  $o += ['foo_ok' => true, 'docker' => false, 'pull_ok' => true, 'stop_on_foo' => false];
+  @unlink(DAU_STATE); @unlink(DAU_HIST);
+  if ($o['docker']) job_env(['pull_ok' => $o['pull_ok']]);
+  $base = $o['docker'] ? $GLOBALS['DAU_EXEC_MOCK'] : null;      // the Docker mock installed by job_env()
+  os_env('7.4.0', array_intersect_key($o, ['bootfree' => 1, 'resync' => 1]));
+  file_put_contents(DAU_PLUGBOOT . '/foo.plg', plg_xml('1')); @symlink(DAU_PLUGBOOT . '/foo.plg', DAU_PLUGLINKS . '/foo.plg');
+  $osMock = $GLOBALS['DAU_EXEC_MOCK'];
+  $GLOBALS['DAU_EXEC_MOCK'] = function ($a, $i) use ($o, $osMock, $base) {
+    if (basename($a[0]) === 'plugin' && ($a[2] ?? '') === 'foo.plg' || (basename($a[0]) === 'plugin' && ($a[1] ?? '') === 'check' && ($a[2] ?? '') === 'foo.plg')) {
+      $GLOBALS['CALLS'][] = $a; $cmd = $a[1];
+      if ($cmd === 'check') { file_put_contents(DAU_PLUGTMP . '/foo.plg', plg_xml('2')); return ['code' => 0, 'out' => '', 'err' => '', 'timeout' => false, 'ran' => true]; }
+      if ($cmd === 'update') { if ($o['foo_ok']) copy(DAU_PLUGTMP . '/foo.plg', DAU_PLUGBOOT . '/foo.plg'); if ($o['stop_on_foo']) touch(DAU_STOPFLAG); return ['code' => 0, 'out' => '', 'err' => '', 'timeout' => false, 'ran' => true]; }
+    }
+    if (basename($a[0]) === 'plugin' && in_array($a[1] ?? '', ['version', 'pluginURL', 'min', 'max'], true) && strpos($a[2] ?? '', 'foo.plg') !== false) {
+      $x = dau_plg_parse(file_get_contents($a[2])); return ['code' => 0, 'out' => (string)$x[$a[1]] . "\n", 'err' => '', 'timeout' => false, 'ran' => true];
+    }
+    if ($base && !in_array(basename($a[0]), ['plugin', 'reboot'], true)) return $base($a, $i);
+    return $osMock($a, $i);   // records the call
+  };
+}
+function wf_cfg($mode = 'install', array $pre = [], array $os = []) {
+  $c = os_cfg($mode, $os); $c['os']['pre'] = $pre + $c['os']['pre']; $c['plugins']['items'] = ['foo.plg' => ['policy' => 'auto']];
+  $c['containers']['app'] = ['policy' => 'auto']; $c['containers']['db'] = ['policy' => 'ignore'];
+  dau_save_config($c); return $c;
+}
+function call_idx($needle) { foreach ($GLOBALS['CALLS'] as $i => $a) if (strpos(implode(' ', $a), $needle) !== false) return $i; return null; }
+function evkinds() { $k = []; foreach ($GLOBALS['SENT'] ?? [] as $p) foreach ($p['embeds'] ?? [] as $e) $k[] = $e['title']; return $k; }
+
+t('workflow: defaults and settings validation', function () {
+  $c = dau_defaults()['os']['pre'];
+  eq($c, ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto']);
+  eq($c['docker'], false, 'Docker updates before the OS are OFF by default');
+  $x = dau_sanitize_config(['os' => ['pre' => ['docker' => 'yes', 'scope' => 'everything', 'confirm' => 'true', 'bogus' => 1]]], dau_defaults());
+  eq($x['os']['pre']['docker'], true); eq($x['os']['pre']['scope'], 'auto'); eq($x['os']['pre']['confirm'], true); ok(!isset($x['os']['pre']['bogus']));
+  ok(dau_os_pre_defaults() === $c, 'one set of defaults');
+});
+
+t('workflow: plugins are updated before the OS; Docker is left alone by default', function () {
+  wf_env(['docker' => true]); wf_cfg('install'); job_set_update(); eq(os_tick(), 0);
+  $p = call_idx('plugin update foo.plg'); $o = call_idx('plugin update unRAIDServer.plg');
+  ok($p !== null && $o !== null && $p < $o, 'plugin first, then the OS');
+  eq(count(calls_matching('update_container')), 0, 'Docker not touched');
+  $os = dau_state_load()['os']; eq($os['pending']['to'], '7.4.0'); eq($os['last_report']['result'], 'ok'); eq($os['last_report']['plugins']['updated'], 1); eq($os['last_report']['docker'], null); eq($os['workflow'], null);
+  $h = dau_history_load(); $acts = array_map(function ($e) { return $e['type'] . ':' . $e['action'] . ':' . $e['result']; }, $h);
+  ok(in_array('plugin:update:updated', $acts) && in_array('os:prerequisites:ok', $acts) && in_array('os:update:staged', $acts), implode(',', $acts));
+});
+
+t('workflow: Docker containers are updated first only when enabled; critical and non-auto ones never', function () {
+  wf_env(['docker' => true]); $c = wf_cfg('install', ['docker' => true]); $c['containers']['db'] = ['policy' => 'auto', 'critical' => true]; dau_save_config($c); job_set_update(); os_tick();
+  $d = call_idx('update_container'); $o = call_idx('plugin update unRAIDServer.plg');
+  ok($d !== null && $d < $o, 'container before the OS'); eq(count(calls_matching('update_container')), 1); has(implode(' ', calls_matching('update_container')[0]), 'app');
+  $r = dau_state_load()['os']['last_report']; eq($r['docker']['updated'], 1); eq($r['docker']['selected'], 1);
+});
+
+t('workflow: a failed plugin update stops the OS update when required, continues when not', function () {
+  wf_env(['foo_ok' => false]); wf_cfg('install_reboot'); $GLOBALS['SENT'] = [];
+  os_tick(); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'OS not installed'); eq(count(calls_matching('/sbin/reboot')), 0, 'no reboot');
+  $os = dau_state_load()['os']; eq($os['last_report']['result'], 'failed'); eq($os['workflow'], null); eq($os['attempted']['version'], '7.4.0'); has($os['attempted']['reason'], 'plugin update');
+  ok(array_filter(dau_history_load(), function ($e) { return $e['action'] === 'prerequisites' && $e['result'] === 'failed'; }), 'recorded');
+  $GLOBALS['DAU_NOW'] += 7200; os_tick(); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'one automatic attempt per version');
+  /* not required: the OS update still goes ahead, the failure is reported */
+  wf_env(['foo_ok' => false]); wf_cfg('install', ['require_plugins' => false]); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 1, 'continues when plugin success is not required'); eq(dau_state_load()['os']['last_report']['plugins']['failed'], 1);
+});
+
+t('workflow: a failed container update stops the OS update when required', function () {
+  wf_env(['docker' => true, 'pull_ok' => false]); wf_cfg('install', ['docker' => true]); job_set_update(); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 0); has(dau_state_load()['os']['attempted']['reason'], 'container update');
+  wf_env(['docker' => true, 'pull_ok' => false]); wf_cfg('install', ['docker' => true, 'require_docker' => false]); job_set_update(); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 1, 'continues when not required');
+});
+
+t('workflow: failed system check stops the OS update', function () {
+  wf_env(['bootfree' => 100]); wf_cfg('install'); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 0); has(json_encode(dau_state_load()['os']['last_report']['issues']), 'flash drive');
+  wf_env(['resync' => 0]); file_put_contents(DAU_VARINI, "NAME=\"Tower\"\nmdState=\"SWAP_DSBL\"\nmdResync=\"0\"\n"); $s = dau_state_load(); $s['os']['attempted'] = null; $s['os']['available'] = null; dau_state_save($s); wf_cfg('install'); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'unusual array state');
+});
+
+t('workflow: confirmation pauses before the install; confirm continues, abort cancels', function () {
+  wf_env(); wf_cfg('install_reboot', ['confirm' => true]); $GLOBALS['SENT'] = [];
+  os_tick(); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'paused'); eq(count(calls_matching('plugin update foo.plg')), 1, 'prerequisites ran');
+  $wf = dau_state_load()['os']['workflow']; eq($wf['state'], 'awaiting_confirmation'); eq($wf['reboot'], true);
+  eq(dau_os_eval(dau_load_config(), dau_state_load(), dau_now(), false)['state'], 'awaiting_confirmation');
+  $GLOBALS['DAU_NOW'] += 3600; os_tick(); eq(count(calls_matching('plugin update foo.plg')), 1, 'not repeated while waiting'); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0);
+  eq(dau_job_main('os_confirm'), 0); eq(count(calls_matching('plugin update unRAIDServer.plg')), 1, 'installed after the confirmation'); eq(count(calls_matching('/sbin/reboot -n')), 1, 'reboot as authorised');
+  eq(dau_state_load()['os']['workflow'], null);
+  /* abort */
+  wf_env(); wf_cfg('install', ['confirm' => true]); os_tick(); $a = api_call('os_abort'); ok(!empty($a['ok']), json_encode($a));
+  eq(dau_state_load()['os']['workflow'], null); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'nothing installed');
+  ok(array_filter(dau_history_load(), function ($e) { return $e['result'] === 'aborted'; }), 'abort recorded');
+  /* a confirm with nothing waiting is refused */
+  $r = api_call('run', ['what' => 'os_confirm', 'confirm' => '1']); has($r['error'] ?? '', 'waiting');
+});
+
+t('workflow: stop request aborts before the OS install', function () {
+  wf_env(['stop_on_foo' => true]); wf_cfg('install'); os_tick();
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 0); eq(dau_state_load()['os']['last_report']['result'], 'aborted');
+  ok(array_filter(dau_history_load(), function ($e) { return $e['action'] === 'prerequisites' && $e['result'] === 'aborted'; }));
+});
+
+t('workflow: manual install uses the choices from the dialog; reboot stays explicit', function () {
+  wf_env(); wf_cfg('notify'); eq(dau_job_main('os_install', ['reboot' => false, 'pre_plugins' => false, 'pre_docker' => false]), 0);
+  eq(count(calls_matching('plugin update foo.plg')), 0, 'plugins skipped when unticked'); eq(count(calls_matching('plugin update unRAIDServer.plg')), 1); eq(count(calls_matching('/sbin/reboot')), 0);
+  wf_env(); wf_cfg('notify'); dau_job_main('os_install', ['reboot' => false, 'pre_plugins' => true, 'pre_docker' => false]);
+  ok(call_idx('plugin update foo.plg') < call_idx('plugin update unRAIDServer.plg'), 'plugins first'); eq(count(calls_matching('/sbin/reboot')), 0, 'no reboot without explicit authorisation');
+  /* default notify mode never starts the workflow by itself */
+  wf_env(); wf_cfg('notify'); os_tick(); eq(count(calls_matching('plugin update')), 0);
+});
+
+t('workflow: interrupted workflow is recorded, never resumed blindly; no duplicate jobs', function () {
+  wf_env(); wf_cfg('install'); $s = dau_state_load(); $s['os']['workflow'] = ['state' => 'running', 'version' => '7.4.0', 'started' => dau_now() - 600, 'reboot' => false, 'manual' => false]; dau_state_save($s);
+  dau_job_main('check'); eq(dau_state_load()['os']['workflow'], null); ok(array_filter(dau_history_load(), function ($e) { return $e['result'] === 'interrupted' && $e['trigger'] === 'recovery'; }));
+  eq(count(calls_matching('plugin update unRAIDServer.plg')), 0, 'a check never installs');
+  /* a paused workflow expires after 24 h */
+  $s = dau_state_load(); $s['os']['workflow'] = ['state' => 'awaiting_confirmation', 'version' => '7.4.0', 'started' => dau_now() - 90000, 'reboot' => false, 'manual' => false]; dau_state_save($s);
+  dau_job_main('check'); eq(dau_state_load()['os']['workflow'], null);
+  /* second job while one runs */
+  $lock = dau_lock_try(); ok($lock); eq(dau_job_main('os_install', ['reboot' => false]), 3, 'refused while locked'); dau_lock_release($lock);
+});
+
+t('workflow: Discord reports the workflow and keeps working', function () {
+  wf_env(['foo_ok' => false]); $c = wf_cfg('install'); $c['discord']['enabled'] = true; dau_save_config($c);
+  dau_secret_set('discord_url', 'https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJ-0123');
+  $GLOBALS['SENT'] = []; $GLOBALS['DAU_HTTP_MOCK'] = function ($u, $b) { $GLOBALS['SENT'][] = json_decode($b, true); return ['code' => 204]; };
+  os_tick(); $all = json_encode($GLOBALS['SENT']); has($all, 'Pre-OS maintenance started'); has($all, 'OS update stopped'); has($all, 'Plugins: 0 updated, 1 failed'); lacks($all, 'abcdefghijkl');
+  has($all, 'Unraid Auto Updater');
+});
+
+t('release: version, build, icon and update metadata are consistent', function () {
+  $plg = file_get_contents(__DIR__ . '/../docker.autoupdate.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
+  $ver = (string)$x['version']; $top = trim(strtok(file_get_contents(__DIR__ . '/../CHANGES.txt'), "\n"));
+  eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'docker.autoupdate');
+  has($plg, "define('DAU_VERSION',   '$ver');"); has($plg, "define('DAU_BUILD',     'v1.0.0');"); lacks($plg, '@@');
+  eq((string)$x['icon'], 'docker.autoupdate.png'); has($plg, 'images/docker.autoupdate.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
+  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg');
+  ok(dau_version_newer($ver, '2026.10.29') && dau_version_newer($ver, '2026.10.28f'), 'newer than the previous releases');
+  ok(!dau_version_newer($ver, $ver), 'not newer than itself');
+  $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
+  ok($fn >= 15, 'all inline files carry a checksum');
+  has(file_get_contents(__DIR__ . '/../src/DockerAutoUpdate.page'), 'Icon="docker.autoupdate.png"');
+  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/docker.autoupdate.png"); has($js, "class: 'brand'");
+  ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'title'"), 'logo is left of the title');
+});
+
+t('release: settings and webhook survive a plugin update', function () {
+  $c = dau_defaults(); $c['global']['update_delay_hours'] = 48; $c['os']['pre']['docker'] = true; $c['discord']['enabled'] = true; $c['containers']['app'] = ['policy' => 'auto']; dau_save_config($c);
+  $u = 'https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJ-0123'; dau_secret_set('discord_url', $u);
+  $before = dau_load_config(); dau_install();   // the plugin's install script runs this on every install, update and boot
+  eq(dau_load_config(), $before, 'config unchanged'); eq(dau_secret_get('discord_url'), $u, 'webhook unchanged');
+  /* settings written by the previous release (no os.pre block) get safe defaults without losing anything */
+  $old = $before; unset($old['os']['pre'], $old['os']['mode']); dau_write_json(DAU_CFG, $old); $n = dau_load_config();
+  eq($n['os']['pre'], dau_os_pre_defaults()); eq($n['os']['mode'], 'notify'); eq($n['global']['update_delay_hours'], 48); eq($n['containers']['app']['policy'], 'auto');
+});

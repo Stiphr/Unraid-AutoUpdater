@@ -144,6 +144,11 @@ function dau_discord_event_embed(array $ev, $server) {
     'os_rebooting'    => ['🔄', 'Rebooting to finish the OS update', 0xE67E22],
     'os_reboot_blocked' => ['⚠️', 'Reboot postponed', 0xE67E22],
     'os_install_failed' => ['❌', 'OS update failed', 0xE74C3C],
+    'os_workflow_started' => ['🧰', 'Pre-OS maintenance started', 0x3498DB],
+    'os_workflow_done' => ['✅', 'Pre-OS checks passed', 0x2ECC71],
+    'os_awaiting'     => ['⏸️', 'OS update waiting for your confirmation', 0xF1C40F],
+    'os_prereq_failed' => ['❌', 'OS update stopped: a prerequisite failed', 0xE74C3C],
+    'os_aborted'      => ['⏹️', 'OS update aborted', 0xE67E22],
     'os_verified'     => ['✅', 'OS update verified after reboot', 0x2ECC71],
     'os_unverified'   => ['❌', 'OS update not active after reboot', 0xE74C3C],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
@@ -155,6 +160,7 @@ function dau_discord_event_embed(array $ev, $server) {
   if (!empty($ev['verification'])) $f[] = dau_field('Verification', dau_clean_text($ev['verification'], 300), false);
   if (!empty($ev['stage'])) $f[] = dau_field('Failed at', dau_clean_text($ev['stage'], 100));
   if (!empty($ev['reason'])) $f[] = dau_field($kind === 'available' ? 'Pending because' : 'Reason', dau_clean_text($ev['reason'], 500), false);
+  if (!empty($ev['detail'])) $f[] = dau_field('Components', "```\n" . str_replace('```', "'''", dau_clean_text($ev['detail'], 700)) . "\n```", false);
   if (!empty($ev['error'])) $f[] = dau_field('Error', "```\n" . str_replace('```', "'''", dau_clean_text($ev['error'], 700)) . "\n```", false);
   if (!empty($ev['retry'])) $f[] = dau_field('Retry', dau_clean_text($ev['retry'], 200), false);
   if (!empty($ev['log'])) $f[] = dau_field('Log', "```\n" . str_replace('```', "'''", dau_clean_text($ev['log'], 600)) . "\n```", false);
@@ -219,7 +225,7 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 function dau_event_toggle($kind) {
   switch ($kind) {
     case 'updated': case 'os_installed': case 'os_verified': return 'success';
-    case 'failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
+    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
@@ -228,7 +234,7 @@ function dau_discord_wants(array $dc, array $ev) {
   if (empty($dc['enabled']) || !empty($ev['silent'])) return false;
   $cat = ['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$ev['type']] ?? null;
   if (!$cat || empty($dc['events'][$cat])) return false;
-  if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked'], true)) return true;   // a pending reboot must never be missed
+  if (in_array($ev['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_workflow_started', 'os_workflow_done', 'os_awaiting', 'os_aborted'], true)) return true;   // a pending reboot must never be missed
   return !empty($dc['types'][dau_event_toggle($ev['kind'])]);
 }
 
@@ -254,7 +260,7 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];

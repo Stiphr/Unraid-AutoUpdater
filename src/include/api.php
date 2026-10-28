@@ -93,7 +93,8 @@ switch ($action) {
     $av = $st['os']['available'];
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
-         'pending' => $st['os']['pending']]);
+         'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
+         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
   }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
@@ -170,6 +171,13 @@ switch ($action) {
     elseif ($what === 'os_install') {
       if (($_POST['confirm'] ?? '') !== '1') fail('Installing an OS update needs an explicit confirmation.');
       $args = [!empty($_POST['reboot']) && $_POST['reboot'] === '1' ? '--os-install-reboot' : '--os-install'];
+      foreach (['pre_plugins' => '--pre-plugins=', 'pre_docker' => '--pre-docker='] as $k => $flag) if (isset($_POST[$k]) && in_array($_POST[$k], ['0', '1'], true)) $args[] = $flag . $_POST[$k];
+    }
+    elseif ($what === 'os_confirm') {
+      if (($_POST['confirm'] ?? '') !== '1') fail('Installing an OS update needs an explicit confirmation.');
+      $st = dau_state_load(); $wf = $st['os']['workflow'] ?? null;
+      if (!is_array($wf) || ($wf['state'] ?? '') !== 'awaiting_confirmation') fail('No OS update is waiting for a confirmation.');
+      $args = ['--os-confirm'];
     }
     elseif ($what === 'docker' || $what === 'plugins') {
       $names = $json('names'); if (!$names) fail('Nothing selected');
@@ -179,6 +187,17 @@ switch ($action) {
     } else fail('Unknown job');
     if (!dau_spawn($args)) fail('Another job is already running.', 409);
     out(['ok' => true]);
+  }
+
+  case 'os_abort': {
+    /* abort the pre-OS workflow: a running job stops after its current step, a paused one is cancelled here */
+    if (dau_run_info()['running']) { @touch(DAU_STOPFLAG); out(['ok' => true, 'running' => true]); }
+    $st = dau_state_load(); $wf = $st['os']['workflow'] ?? null;
+    if (is_array($wf)) {
+      dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => 'aborted', 'started' => (int)$wf['started'], 'finished' => dau_now(), 'trigger' => 'manual', 'error' => 'Aborted by the user. Nothing was installed.'], dau_load_config()['history']['max_entries']);
+      $st['os']['workflow'] = null; dau_state_save($st);
+    }
+    out(['ok' => true, 'running' => false]);
   }
 
   case 'stop': { @touch(DAU_STOPFLAG); out(['ok' => true]); }

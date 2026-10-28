@@ -17,7 +17,9 @@ function dau_state_defaults() {
                   'pending' => null,        // ['from','to','at','reboot'] installed, waiting for a reboot
                   'attempted' => null,      // ['version','result','reason','at']: one automatic attempt per version
                   'rebooted_for' => '',     // target version an automatic reboot was already started for
-                  'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null],
+                  'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null,
+                  'workflow' => null,       // pre-OS workflow in progress / waiting for a confirmation (see workflow.php)
+                  'last_report' => null],
     'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat],
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];
