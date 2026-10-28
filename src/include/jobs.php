@@ -290,7 +290,7 @@ function dau_job_finish(array &$J) {
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
             'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
-            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'removed' => ['removed', 'normal'], 'remove_failed' => ['removal FAILED', 'alert'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -400,6 +400,10 @@ function dau_job_main($action, array $o = []) {
       dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true, 'allow_major' => $o['allow_major'] ?? []]);
     } elseif ($action === 'backup') {
       foreach ((array)($o['kinds'] ?? []) as $bk) if (in_array($bk, DAU_BK_KINDS, true)) dau_job_backup($J, $bk, 'manual');
+    } elseif ($action === 'remove_docker') {
+      dau_job_remove($J, 'docker', array_values(array_filter((array)($o['names'] ?? []), 'dau_valid_name')), ['image' => !empty($o['image']), 'template' => !empty($o['template'])]);
+    } elseif ($action === 'remove_plugins') {
+      dau_job_remove($J, 'plugins', array_values(array_filter((array)($o['names'] ?? []), 'dau_valid_plg')), []);
     } elseif ($action === 'rollback') {
       dau_job_rollback($J, (string)($o['name'] ?? ''));
     } elseif ($action === 'plugins') {
