@@ -129,3 +129,9 @@ t('backups: the dispatcher cron line exists when only a backup is scheduled', fu
   @unlink(DAU_CRON); dau_cron_apply($cfg); ok(is_file(DAU_CRON), 'cron line written for a backup-only schedule');
   $cfg['backups']['appdata']['schedule'] = 'off'; dau_cron_apply($cfg); ok(!is_file(DAU_CRON), 'removed when nothing is scheduled');
 });
+
+t('release: every file under src/include is packed into the plugin file', function () {
+  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg');
+  foreach (glob(__DIR__ . '/../src/include/*.php') as $f) has($plg, 'Name="&emhttp;/include/' . basename($f) . '"', 'not packed');
+  foreach (glob(__DIR__ . '/../src/assets/*') as $f) has($plg, '/assets/' . basename($f) . '"', 'not packed');
+});

@@ -1,3 +1,5 @@
+###2026.10.31b6
+- BETA. Fix: b5 did not include one of its files, so the plugin showed an error (500) after updating. Update again to get it.
 ###2026.10.31b5
 - BETA. New Backups tab: back up your appdata folders and the boot drive (USB flash) to a folder you choose.
 - Appdata: weekly or monthly, and optionally right before updates are installed (only when there is something to install; you can choose to hold the updates back if that backup fails). Folders can be left out.
