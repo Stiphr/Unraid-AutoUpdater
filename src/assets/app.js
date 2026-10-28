@@ -508,10 +508,11 @@
   var CSUBS = [['appdata', 'Appdata folders'], ['quarantine', 'Quarantine'], ['docker', 'Images and containers'], ['templates', 'Saved templates']];
   function ageText(sec) { sec = +sec || 0; return sec < 86400 ? 'today' : sec < 86400 * 60 ? Math.round(sec / 86400) + ' days ago' : sec < 86400 * 730 ? Math.round(sec / 86400 / 30) + ' months ago' : Math.round(sec / 86400 / 365) + ' years ago'; }
   function vCleanup() {
-    var w = h('div'), nav = h('div', { class: 'subnav' });
-    CSUBS.forEach(function (x) { nav.appendChild(h('button', { class: 'btn' + (S.csub === x[0] ? ' pri' : ''), onclick: function () { S.csub = x[0]; render(); } }, x[1])); });
-    w.appendChild(nav);
-    w.appendChild({ appdata: vAppdata, quarantine: vQuarantine, docker: vCleanDocker, templates: vTemplates }[S.csub]());
+    var w = h('div');
+    CSUBS.forEach(function (x, i) {
+      w.appendChild(h('h3', { class: 'csec' }, x[1]));
+      w.appendChild({ appdata: vAppdata, quarantine: vQuarantine, docker: vCleanDocker, templates: vTemplates }[x[0]]());
+    });
     return w;
   }
   function scanAppdata() {
@@ -563,7 +564,7 @@
     cb.addEventListener('change', function () { go.disabled = !cb.checked; });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
-  function loadQ() { return api('quarantine_list').then(function (j) { S.qr = j; render(); }); }
+  function loadQ() { if (S.qBusy) return; S.qBusy = true; return api('quarantine_list').then(function (j) { S.qBusy = false; S.qr = j; render(); }); }
   function vQuarantine() {
     var w = h('div'), q = S.qr;
     w.appendChild(h('div', { class: 'banner' }, 'Folders moved here are only hidden away. Restore one to put it back exactly where it was, or delete it for good to free the space. Nothing is overwritten when restoring.'));
@@ -605,7 +606,7 @@
     cb.addEventListener('change', function () { go.disabled = !cb.checked; });
     m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
   }
-  function loadT() { return api('tpl_scan').then(function (j) { S.tp = j; render(); }); }
+  function loadT() { if (S.tBusy) return; S.tBusy = true; return api('tpl_scan').then(function (j) { S.tBusy = false; S.tp = j; render(); }); }
   function vTemplates() {
     var w = h('div'), t = S.tp;
     w.appendChild(h('div', { class: 'banner' }, 'Unraid keeps a saved template for every container you ever created, also after the container was removed. Archiving stores a verified backup first and then removes the saved template. Appdata, images and containers are not touched, and you can restore a template while its name is free.'));

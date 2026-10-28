@@ -116,8 +116,7 @@
 }
 @media (prefers-reduced-motion:reduce){.dau .progress i{animation:none}}
 
-/* cleanup sub tabs */
-.dau .subnav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
-.dau .subnav .btn{min-height:36px}
+/* cleanup sections: same page, same panels as the other tabs */
+.dau h3.csec{margin:26px 0 10px;padding-top:6px}.dau h3.csec:first-child{margin-top:4px}
 .dau td.acts{white-space:nowrap}.dau td.acts .btn{margin:0 6px 4px 0}
-@media (max-width:820px){.dau .subnav{display:grid;grid-template-columns:1fr 1fr}.dau td.acts{white-space:normal}}
+@media (max-width:820px){.dau td.acts{white-space:normal}}
