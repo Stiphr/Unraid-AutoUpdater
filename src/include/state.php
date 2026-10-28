@@ -1,5 +1,5 @@
 <?php
-/* Docker Auto Update - persistent state, history and statistics (all bounded). */
+/* Unraid Auto Updater - persistent state, history and statistics (all bounded). */
 
 function dau_state_defaults() {
   $stat = ['ok' => 0, 'failed' => 0, 'dur' => 0];
@@ -13,7 +13,11 @@ function dau_state_defaults() {
     'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => []],
     'plugins' => ['deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
     'os'      => ['installed' => null, 'available' => null, 'first_seen' => 0, 'notified' => null, 'withdrawn_notified' => false,
-                  'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false],
+                  'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false,
+                  'pending' => null,        // ['from','to','at','reboot'] installed, waiting for a reboot
+                  'attempted' => null,      // ['version','result','reason','at']: one automatic attempt per version
+                  'rebooted_for' => '',     // target version an automatic reboot was already started for
+                  'deferred_at' => 0, 'reboot_notified' => '', 'boot_result' => null],
     'stats'   => ['docker' => $stat, 'plugin' => $stat, 'os' => $stat],
     'discord' => ['last_ok' => 0, 'last_attempt' => 0, 'last_error' => '', 'invalid' => false],
   ];

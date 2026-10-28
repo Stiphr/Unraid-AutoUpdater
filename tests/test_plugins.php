@@ -21,11 +21,11 @@ function plg_env($latest = '2', $newXml = null, array $o = []) {
     $cmd = $a[1]; $arg = $a[2] ?? '';
     if ($cmd === 'version' || $cmd === 'pluginURL' || $cmd === 'min' || $cmd === 'max') {
       $x = dau_plg_parse(file_get_contents($arg)); $k = ['version' => 'version', 'pluginURL' => 'pluginURL', 'min' => 'min', 'max' => 'max'][$cmd];
-      return ['out' => (string)$x[$k] . "\n"];
+      return $x ? ['out' => (string)$x[$k] . "\n"] : ['code' => 1];
     }
     if ($cmd === 'check') {
-      if ($arg === 'unRAIDServer.plg') return isset($o['os_fail']) ? ['code' => 1, 'err' => 'download failed'] : ['out' => "$latest\n"];
-      file_put_contents(DAU_PLUGTMP . '/' . $arg, $newXml ?? plg_xml($latest)); return ['out' => "$latest\n"];
+      if ($arg === 'unRAIDServer.plg') { if (isset($o['os_fail'])) return ['code' => 1, 'err' => 'download failed']; file_put_contents(DAU_PLUGTMP . '/unRAIDServer.plg', plg_xml($latest)); return ['out' => "plugin: checking\nplugin: downloading ... done\nExecuting hook script: CA_preHook\nClearing cache\n"]; }
+      file_put_contents(DAU_PLUGTMP . '/' . $arg, $newXml ?? plg_xml($latest)); return ['out' => "plugin: checking: $arg ...\nplugin: downloading: $arg ... done\nExecuting hook script: CA_preHook\n$latest\nExecuting hook script: post_plugin_checks\n"];
     }
     if ($cmd === 'update') { if ($o['install']) copy(DAU_PLUGTMP . '/' . $arg, DAU_PLUGBOOT . '/' . $arg); return ['code' => 0]; }
     if ($cmd === 'changes') return ['out' => "Fixes things\n"];

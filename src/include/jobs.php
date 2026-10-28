@@ -1,6 +1,6 @@
 <?php
 /*
- * Docker Auto Update - job orchestration. One lock, one dispatcher (the "tick"), events collected during a run and
+ * Unraid Auto Updater - job orchestration. One lock, one dispatcher (the "tick"), events collected during a run and
  * announced once at the end (Unraid notifications + one combined Discord summary).
  */
 
@@ -8,7 +8,7 @@ function dau_ev($type, $name, $kind, array $x = []) { return ['type' => $type, '
 
 function dau_job_new($trigger, array $cfg, array $st) {
   $z = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'available' => 0];
-  return ['cfg' => $cfg, 'st' => $st, 'trigger' => $trigger, 'events' => [], 'sum' => ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '']], 'ran' => []];
+  return ['cfg' => $cfg, 'st' => $st, 'trigger' => $trigger, 'events' => [], 'sum' => ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]], 'ran' => [], 'reboot' => false];
 }
 
 function dau_phase($txt, array $x = []) { dau_progress(['running' => true, 'phase' => $txt, 'ts' => dau_now()] + $x); }
@@ -158,14 +158,67 @@ function dau_job_plugins(array &$J, array $opts) {
 
 /* ---------------- OS ---------------- */
 
-function dau_job_os(array &$J) {
+function dau_job_os(array &$J, array $opts = []) {
+  $cfg = $J['cfg']; $now = dau_now(); $manual = !empty($opts['manual']);
   dau_phase('Checking for an Unraid OS update');
   $chk = dau_os_check();
-  $ev = dau_os_process($J['st'], $chk, dau_now());
+  $ev = dau_os_process($J['st'], $chk, $now);
   foreach ($ev as $e) $J['events'][] = dau_ev('os', 'Unraid OS', $e['kind'], $e);
   $os = $J['st']['os'];
-  $J['sum']['os'] = ['available' => $chk['ok'] ? ($os['available'] !== null) : null, 'version' => (string)$os['available']];
+  $J['sum']['os'] = ['available' => $chk['ok'] ? ($os['available'] !== null) : null, 'version' => (string)$os['available'], 'installed' => false];
   dau_log($chk['ok'] ? 'info' : 'warn', 'os', '-', 'check', $chk['ok'] ? 'ok' : 'fail', $chk['ok'] ? ('latest ' . $chk['latest']) : $chk['error']);
+  $J['st']['os']['deferred_at'] = 0;
+  if (empty($opts['install']) || !$chk['ok']) return;
+  $reboot = $manual ? !empty($opts['reboot']) : ($cfg['os']['mode'] === 'install_reboot');
+  $e = dau_os_eval($cfg, $J['st'], $now, $manual);
+  $latest = (string)$J['st']['os']['available'];
+  if ($e['state'] === 'ready') {
+    dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS']);
+    dau_mark_current($J['st'], 'os', 'Unraid OS', dau_now());
+    $res = dau_os_install($cfg, $latest);
+    dau_clear_current($J['st']);
+    $x = ['installed' => $res['prev']['version'], 'available' => $latest, 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification']['detail'] ?? null, 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
+    if ($res['result'] === 'staged') {
+      $J['st']['os']['pending'] = ['from' => $res['prev']['version'], 'to' => $latest, 'at' => dau_now(), 'reboot' => false];
+      $J['sum']['os']['installed'] = true;
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_staged', $x);
+    } else {
+      $J['st']['os']['attempted'] = ['version' => $latest, 'result' => $res['result'], 'reason' => dau_clip($res['error'], 200), 'at' => dau_now()];
+      dau_stats_record($J['st'], 'os', false, 0);
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', $x);
+    }
+    dau_hist($J, 'os', 'Unraid OS', 'update', $res);
+    dau_log($res['result'] === 'staged' ? 'info' : 'error', 'os', 'Unraid OS', 'install', $res['result'], $res['error']);
+    dau_state_save($J['st']);
+    if ($res['result'] !== 'staged') return;
+    $e['state'] = 'staged';
+  } elseif ($e['state'] === 'waiting_delay' && !$manual) {
+    $J['st']['os']['deferred_at'] = (int)$e['eta'];
+  } elseif ($e['state'] === 'window_closed' && !$manual) {
+    $J['st']['os']['deferred_at'] = (int)dau_window_next_open($cfg['os']['window'], $now);
+  }
+  if ($e['state'] !== 'staged' || !$reboot) return;
+  /* reboot step: only for a release that is installed and waiting; at most once per version when automatic */
+  $os =& $J['st']['os'];
+  if (!$manual) {
+    if ($os['rebooted_for'] === $latest) return;
+    if (!dau_window_open($cfg['os']['window'], $now)) { $os['deferred_at'] = (int)dau_window_next_open($cfg['os']['window'], $now); return; }
+  }
+  $safe = dau_os_reboot_safe();
+  if (!$safe['ok']) {
+    if (!$manual) $os['deferred_at'] = $now + 1800;
+    if ($os['reboot_notified'] !== $latest . '|' . $safe['reason']) {
+      $os['reboot_notified'] = $latest . '|' . $safe['reason'];
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_reboot_blocked', ['installed' => $os['installed'], 'available' => $latest, 'reason' => $safe['reason'], 'next' => $manual ? 'Reboot when it is safe, from the Unraid main menu.' : 'Will try again in 30 minutes (inside the maintenance window).']);
+    }
+    dau_log('warn', 'os', 'Unraid OS', 'reboot', 'postponed', $safe['reason']);
+    return;
+  }
+  $os['rebooted_for'] = $latest;
+  if (is_array($os['pending'])) $os['pending']['reboot'] = true;
+  $J['reboot'] = true;
+  $J['events'][] = dau_ev('os', 'Unraid OS', 'os_rebooting', ['installed' => $os['installed'], 'available' => $latest, 'next' => 'The server restarts now. After it is back, the new version is checked and reported.']);
+  dau_log('info', 'os', 'Unraid OS', 'reboot', 'requested', 'rebooting to finish ' . $latest);
 }
 
 /* ---------------- notifications ---------------- */
@@ -173,24 +226,28 @@ function dau_job_os(array &$J) {
 function dau_job_finish(array &$J) {
   $cfg = $J['cfg']; $sum = $J['sum']; $ev = $J['events'];
   $failed = $sum['docker']['failed'] + $sum['plugins']['failed'];
+  foreach ($ev as $e) if ($e['type'] === 'os' && in_array($e['kind'], ['os_install_failed', 'os_unverified'], true)) $failed++;
   $sum['status'] = $failed ? 'failed' : (($sum['docker']['skipped'] + $sum['plugins']['skipped']) ? 'warnings' : 'ok');
   $sum['trigger'] = $J['trigger'];
   /* Unraid's own notification center */
   $nu = $cfg['notify_unraid']; $sent = 0; $more = 0;
   foreach ($ev as $e) {
-    if (!empty($e['silent']) || empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$e['type']]])) continue;
+    $important = $e['type'] === 'os' && in_array($e['kind'], ['os_staged', 'os_rebooting', 'os_reboot_blocked', 'os_install_failed', 'os_verified', 'os_unverified'], true);   // reboots and failed installs are never silent
+    if (!empty($e['silent']) || !empty($e['silent_native']) || (!$important && empty($nu[['docker' => 'docker', 'plugin' => 'plugins', 'os' => 'os'][$e['type']]]))) continue;
     if ($sent >= 8) { $more++; continue; }
     $label = dau_type_label($e['type']) . ' ' . $e['name'];
     $map = ['available' => ['update available', 'normal'], 'updated' => ['updated', 'normal'], 'failed' => ['update FAILED', 'alert'], 'retrying' => ['update failed, will retry', 'warning'],
             'retry_exhausted' => ['update failed, retries used up', 'alert'], 'blocked' => ['update not applied', 'warning'], 'skipped' => ['update skipped', 'normal'],
-            'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal']];
+            'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
+            'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
+            'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
-    $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '');
+    $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
     dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : '/Docker'));
     $sent++;
   }
-  if ($more) dau_unraid_notify("Docker Auto Update: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/DockerAutoUpdate');
+  if ($more) dau_unraid_notify("Unraid Auto Updater: $more more notification(s)", 'See the plugin\'s Activity tab.', 'normal', '/Settings/DockerAutoUpdate');
   /* Discord (never fails the job) */
   try { $d = dau_discord_dispatch($cfg, $J['st'], array_values($ev), $sum); }
   catch (Throwable $e) { dau_log('warn', 'discord', '-', 'send', 'fail', $e->getMessage()); }
@@ -216,6 +273,15 @@ function dau_job_main($action, array $o = []) {
     $rec = dau_recover_interrupted($st, $max);
     $now = dau_now();
     $J = dau_job_new($action === 'tick' ? 'scheduled' : 'manual', $cfg, $st);
+    /* result of an OS update that was waiting for a reboot (verified at boot, announced here once the network is up) */
+    $announced = false;
+    $br = $J['st']['os']['boot_result'] ?? null;
+    if (is_array($br)) {
+      $J['events'][] = dau_ev('os', 'Unraid OS', $br['kind'], ['installed' => $br['installed'], 'available' => $br['available'], 'silent_native' => true,
+        'error' => $br['kind'] === 'os_unverified' ? 'Unraid is running ' . ($br['running'] ?: 'an unknown version') . ' instead of ' . $br['available'] . '.' : '',
+        'next' => $br['kind'] === 'os_unverified' ? 'Open Tools > Update OS to check the state; the previous release can be restored there.' : '']);
+      $J['st']['os']['boot_result'] = null; $announced = true;
+    }
 
     if ($action === 'tick') {
       $slots = []; $names = [];
@@ -223,7 +289,7 @@ function dau_job_main($action, array $o = []) {
       foreach (dau_plugin_slots($cfg) as $k => $s) $slots['p:' . $k] = $s;
       foreach (dau_os_slots($cfg) as $k => $s) $slots['o:' . $k] = $s;
       dau_slots_register($J['st'], array_keys($slots), $now);
-      $doDocker = []; $doPlug = false; $doOs = false;
+      $doDocker = []; $doPlug = false; $doOs = false; $osInstall = $cfg['os']['mode'] !== 'notify';
       foreach ($slots as $k => $s) {
         if (!dau_slot_due($s['sched'], dau_slot_rec($J['st'], $k), $now)) continue;
         $J['st']['slots'][$k]['last'] = $now;
@@ -232,22 +298,26 @@ function dau_job_main($action, array $o = []) {
       foreach ($J['st']['docker']['deferred'] as $n => $d) if ((int)($d['at'] ?? 0) <= $now) { $doDocker[] = $n; unset($J['st']['docker']['deferred'][$n]); }
       if (!$doPlug && (int)$J['st']['plugins']['deferred_at'] > 0 && (int)$J['st']['plugins']['deferred_at'] <= $now) $doPlug = true;
       $doDocker = array_values(array_unique($doDocker));
+      if (!$doOs && (int)$J['st']['os']['deferred_at'] > 0 && (int)$J['st']['os']['deferred_at'] <= $now) $doOs = true;
       if ($doDocker) dau_job_docker($J, ['names' => $doDocker, 'update' => true, 'manual' => false]);
       if ($doPlug) dau_job_plugins($J, ['update' => true]);
-      if ($doOs) dau_job_os($J);
-      if (!$doDocker && !$doPlug && !$doOs) { dau_state_save($J['st']); dau_lock_release($lock); return 0; }
+      if ($doOs) dau_job_os($J, ['install' => $osInstall]);
+      if (!$doDocker && !$doPlug && !$doOs && !$announced) { dau_state_save($J['st']); dau_lock_release($lock); return 0; }
     } elseif ($action === 'check') {
-      dau_job_docker($J, ['update' => false]); dau_job_plugins($J, ['update' => false]); dau_job_os($J);
+      dau_job_docker($J, ['update' => false]); dau_job_plugins($J, ['update' => false]); dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'docker') {
       dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true]);
     } elseif ($action === 'plugins') {
       dau_job_plugins($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true]);
     } elseif ($action === 'os') {
-      dau_job_os($J);
+      dau_job_os($J, ['manual' => true]);
+    } elseif ($action === 'os_install') {
+      dau_job_os($J, ['manual' => true, 'install' => true, 'reboot' => !empty($o['reboot'])]);
     }
     dau_job_finish($J);
-    dau_progress(['running' => false, 'ts' => dau_now(), 'phase' => 'Done']);
+    dau_progress(['running' => false, 'ts' => dau_now(), 'phase' => !empty($J['reboot']) ? 'Rebooting' : 'Done']);
     dau_log('info', 'job', '-', $action, 'done', json_encode($J['sum']['docker']) . ' ' . json_encode($J['sum']['plugins']));
+    if (!empty($J['reboot'])) dau_os_reboot();
     return 0;
   } catch (Throwable $e) {
     dau_log('error', 'job', '-', $action, 'crash', $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
@@ -265,7 +335,7 @@ function dau_job_main($action, array $o = []) {
 function dau_cron_apply(array $cfg) {
   $any = dau_docker_slots($cfg) || dau_plugin_slots($cfg) || dau_os_slots($cfg);
   if ($any) {
-    $line = "# Docker Auto Update dispatcher (generated; do not edit)\n*/" . DAU_TICK_MIN . ' * * * * ' . DAU_PHP . ' ' . DAU_ROOT . "/scripts/run.php --tick > /dev/null 2>&1\n";
+    $line = "# Unraid Auto Updater dispatcher (generated; do not edit)\n*/" . DAU_TICK_MIN . ' * * * * ' . DAU_PHP . ' ' . DAU_ROOT . "/scripts/run.php --tick > /dev/null 2>&1\n";
     if (!is_dir(DAU_DIR)) @mkdir(DAU_DIR, 0755, true);
     if (@file_get_contents(DAU_CRON) !== $line) file_put_contents(DAU_CRON, $line);
   } elseif (is_file(DAU_CRON)) @unlink(DAU_CRON);
@@ -279,6 +349,19 @@ function dau_install() {
   $status = 'ok'; $cfg = dau_load_config($status);
   if ($status !== 'ok' || !is_file(DAU_CFG)) dau_save_config($cfg);
   dau_cron_apply($cfg);
+  /* an OS update that was waiting for this reboot: record whether the new release is now running */
+  $st = dau_state_load();
+  $r = dau_os_boot_verify($st);
+  if ($r) {
+    $ok = $r['kind'] === 'os_verified';
+    dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'update', 'result' => $ok ? 'updated' : 'failed', 'started' => (int)$r['at'], 'finished' => (int)$r['at'], 'trigger' => 'boot',
+      'prev' => ['version' => $r['installed']], 'new' => ['version' => $r['running']], 'verification' => ['result' => $ok ? 'version_matches' : 'version_differs', 'ok' => $ok, 'detail' => 'After the reboot Unraid reports ' . ($r['running'] ?: 'unknown') . ' (expected ' . $r['available'] . ').'],
+      'error' => $ok ? '' : 'The new release is not running after the reboot.'], $cfg['history']['max_entries']);
+    dau_stats_record($st, 'os', $ok, 0);
+    dau_unraid_notify(DAU_NAME . ': Unraid OS ' . ($ok ? 'update verified' : 'update NOT active'), 'Expected ' . $r['available'] . ', running ' . ($r['running'] ?: 'unknown') . '.', $ok ? 'normal' : 'alert', '/Tools');
+    dau_log($ok ? 'info' : 'error', 'os', 'Unraid OS', 'boot-verify', $ok ? 'ok' : 'fail', 'expected ' . $r['available'] . ', running ' . $r['running']);
+  }
+  dau_state_save($st);
   @unlink(DAU_STOPFLAG); @unlink(DAU_PROGRESS);
   dau_log('info', 'job', '-', 'install', $status, 'Config ' . $status . '; version ' . DAU_VERSION);
   return $status;

@@ -1,4 +1,4 @@
-/* Docker Auto Update UI. Plain JS, no libraries; every string is inserted as text (never as HTML). */
+/* Unraid Auto Updater UI. Plain JS, no libraries; every string is inserted as text (never as HTML). */
 (function () {
   'use strict';
   var API = '/plugins/docker.autoupdate/include/api.php';
@@ -70,8 +70,9 @@
       });
     }, 2000);
   }
-  function runJob(what, names, okMsg) {
-    return act('run', { what: what, names: names || [] }, okMsg || 'Started.').then(function (j) {
+  function runJob(what, names, okMsg, extra) {
+    var d = { what: what, names: names || [] }; for (var k in (extra || {})) d[k] = extra[k];
+    return act('run', d, okMsg || 'Started.').then(function (j) {
       if (j.ok) { S.ov.run = { running: true, progress: { phase: 'Starting' } }; render(); startPoll(); }
     });
   }
@@ -90,7 +91,7 @@
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
-    root.appendChild(h('div', { class: 'head' }, h('div', null, h('div', { class: 'title' }, 'Docker Auto Update'), h('div', { class: 'muted sm' }, 'Version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active'))),
+    root.appendChild(h('div', { class: 'head' }, h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active'))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
@@ -287,17 +288,43 @@
   }
 
   /* ---------- OS ---------- */
+  var OSSTATE = { up_to_date: ['Up to date', 'ok'], notify_only: ['Notify only', ''], not_confirmed: ['Not confirmed', 'warn'], prerelease: ['Pre-release: manual only', 'warn'], blocked: ['Blocked', 'bad'],
+    waiting_delay: ['Waiting', 'warn'], window_closed: ['Waiting for window', 'warn'], staged: ['Installed, reboot needed', 'warn'], ready: ['Ready', 'ok'] };
+  function confirmOsInstall(reboot) {
+    var o = S.os.os, m = modal(reboot ? 'Install Unraid ' + o.available + ' and reboot now?' : 'Install Unraid ' + o.available + ' now?');
+    m.body.appendChild(h('p', null, 'Installed: ' + (S.os.installed || '?') + '  →  ' + o.available));
+    m.body.appendChild(h('p', { class: 'muted' }, 'This runs Unraid\'s own "Update OS" install. The new release is written to the flash drive and the previous one is kept (Tools > Update OS > Restore).' + (reboot ? ' The server then REBOOTS immediately: containers and VMs are stopped and your network connection to the server drops.' : ' The new release only becomes active after a reboot, which you do yourself.')));
+    m.body.appendChild(h('p', { class: 'muted' }, 'Read the release notes first and make sure you have a recent flash drive backup.' + (S.os.stable === false ? ' This is a PRE-RELEASE.' : '')));
+    var rb = S.os.reboot, ar = S.os.array;
+    if (reboot && rb && !rb.ok) m.body.appendChild(h('div', { class: 'banner bad' }, 'A reboot would be postponed right now: ' + rb.reason));
+    var cb = h('input', { type: 'checkbox' });
+    m.body.appendChild(h('label', { class: 'switch' }, cb, 'I have read this and want to continue'));
+    var go = h('button', { class: 'btn pri', disabled: true, onclick: function () { m.close(); runJob('os_install', [], 'OS update started', { confirm: '1', reboot: reboot ? '1' : '0' }); } }, reboot ? 'Install and reboot' : 'Install');
+    cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(go);
+  }
   function vOS() {
     var w = h('div');
     if (!S.os) { w.appendChild(h('div', { class: 'dau-loading' }, 'Loading')); return w; }
-    var o = S.os.os;
-    w.appendChild(h('div', { class: 'banner' }, 'Unraid OS updates are only detected and reported here. This plugin never installs an OS update and never reboots your server.'));
-    w.appendChild(h('div', { class: 'cards' }, card('Installed', S.os.installed || '?'), card('Available', o.available || 'None', o.available ? 'since ' + when(o.first_seen) : 'Up to date', o.available ? 'hot' : ''), card('Last check', ago(o.last_check), o.last_error ? 'Failed: ' + o.last_error : 'OK', o.last_error ? 'bad' : '')));
+    var o = S.os.os, mode = S.os.mode, es = S.os.eval || { state: 'up_to_date', reason: '' }, st = OSSTATE[es.state] || [es.state, ''];
+    var modeText = { notify: 'Check and notify only. Nothing is installed and the server is never rebooted.', install: 'Install automatically, then wait for you to reboot.', install_reboot: 'Install automatically and reboot automatically (inside the maintenance window, never during a parity check).' }[mode] || '';
+    w.appendChild(h('div', { class: 'banner' + (mode === 'notify' ? '' : ' warn') }, h('b', null, 'Mode: '), modeText, ' Change it in Settings.'));
+    if (o.pending) w.appendChild(h('div', { class: 'banner warn' }, 'Unraid ' + o.pending.to + ' is installed and waiting for a reboot (installed ' + when(o.pending.at) + '). After the reboot this plugin checks that the new release is running.'));
+    w.appendChild(h('div', { class: 'cards' }, card('Installed', S.os.installed || '?'), card('Available', o.available || 'None', o.available ? 'since ' + when(o.first_seen) + (S.os.stable === false ? ' · pre-release' : '') : 'Up to date', o.available ? 'hot' : ''), card('Last check', ago(o.last_check), o.last_error ? 'Failed: ' + o.last_error : 'OK', o.last_error ? 'bad' : '')));
     if (o.available) {
+      w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Automatic handling'),
+        h('div', { class: 'inl' }, h('span', { class: 'badge ' + st[1] }, st[0]), h('span', { class: 'muted' }, es.reason || ''), es.eta ? h('span', { class: 'muted' }, 'earliest ' + when(es.eta)) : null),
+        mode !== 'notify' ? h('div', { class: 'muted sm' }, 'Maintenance window: ' + S.os.window_text) : null));
       w.appendChild(h('div', { class: 'panel' }, h('h3', null, 'Release notes (excerpt)'), h('pre', { class: 'log' }, o.notes || 'Not available. Open Tools > Update OS to read the full release notes.'),
-        h('p', null, 'To install: ', h('a', { href: '/Tools' }, 'open Tools'), ' and choose "Update OS". Back up your flash drive first and read the release notes.')));
+        h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes.')));
     }
-    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update')));
+    var busy = S.ov.run.running, acts = h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update'));
+    if (o.available && !o.pending) {
+      acts.appendChild(h('button', { class: 'btn', disabled: busy, onclick: function () { confirmOsInstall(false); } }, 'Install update…'));
+      acts.appendChild(h('button', { class: 'btn danger', disabled: busy, onclick: function () { confirmOsInstall(true); } }, 'Install and reboot…'));
+    }
+    if (o.pending) acts.appendChild(h('button', { class: 'btn danger', disabled: busy, onclick: function () { confirmOsInstall(true); } }, 'Reboot now…'));
+    w.appendChild(acts);
     return w;
   }
 
@@ -316,6 +343,25 @@
     return h('div', { class: 'fld' }, h('label', null, label), h('label', { class: 'switch' }, en, 'Only update inside this window'), box, h('span', { class: 'hint' }, 'Outside the window, updates wait for it to open. A window like 22:00-04:00 crosses midnight.'));
   }
   function section(title, kids) { return h('div', { class: 'panel' }, h('h3', null, title), kids); }
+  function osModeField() {
+    var d = S.draft, sel = h('select', null,
+      h('option', { value: 'notify' }, 'Check and notify only (default)'), h('option', { value: 'install' }, 'Install updates, I reboot myself'), h('option', { value: 'install_reboot' }, 'Install updates and reboot automatically'));
+    sel.value = d.os.mode;
+    sel.addEventListener('change', function () {
+      var v = sel.value;
+      if (v === 'notify') { d.os.mode = 'notify'; d.os.confirmed = ''; return; }
+      var m = modal(v === 'install' ? 'Install Unraid OS updates automatically?' : 'Install Unraid OS updates and reboot automatically?');
+      m.body.appendChild(h('p', null, 'A new Unraid release will be installed without you being present, ' + (v === 'install_reboot' ? 'and the server will REBOOT by itself afterwards (Docker containers and VMs stop for a few minutes).' : 'but it only becomes active when you reboot.')));
+      m.body.appendChild(h('p', { class: 'muted' }, 'Safeguards: only inside the maintenance window, only after the waiting period, only stable releases (unless you turn that off), the update is validated first, a reboot is postponed during a parity check or rebuild, and an update that fails is not retried by itself. Unraid keeps the previous release for a restore.'));
+      var cb = h('input', { type: 'checkbox' });
+      m.body.appendChild(h('label', { class: 'switch' }, cb, 'I understand and want this'));
+      var ok = h('button', { class: 'btn pri', disabled: true, onclick: function () { d.os.mode = v; d.os.confirmed = v; d.os.check_enabled = true; if (!d.os.window.enabled) d.os.window.enabled = true; m.close(); render(); toast('Remember to press Save.'); } }, 'Enable');
+      cb.addEventListener('change', function () { ok.disabled = !cb.checked; });
+      var cancel = function () { sel.value = d.os.mode; m.close(); };
+      m.foot.appendChild(h('button', { class: 'btn', onclick: cancel }, 'Cancel')); m.foot.appendChild(ok);
+    });
+    return h('div', { class: 'fld' }, h('label', null, 'When an update is found'), sel, h('span', { class: 'hint' }, 'Default: only check and notify. An automatic mode needs your explicit confirmation.'));
+  }
   function vSettings() {
     var d = S.draft, w = h('div');
     w.appendChild(section('Docker: default schedule', h('div', { class: 'grid2' },
@@ -332,13 +378,17 @@
       h('div', null, fSwitch('Check for plugin updates on a schedule', 'plugins.check_enabled'), fSched('Schedule', 'plugins'), fSwitch('Install updates automatically (plugins set to Auto update)', 'plugins.auto_update', 'OFF by default. Plugins run as root: only enable this for plugins you trust.'),
         (function () { var s = h('select', { onchange: function () { d.plugins.default_policy = s.value; } }); POL.forEach(function (p) { s.appendChild(h('option', { value: p[0], selected: d.plugins.default_policy === p[0] }, p[1])); }); return h('div', { class: 'fld' }, h('label', null, 'Policy for plugins without their own'), s); })()),
       h('div', null, fNum('Wait after a new version appears', 'plugins.delay_hours', 0, 720, null, 'hours'), fNum('Pause between plugins', 'plugins.delay', 0, 600, null, 'seconds'), fWindow('Maintenance window', 'plugins.window')))));
-    w.appendChild(section('Unraid OS', h('div', null, fSwitch('Check for OS updates on a schedule', 'os.check_enabled', 'Detection and notification only. Nothing is installed and the server is never rebooted.'), fSched('Schedule', 'os'))));
+    w.appendChild(section('Unraid OS', h('div', null,
+      h('div', { class: 'grid2' },
+        h('div', null, fSwitch('Check for OS updates on a schedule', 'os.check_enabled', 'Needed for everything below.'), fSched('Schedule', 'os'), osModeField()),
+        h('div', null, fNum('Wait after a release appears', 'os.delay_days', 0, 90, 'Counted from when the release was first seen. Applies to automatic installs only.', 'days'), fSwitch('Stable releases only', 'os.stable_only', 'Never install -rc, beta or next releases automatically.'), fWindow('Maintenance window (required for automatic installs)', 'os.window'))))));
     var dc = S.ov.config.discord;
     var url = h('input', { type: 'password', placeholder: dc.webhook_set ? 'A webhook is saved (hidden). Paste a new one to replace it.' : 'https://discord.com/api/webhooks/…', style: 'width:100%;max-width:520px', autocomplete: 'off' });
     var ev = function (k, l) { return fSwitch(l, 'discord.events.' + k); }, ty = function (k, l) { return fSwitch(l, 'discord.types.' + k); };
     var bat = h('select', { onchange: function () { d.discord.batching = bat.value; } }, h('option', { value: 'combine', selected: d.discord.batching === 'combine' }, 'Combine into few messages'), h('option', { value: 'separate', selected: d.discord.batching === 'separate' }, 'One message per notification'));
     w.appendChild(section('Discord notifications', h('div', null,
       fSwitch('Send to Discord', 'discord.enabled'),
+      fText('Icon image URL (optional)', 'discord.icon_url', 'https image used as the webhook avatar and in the message header. Empty = the bundled orange-on-grey icon: ' + (dc.icon_default || ''), 'https://…'),
       h('div', { class: 'fld' }, h('label', null, 'Webhook URL'), url, h('span', { class: 'hint' }, 'Stored on the server only in a separate file and never shown again. Messages never contain secrets.')),
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: function () { act('test_discord', { url: url.value }).then(function (j) { if (j.ok) toast('Test message sent.'); else if (!j.error) toast('Test failed', true); }); } }, 'Send test message'),
         dc.webhook_set ? h('button', { class: 'btn danger', onclick: function () { if (confirm('Remove the saved webhook?')) act('clear_webhook', {}, 'Webhook removed').then(function () { S.draft = null; load('settings'); }); } }, 'Remove webhook') : null),

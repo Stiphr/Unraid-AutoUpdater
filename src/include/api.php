@@ -1,5 +1,5 @@
 <?php
-/* Docker Auto Update - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
+/* Unraid Auto Updater - JSON API. Reads are GET/POST; EVERY change requires POST (Unraid validates the CSRF token of every POST itself). */
 require_once '/usr/local/emhttp/plugins/docker.autoupdate/include/lib.php';
 
 header('Content-Type: application/json');
@@ -56,7 +56,7 @@ function api_next_runs($cfg, $st) {
 }
 
 function api_config_view($cfg) {
-  $v = $cfg; $v['discord']['webhook_set'] = dau_webhook_valid(dau_secret_get('discord_url'));   // the URL itself is never sent to the browser
+  $v = $cfg; $v['discord']['webhook_set'] = dau_webhook_valid(dau_secret_get('discord_url')); $v['discord']['icon_default'] = DAU_DEFAULT_ICON;   // the URL itself is never sent to the browser
   return $v;
 }
 
@@ -69,7 +69,7 @@ switch ($action) {
     $rows = api_docker_rows($cfg, $st); $prow = api_plugin_rows($cfg, $st);
     $cnt = function ($r, $f) { return count(array_filter($r ?? [], $f)); };
     out([
-      'config' => api_config_view($cfg), 'config_status' => $s, 'run' => dau_run_info(), 'now' => dau_now(), 'version' => DAU_VERSION,
+      'config' => api_config_view($cfg), 'config_status' => $s, 'run' => dau_run_info(), 'now' => dau_now(), 'version' => DAU_VERSION, 'build' => DAU_BUILD, 'name' => DAU_NAME,
       'docker_up' => $rows !== null,
       'cards' => [
         'containers' => count($rows ?? []), 'docker_updates' => $cnt($rows, function ($r) { return $r['update'] === true; }),
@@ -87,7 +87,14 @@ switch ($action) {
 
   case 'docker': { $cfg = dau_load_config(); $st = dau_state_load(); $r = api_docker_rows($cfg, $st); out(['docker_up' => $r !== null, 'rows' => $r ?? []]); }
   case 'plugins': { $cfg = dau_load_config(); $st = dau_state_load(); out(['rows' => api_plugin_rows($cfg, $st), 'auto_update' => !empty($cfg['plugins']['auto_update'])]); }
-  case 'os': { $st = dau_state_load(); out(['os' => $st['os'], 'installed' => dau_os_version()]); }
+  case 'os': {
+    $cfg = dau_load_config(); $st = dau_state_load(); $now = dau_now();
+    $ev = dau_os_eval($cfg, $st, $now, false); $man = dau_os_eval($cfg, $st, $now, true);
+    $av = $st['os']['available'];
+    out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
+         'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
+         'pending' => $st['os']['pending']]);
+  }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
   case 'status': { out(['run' => dau_run_info()]); }
@@ -160,6 +167,10 @@ switch ($action) {
     $what = (string)($_POST['what'] ?? '');
     if ($what === 'check') $args = ['--check'];
     elseif ($what === 'os') $args = ['--os-check'];
+    elseif ($what === 'os_install') {
+      if (($_POST['confirm'] ?? '') !== '1') fail('Installing an OS update needs an explicit confirmation.');
+      $args = [!empty($_POST['reboot']) && $_POST['reboot'] === '1' ? '--os-install-reboot' : '--os-install'];
+    }
     elseif ($what === 'docker' || $what === 'plugins') {
       $names = $json('names'); if (!$names) fail('Nothing selected');
       $ok = array_values(array_filter($names, $what === 'docker' ? 'dau_valid_name' : 'dau_valid_plg'));

@@ -1,6 +1,6 @@
 <?php
 /*
- * Docker Auto Update - Unraid plugins.
+ * Unraid Auto Updater - Unraid plugins.
  * Only Unraid's own `plugin` tool ever installs anything: `plugin check` downloads the plg the plugin itself points
  * to, `plugin update` installs that downloaded file. This module adds the safety net around it (opt-in, policies,
  * delay, validation, pinning, verification). It never disables a check Unraid does and never auto-rolls back.
@@ -35,15 +35,20 @@ function dau_plugins_installed() {
   return $out;
 }
 
-/** Ask the plugin's own server for its current version (downloads the new plg to /tmp/plugins). */
+/**
+ * Ask the plugin's own server for its current version. `plugin check` downloads the new plg to /tmp/plugins and prints
+ * progress and hook-script lines around the version, so stdout is NOT parsed: the version is read from the downloaded file.
+ */
 function dau_plugin_check($file) {
   if (!dau_valid_plg($file)) return ['ok' => false, 'error' => 'invalid plugin name'];
+  $tmp = DAU_PLUGTMP . '/' . $file;
+  if (is_file($tmp)) @unlink($tmp);                      // never trust a stale download
   $r = dau_run([dau_plugin_bin(), 'check', $file], 120);
   if ($r['timeout']) return ['ok' => false, 'error' => 'check timed out'];
-  $v = trim(preg_replace('/\s+/', ' ', trim($r['out'])));
-  $lines = array_values(array_filter(array_map('trim', explode("\n", $r['out']))));
-  $v = $lines ? end($lines) : '';
-  if ($r['code'] !== 0 || $v === '' || !preg_match('/^[A-Za-z0-9._+-]{1,40}$/', $v)) return ['ok' => false, 'error' => dau_clip(dau_redact(trim($r['err'] . ' ' . $r['out'])), 200) ?: 'no version returned'];
+  $err = function () use ($r) { return dau_clip(dau_redact(trim(preg_replace('/[\r\n]+/', ' ', $r['err'] . ' ' . $r['out']))), 200) ?: 'no version returned'; };
+  if ($r['code'] !== 0 || !is_file($tmp)) return ['ok' => false, 'error' => $err()];
+  $v = dau_plg_attr($tmp, 'version');
+  if ($v === '' || !preg_match('/^[A-Za-z0-9._+-]{1,40}$/', $v)) return ['ok' => false, 'error' => 'the downloaded plugin file has no valid version'];
   return ['ok' => true, 'latest' => $v];
 }
 
@@ -108,7 +113,7 @@ function dau_plugin_validate(array $p, $latest) {
 /** Eligibility (same vocabulary as containers). */
 function dau_plugin_eval(array $cfg, array $st, array $p, $latest, $now, $manual = false) {
   $pc = $cfg['plugins'];
-  if ($p['self'] && $manual) return ['state' => 'self', 'reason' => 'Update this plugin from Plugins > Docker Auto Update.', 'eta' => null];
+  if ($p['self'] && $manual) return ['state' => 'self', 'reason' => 'Update this plugin from Plugins > Unraid Auto Updater.', 'eta' => null];
   if ($p['self']) return ['state' => 'self', 'reason' => 'This plugin never updates itself automatically.', 'eta' => null];
   if (!dau_version_newer($latest, $p['version'])) return ['state' => 'up_to_date', 'reason' => '', 'eta' => null];
   if ($manual) return ['state' => 'ready', 'reason' => '', 'eta' => null];
