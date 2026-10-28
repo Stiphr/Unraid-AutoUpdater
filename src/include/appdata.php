@@ -9,7 +9,7 @@ define('DAU_QDIR_NAME', '.unraid-autoupdater-quarantine');
 define('DAU_QUARANTINE_DB', DAU_DIR . '/quarantine.json');
 define('DAU_TPL_BACKUPS', DAU_DIR . '/template-backups');
 
-function dau_appdata_roots(array $cfg = null) {
+function dau_appdata_roots(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = $cfg['appdata']['roots'] ?? ['/mnt/user/appdata'];
   $out = [];
@@ -57,7 +57,7 @@ function dau_templates_read() {
   foreach (glob(DAU_TEMPLATES . '/my-*.xml') ?: [] as $f) {
     $n = substr(basename($f), 3, -4);
     if (!dau_valid_name($n)) continue;
-    $x = @simplexml_load_file($f, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);
+    $x = @simplexml_load_string((string)@file_get_contents($f), 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);   // read as text: works even while the entity loader is off
     if (!$x) continue;
     $paths = [];
     foreach ($x->Config ?? [] as $c) if (strtolower((string)$c['Type']) === 'path') { $v = trim((string)$c); if ($v !== '' && $v[0] === '/') $paths[] = $v; }
@@ -75,7 +75,7 @@ function dau_dir_size($p) {
  * Orphaned appdata folders. A folder is an orphan when no container (any state) maps it or something inside it.
  * Mounts that cover the whole appdata share (e.g. /mnt/user) are shown but never count as ownership.
  */
-function dau_appdata_scan(array $cfg = null) {
+function dau_appdata_scan(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = dau_appdata_roots($cfg);
   if (!$roots) return ['ok' => false, 'error' => 'No appdata folder is set up, or it does not exist. Add it under Settings > Cleanup.'];

@@ -2,13 +2,13 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.11.01">
+<!ENTITY version "2026.11.02">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/docker.autoupdate.plg">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="refresh">
 
 <CHANGES>
-###2026.11.01
+###2026.11.02
 - Renamed: this plugin is now called Unraid Swiss Manager (unraid-autoupdater). Updating installs the new plugin, keeps your settings, history and webhook, and removes this old entry.
 </CHANGES>
 

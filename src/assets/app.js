@@ -818,6 +818,7 @@
     if (k === 'appdata') {
       p.appendChild(fSwitch('Also back up right before updates are installed', 'backups.appdata.before_update', 'Runs once before a run that installs Docker or plugin updates, and only when there really is something to install. Nothing is backed up when there is nothing to update.'));
       p.appendChild(fSwitch('Do not install the updates if this backup fails', 'backups.appdata.required', 'Off: a failed backup is reported and the updates go on. On: the updates wait until a backup works.'));
+      p.appendChild(fSwitch('Stop the containers while the backup runs', 'backups.appdata.stop_containers', 'Recommended for databases. Running containers that use the appdata folders are stopped for the backup and started again afterwards (also when the backup fails), in their "update after" order. They are offline for as long as the backup takes.'));
     }
     p.appendChild(fText('Save backups to (a folder under /mnt)', 'backups.' + k + '.dest', 'Example: /mnt/user/backups. Backups go into a folder named Unraid-Swiss-Manager inside it. Use another disk or share than the data being backed up, ideally not the same disk.', '/mnt/user/backups'));
     var kp = h('select', { 'aria-label': 'Backups to keep', style: 'max-width:220px', onchange: function () { b.keep = +kp.value; } });

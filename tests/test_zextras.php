@@ -76,7 +76,7 @@ function xenv(array $o = []) {
     return null;
   });
 }
-function xcfg(callable $f = null) {
+function xcfg(?callable $f = null) {
   $c = dau_defaults(); $c['global']['cleanup'] = false; $c['global']['verify']['timeout'] = 10; $c['global']['delay'] = 0;
   foreach (['db', 'app', 'cache'] as $n) $c['containers'][$n] = ['policy' => 'auto'];
   if ($f) $f($c); dau_save_config($c); return $c;
