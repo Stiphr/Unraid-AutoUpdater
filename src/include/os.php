@@ -75,6 +75,7 @@ function dau_os_reboot_safe() {
   if (!$a['ok']) return ['ok' => false, 'reason' => 'The array state could not be read.'];
   if (!in_array($a['state'], ['STARTED', 'STOPPED'], true)) return ['ok' => false, 'reason' => 'The array is in state ' . $a['state'] . ' (not a plain started or stopped array).'];
   if ($a['resync'] > 0) return ['ok' => false, 'reason' => 'A parity check, sync or rebuild is running.'];
+  if (dau_pid_alive(DAU_MOVERPID)) return ['ok' => false, 'reason' => 'The mover is running (files are being moved between the cache and the array).'];
   return ['ok' => true, 'reason' => ''];
 }
 

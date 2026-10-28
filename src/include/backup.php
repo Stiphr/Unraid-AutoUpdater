@@ -43,9 +43,10 @@ function dau_backup_run(array $cfg, $name, array $inspect) {
     $size = (float)trim($r['out']);
     if ($need($size, 'image') && $img !== '') {
       $f = "$dir/$stamp-image.tar";
-      $s = dau_docker(['save', '-o', $f, $img], 1800);
-      if ($s['code'] === 0 && !$s['timeout']) { $res['files'][] = $f; $res['kinds'][] = 'image'; }
-      else { @unlink($f); $res['skipped'][] = 'image: docker save failed'; }
+      $tmp = "$dir/.$stamp-image.tar.partial";
+      $s = dau_docker(['save', '-o', $tmp, $img], 1800);
+      if ($s['code'] === 0 && !$s['timeout'] && is_file($tmp) && @rename($tmp, $f)) { $res['files'][] = $f; $res['kinds'][] = 'image'; }
+      else { @unlink($tmp); $res['skipped'][] = 'image: docker save failed'; }
     }
   }
   if (!empty($b['appdata'])) {
@@ -59,17 +60,17 @@ function dau_backup_run(array $cfg, $name, array $inspect) {
       $size = 0.0;
       foreach ($paths as $p) { $r = dau_run([dau_bin('du'), '-sb', $p], 600); $size += (float)preg_replace('/\s.*/s', '', trim($r['out'])); }
       if ($need($size, 'appdata')) {
-        $f = "$dir/$stamp-appdata.tar.gz";
-        $t = dau_run(array_merge([dau_bin('tar'), '-czf', $f, '--'], $paths), 3600);
-        if ($t['code'] === 0 || $t['code'] === 1) { $res['files'][] = $f; $res['kinds'][] = 'appdata'; }   // 1 = files changed while reading (expected, container is running)
-        else { @unlink($f); $res['skipped'][] = 'appdata: tar failed'; }
+        $f = "$dir/$stamp-appdata.tar.gz"; $tmp = "$dir/.$stamp-appdata.tar.gz.partial";   // renamed only when complete: an interrupted tar never looks like a backup
+        $t = dau_run(array_merge([dau_bin('tar'), '-czf', $tmp, '--'], $paths), 3600);
+        if (($t['code'] === 0 || $t['code'] === 1) && !$t['timeout'] && is_file($tmp) && @rename($tmp, $f)) { $res['files'][] = $f; $res['kinds'][] = 'appdata'; }   // 1 = files changed while reading (expected, container is running)
+        else { @unlink($tmp); $res['skipped'][] = 'appdata: tar failed'; }
       }
     }
   }
-  dau_backup_prune($dir, (int)$b['retention']);
   $wanted = array_filter([!empty($b['config']) ? 'config' : null, !empty($b['image']) ? 'image' : null, !empty($b['appdata']) ? 'appdata' : null]);
   $missing = array_diff($wanted, $res['kinds']);
   $res['ok'] = !$missing && $res['kinds'];
+  if ($res['ok']) dau_backup_prune($dir, (int)$b['retention']);   // only a complete new set may push an older one out
   if (!$res['ok']) $res['error'] = $res['skipped'] ? implode('; ', $res['skipped']) : 'no backup type selected';
   return $res;
 }

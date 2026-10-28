@@ -114,6 +114,11 @@ t('os: reboot guard for array states', function () {
     file_put_contents(DAU_VARINI, "mdState=\"$md\"\nmdResync=\"0\"\n"); eq(dau_os_reboot_safe()['ok'], $ok, $md);
   }
   @unlink(DAU_VARINI); eq(dau_os_reboot_safe()['ok'], false, 'unknown state is not safe');
+  file_put_contents(DAU_VARINI, "mdState=\"STARTED\"\nmdResync=\"0\"\n");
+  $mv = proc_open(['sleep', '5'], [], $pp); $mvpid = proc_get_status($mv)['pid'];      // a live process that is not pid 1 (tests may run as pid 1 in a container)
+  file_put_contents(DAU_MOVERPID, $mvpid . "\n"); eq(dau_os_reboot_safe()['ok'], false, 'mover running'); has(dau_os_reboot_safe()['reason'], 'mover');
+  proc_terminate($mv); proc_close($mv);
+  file_put_contents(DAU_MOVERPID, "999999999\n"); eq(dau_os_reboot_safe()['ok'], true, 'stale mover pid file'); @unlink(DAU_MOVERPID);
 });
 
 t('os: a failed install is not retried and never reboots', function () {

@@ -39,7 +39,7 @@ t('api: container and plugin settings are sanitised', function () {
   $c = dau_load_config(); eq(array_keys($c['plugins']['items']), ['a.plg']);
   has(api_call('run', ['what' => 'docker', 'names' => json_encode([])])['error'] ?? '', 'Nothing');
   has(api_call('run', ['what' => 'rm -rf'])['error'] ?? '', 'Unknown');
-  has(api_call('nope')['error'] ?? '', '');
+  has(api_call('nope')['error'] ?? '', 'Unknown action');      // a non-empty needle: PHP 7.4 strpos() never matches ''
 });
 
 t('api: import accepts an export file and keeps a copy of the old settings', function () {

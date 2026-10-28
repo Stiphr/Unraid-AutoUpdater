@@ -4,7 +4,8 @@
  * One archive per run: <destination>/Unraid-Swiss-Manager/<appdata|flash>/<kind>-YYYYmmdd-HHMMSS.tar.gz.
  *  - An archive is written under a temporary name and renamed only when it is complete, so a half-written file is never
  *    mistaken for a backup. Old archives are removed only AFTER the new one succeeded, and the newest is never removed.
- *  - Appdata is NOT application-consistent: containers keep running while it is read (use a stop-and-copy plugin for databases).
+ *  - Appdata is NOT application-consistent unless "stop_containers" is on: then the running containers that use the appdata folders
+ *    are stopped (dependants first) for the archive and started again afterwards (dependencies first), also when the archive fails.
  *  - The archives hold your own data and keys, so they are created private (0600). Keep them off the flash drive.
  * Separate from backup.php, which keeps small per-container safety copies right before a container update.
  */
@@ -16,12 +17,54 @@ function dau_bk_label($kind) { return $kind === 'flash' ? 'Boot drive (flash)' :
 function dau_bk_spec() {
   $one = ['schedule' => ['enum', ['off', 'weekly', 'monthly']], 'weekday' => ['int', 0, 6], 'monthday' => ['int', 1, 28], 'time' => ['time'],
           'dest' => ['path'], 'keep' => ['int', 1, 3]];
-  return ['appdata' => ['obj', $one + ['before_update' => ['bool'], 'required' => ['bool'], 'exclude' => ['folders']]], 'flash' => ['obj', $one]];
+  return ['appdata' => ['obj', $one + ['before_update' => ['bool'], 'required' => ['bool'], 'stop_containers' => ['bool'], 'exclude' => ['folders']]], 'flash' => ['obj', $one]];
 }
 
 function dau_bk_defaults() {
   $one = ['schedule' => 'off', 'weekday' => 0, 'monthday' => 1, 'dest' => '', 'keep' => 2];
-  return ['appdata' => $one + ['time' => '03:00', 'before_update' => false, 'required' => false, 'exclude' => []], 'flash' => $one + ['time' => '03:30']];
+  return ['appdata' => $one + ['time' => '03:00', 'before_update' => false, 'required' => false, 'stop_containers' => false, 'exclude' => []], 'flash' => $one + ['time' => '03:30']];
+}
+
+/** Running containers that map something inside the appdata folders, in the order they should be started again ("update after" first). */
+function dau_bk_users(array $cfg, array $srcs) {
+  $m = dau_appdata_mounts(); if (!$m) return [];
+  $todo = [];
+  foreach ($m as $c) {
+    if ($c['state'] !== 'running' || !dau_valid_name($c['name'])) continue;
+    foreach ($c['sources'] as $s) {
+      $sr = @realpath($s) ?: $s; $hit = false;
+      foreach ($srcs as $root) { $rr = @realpath($root) ?: $root; if (dau_path_in($sr, $rr) || dau_path_in(dau_path_tail($sr), dau_path_tail($rr))) { $hit = true; break; } }
+      if ($hit) { $todo[] = [['name' => $c['name']]]; break; }
+    }
+  }
+  return array_map(function ($t) { return $t[0]['name']; }, dau_docker_order($todo, $cfg));
+}
+
+/** Stop these containers (dependants first). Returns the ones that were stopped; stops early and reports when one refuses. */
+function dau_bk_stop(array $names, array &$res) {
+  $stopped = [];
+  foreach (array_reverse($names) as $n) {
+    dau_phase('Stopping ' . $n . ' for the backup', ['current' => $n]);
+    $r = dau_docker(['stop', '-t', '60', $n], 120);
+    if ($r['code'] !== 0 || $r['timeout']) { $res['error'] = $n . ' could not be stopped, so the backup was not made.'; break; }
+    $stopped[] = $n;
+  }
+  return $stopped;
+}
+
+/** Start them again in dependency order. Never throws; each failure is reported. */
+function dau_bk_start(array $stopped, array &$res) {
+  $failed = [];
+  foreach (array_reverse($stopped) as $n) {
+    dau_phase('Starting ' . $n . ' again', ['current' => $n]);
+    $r = dau_docker(['start', $n], 120);
+    if ($r['code'] !== 0 || $r['timeout']) $failed[] = $n;
+  }
+  if ($failed) {
+    $res['restart_failed'] = $failed;
+    $msg = 'These containers did not start again after the backup: ' . implode(', ', $failed) . '. Start them on the Docker tab.';
+    $res['error'] = $res['error'] !== '' ? $res['error'] . ' ' . $msg : $msg;
+  }
 }
 
 /** Folders that will be archived: the appdata roots that exist (flash is always /boot). */
@@ -90,16 +133,26 @@ function dau_bk_run($kind, array $cfg) {
   $stamp = date('Ymd-His', $t0);
   $final = "$dir/$kind-$stamp.tar.gz"; $tmp = "$dir/.$kind-$stamp.tar.gz.partial";
   $argv = [dau_bin('tar'), '-czf', $tmp, '--warning=no-file-changed', '-C', '/'];
-  if ($kind === 'appdata') foreach ($srcs as $s) foreach ((array)$b['exclude'] as $x) $argv[] = '--exclude=' . ltrim($s, '/') . '/' . $x;
+  if ($kind === 'appdata') foreach ($srcs as $s) {
+    foreach ((array)$b['exclude'] as $x) $argv[] = '--exclude=' . ltrim($s, '/') . '/' . $x;
+    $argv[] = '--exclude=' . ltrim($s, '/') . '/' . DAU_QDIR_NAME;    // folders already set aside by Cleanup are not worth backing up again
+  }
   $argv[] = '--';
   foreach ($srcs as $s) $argv[] = ltrim($s, '/');
+  $stopped = [];
+  if ($kind === 'appdata' && !empty($b['stop_containers'])) {
+    $stopped = dau_bk_stop(dau_bk_users($cfg, $srcs), $res);
+    if ($res['error'] !== '') { dau_bk_start($stopped, $res); return $res; }
+    if ($stopped) $res['notes'][] = 'Stopped during the backup: ' . implode(', ', $stopped) . '.';
+  }
   $old = umask(0077);
-  $r = dau_run($argv, 6 * 3600, null, 4096);
-  umask($old);
+  try { $r = dau_run($argv, 6 * 3600, null, 4096); }
+  finally { umask($old); dau_bk_start($stopped, $res); }      // containers come back even when tar fails
+  if (!empty($res['restart_failed'])) { $err = $res['error']; $res['error'] = ''; }
   $okCode = $r['code'] === 0 || ($r['code'] === 1 && $kind === 'appdata');       // 1 = a file changed while it was read (the containers run)
   if (!$okCode || $r['timeout'] || !is_file($tmp) || (int)@filesize($tmp) < 1) {
     @unlink($tmp);
-    $res['error'] = $r['timeout'] ? 'The backup took longer than 6 hours and was stopped.' : 'The archive could not be written' . (trim($r['err']) !== '' ? ': ' . dau_clip(dau_redact(trim($r['err'])), 160) : '.');
+    $res['error'] = trim(($r['timeout'] ? 'The backup took longer than 6 hours and was stopped.' : 'The archive could not be written' . (trim($r['err']) !== '' ? ': ' . dau_clip(dau_redact(trim($r['err'])), 160) : '.')) . ' ' . ($err ?? ''));
     return $res;
   }
   if ($kind === 'flash') {      // the boot drive is small: prove the archive can be read back
@@ -112,6 +165,7 @@ function dau_bk_run($kind, array $cfg) {
   if ($r['code'] === 1) $res['notes'][] = 'Some files changed while they were read (normal while containers run).';
   $res['pruned'] = dau_bk_prune($kind, $b['dest'], $b['keep']);
   $res['kept'] = count(dau_bk_list($kind, $b['dest']));
+  if (isset($err)) { $res['ok'] = false; $res['error'] = $err; }    // the archive is good, but a container is down: that must not look like success
   return $res;
 }
 

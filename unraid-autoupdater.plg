@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-autoupdater">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.31b7">
+<!ENTITY version "2026.11.02b1">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-autoupdater.plg">
@@ -10,6 +10,13 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-autoupdater.png">
 
 <CHANGES>
+###2026.11.02b1
+- BETA. New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
+- BETA. Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
+- BETA. Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- BETA. Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
+- BETA. Improved: an automatic reboot after an OS update also waits while the mover is running.
+- BETA. Improved: no deprecation warnings on newer PHP versions.
 ###2026.10.31b7
 - BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6
@@ -182,7 +189,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.31b7');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.11.02b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-autoupdater');
 define('DAU_DIR',       '/boot/config/plugins/unraid-autoupdater');
@@ -209,6 +216,7 @@ define('DAU_OSVERFILE', '/etc/unraid-version');
 define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
+define('DAU_MOVERPID',  '/var/run/mover.pid');
 define('DAU_SELF_PLG',  'unraid-autoupdater.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
@@ -422,6 +430,12 @@ function dau_unraid_notify($subject, $desc, $importance = 'normal', $link = '/Do
            '-d', dau_clip(dau_redact($desc), 500), '-i', $importance, '-l', $link], 30);
 }
 
+/** True when the pid file names a process that is still alive (a stale file left by a crash does not count). */
+function dau_pid_alive($file) {
+  $pid = (int)trim((string)@file_get_contents($file));
+  return $pid > 1 && is_dir('/proc/' . $pid);
+}
+
 function dau_valid_name($n) { return is_string($n) && preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $n) === 1; }
 
 /** Plugin file name as used in /var/log/plugins, e.g. "community.applications.plg". */
@@ -435,7 +449,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>83846da28b9393b79fcb2dd683e6194a6c05a1743fe3d24f591ee2816f850dc4</SHA256>
+<SHA256>9b5de691dcb452ae22dfd84fbf84cd26262b78eda58437891c2afb1c691204c6</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -1304,7 +1318,7 @@ function dau_field($name, $value, $inline = true) {
 function dau_clean_text($s, $max) { return dau_clip(dau_redact((string)$s), $max); }
 
 /** Icon used for the webhook avatar and the embed header: the configured https URL, else the bundled default. */
-function dau_discord_icon(array $cfg = null) {
+function dau_discord_icon(?array $cfg = null) {
   $u = $cfg['discord']['icon_url'] ?? '';
   return dau_icon_url_valid($u) ? $u : DAU_DEFAULT_ICON;
 }
@@ -1510,7 +1524,7 @@ function dau_discord_test(array &$st, $urlOverride = null) {
   return ['ok' => false, 'error' => $r['error']];
 }
 ]]></INLINE>
-<SHA256>3a391076f03d806fab97a1ab769132774817a6e7493266d541daf36844f1d360</SHA256>
+<SHA256>e67b848468beae89fc58b53278655c8b134627c065535582c261bfaf57ed8a00</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/backup.php" Mode="0644">
@@ -1559,9 +1573,10 @@ function dau_backup_run(array $cfg, $name, array $inspect) {
     $size = (float)trim($r['out']);
     if ($need($size, 'image') && $img !== '') {
       $f = "$dir/$stamp-image.tar";
-      $s = dau_docker(['save', '-o', $f, $img], 1800);
-      if ($s['code'] === 0 && !$s['timeout']) { $res['files'][] = $f; $res['kinds'][] = 'image'; }
-      else { @unlink($f); $res['skipped'][] = 'image: docker save failed'; }
+      $tmp = "$dir/.$stamp-image.tar.partial";
+      $s = dau_docker(['save', '-o', $tmp, $img], 1800);
+      if ($s['code'] === 0 && !$s['timeout'] && is_file($tmp) && @rename($tmp, $f)) { $res['files'][] = $f; $res['kinds'][] = 'image'; }
+      else { @unlink($tmp); $res['skipped'][] = 'image: docker save failed'; }
     }
   }
   if (!empty($b['appdata'])) {
@@ -1575,17 +1590,17 @@ function dau_backup_run(array $cfg, $name, array $inspect) {
       $size = 0.0;
       foreach ($paths as $p) { $r = dau_run([dau_bin('du'), '-sb', $p], 600); $size += (float)preg_replace('/\s.*/s', '', trim($r['out'])); }
       if ($need($size, 'appdata')) {
-        $f = "$dir/$stamp-appdata.tar.gz";
-        $t = dau_run(array_merge([dau_bin('tar'), '-czf', $f, '--'], $paths), 3600);
-        if ($t['code'] === 0 || $t['code'] === 1) { $res['files'][] = $f; $res['kinds'][] = 'appdata'; }   // 1 = files changed while reading (expected, container is running)
-        else { @unlink($f); $res['skipped'][] = 'appdata: tar failed'; }
+        $f = "$dir/$stamp-appdata.tar.gz"; $tmp = "$dir/.$stamp-appdata.tar.gz.partial";   // renamed only when complete: an interrupted tar never looks like a backup
+        $t = dau_run(array_merge([dau_bin('tar'), '-czf', $tmp, '--'], $paths), 3600);
+        if (($t['code'] === 0 || $t['code'] === 1) && !$t['timeout'] && is_file($tmp) && @rename($tmp, $f)) { $res['files'][] = $f; $res['kinds'][] = 'appdata'; }   // 1 = files changed while reading (expected, container is running)
+        else { @unlink($tmp); $res['skipped'][] = 'appdata: tar failed'; }
       }
     }
   }
-  dau_backup_prune($dir, (int)$b['retention']);
   $wanted = array_filter([!empty($b['config']) ? 'config' : null, !empty($b['image']) ? 'image' : null, !empty($b['appdata']) ? 'appdata' : null]);
   $missing = array_diff($wanted, $res['kinds']);
   $res['ok'] = !$missing && $res['kinds'];
+  if ($res['ok']) dau_backup_prune($dir, (int)$b['retention']);   // only a complete new set may push an older one out
   if (!$res['ok']) $res['error'] = $res['skipped'] ? implode('; ', $res['skipped']) : 'no backup type selected';
   return $res;
 }
@@ -1599,7 +1614,7 @@ function dau_backup_prune($dir, $keep) {
   foreach (array_slice($sets, $keep, null, true) as $files) foreach ($files as $f) @unlink($f);
 }
 ]]></INLINE>
-<SHA256>29c49a74a5e7f3b5d58b82e90b601f1ff3fa37d6025e9e7605166494e47735e6</SHA256>
+<SHA256>6fe859282d1655a1b08ee0f2c599b19b4467c03fb0de6edde010e157aef12974</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/backups.php" Mode="0644">
@@ -1609,7 +1624,8 @@ function dau_backup_prune($dir, $keep) {
  * One archive per run: <destination>/Unraid-Swiss-Manager/<appdata|flash>/<kind>-YYYYmmdd-HHMMSS.tar.gz.
  *  - An archive is written under a temporary name and renamed only when it is complete, so a half-written file is never
  *    mistaken for a backup. Old archives are removed only AFTER the new one succeeded, and the newest is never removed.
- *  - Appdata is NOT application-consistent: containers keep running while it is read (use a stop-and-copy plugin for databases).
+ *  - Appdata is NOT application-consistent unless "stop_containers" is on: then the running containers that use the appdata folders
+ *    are stopped (dependants first) for the archive and started again afterwards (dependencies first), also when the archive fails.
  *  - The archives hold your own data and keys, so they are created private (0600). Keep them off the flash drive.
  * Separate from backup.php, which keeps small per-container safety copies right before a container update.
  */
@@ -1621,12 +1637,54 @@ function dau_bk_label($kind) { return $kind === 'flash' ? 'Boot drive (flash)' :
 function dau_bk_spec() {
   $one = ['schedule' => ['enum', ['off', 'weekly', 'monthly']], 'weekday' => ['int', 0, 6], 'monthday' => ['int', 1, 28], 'time' => ['time'],
           'dest' => ['path'], 'keep' => ['int', 1, 3]];
-  return ['appdata' => ['obj', $one + ['before_update' => ['bool'], 'required' => ['bool'], 'exclude' => ['folders']]], 'flash' => ['obj', $one]];
+  return ['appdata' => ['obj', $one + ['before_update' => ['bool'], 'required' => ['bool'], 'stop_containers' => ['bool'], 'exclude' => ['folders']]], 'flash' => ['obj', $one]];
 }
 
 function dau_bk_defaults() {
   $one = ['schedule' => 'off', 'weekday' => 0, 'monthday' => 1, 'dest' => '', 'keep' => 2];
-  return ['appdata' => $one + ['time' => '03:00', 'before_update' => false, 'required' => false, 'exclude' => []], 'flash' => $one + ['time' => '03:30']];
+  return ['appdata' => $one + ['time' => '03:00', 'before_update' => false, 'required' => false, 'stop_containers' => false, 'exclude' => []], 'flash' => $one + ['time' => '03:30']];
+}
+
+/** Running containers that map something inside the appdata folders, in the order they should be started again ("update after" first). */
+function dau_bk_users(array $cfg, array $srcs) {
+  $m = dau_appdata_mounts(); if (!$m) return [];
+  $todo = [];
+  foreach ($m as $c) {
+    if ($c['state'] !== 'running' || !dau_valid_name($c['name'])) continue;
+    foreach ($c['sources'] as $s) {
+      $sr = @realpath($s) ?: $s; $hit = false;
+      foreach ($srcs as $root) { $rr = @realpath($root) ?: $root; if (dau_path_in($sr, $rr) || dau_path_in(dau_path_tail($sr), dau_path_tail($rr))) { $hit = true; break; } }
+      if ($hit) { $todo[] = [['name' => $c['name']]]; break; }
+    }
+  }
+  return array_map(function ($t) { return $t[0]['name']; }, dau_docker_order($todo, $cfg));
+}
+
+/** Stop these containers (dependants first). Returns the ones that were stopped; stops early and reports when one refuses. */
+function dau_bk_stop(array $names, array &$res) {
+  $stopped = [];
+  foreach (array_reverse($names) as $n) {
+    dau_phase('Stopping ' . $n . ' for the backup', ['current' => $n]);
+    $r = dau_docker(['stop', '-t', '60', $n], 120);
+    if ($r['code'] !== 0 || $r['timeout']) { $res['error'] = $n . ' could not be stopped, so the backup was not made.'; break; }
+    $stopped[] = $n;
+  }
+  return $stopped;
+}
+
+/** Start them again in dependency order. Never throws; each failure is reported. */
+function dau_bk_start(array $stopped, array &$res) {
+  $failed = [];
+  foreach (array_reverse($stopped) as $n) {
+    dau_phase('Starting ' . $n . ' again', ['current' => $n]);
+    $r = dau_docker(['start', $n], 120);
+    if ($r['code'] !== 0 || $r['timeout']) $failed[] = $n;
+  }
+  if ($failed) {
+    $res['restart_failed'] = $failed;
+    $msg = 'These containers did not start again after the backup: ' . implode(', ', $failed) . '. Start them on the Docker tab.';
+    $res['error'] = $res['error'] !== '' ? $res['error'] . ' ' . $msg : $msg;
+  }
 }
 
 /** Folders that will be archived: the appdata roots that exist (flash is always /boot). */
@@ -1695,16 +1753,26 @@ function dau_bk_run($kind, array $cfg) {
   $stamp = date('Ymd-His', $t0);
   $final = "$dir/$kind-$stamp.tar.gz"; $tmp = "$dir/.$kind-$stamp.tar.gz.partial";
   $argv = [dau_bin('tar'), '-czf', $tmp, '--warning=no-file-changed', '-C', '/'];
-  if ($kind === 'appdata') foreach ($srcs as $s) foreach ((array)$b['exclude'] as $x) $argv[] = '--exclude=' . ltrim($s, '/') . '/' . $x;
+  if ($kind === 'appdata') foreach ($srcs as $s) {
+    foreach ((array)$b['exclude'] as $x) $argv[] = '--exclude=' . ltrim($s, '/') . '/' . $x;
+    $argv[] = '--exclude=' . ltrim($s, '/') . '/' . DAU_QDIR_NAME;    // folders already set aside by Cleanup are not worth backing up again
+  }
   $argv[] = '--';
   foreach ($srcs as $s) $argv[] = ltrim($s, '/');
+  $stopped = [];
+  if ($kind === 'appdata' && !empty($b['stop_containers'])) {
+    $stopped = dau_bk_stop(dau_bk_users($cfg, $srcs), $res);
+    if ($res['error'] !== '') { dau_bk_start($stopped, $res); return $res; }
+    if ($stopped) $res['notes'][] = 'Stopped during the backup: ' . implode(', ', $stopped) . '.';
+  }
   $old = umask(0077);
-  $r = dau_run($argv, 6 * 3600, null, 4096);
-  umask($old);
+  try { $r = dau_run($argv, 6 * 3600, null, 4096); }
+  finally { umask($old); dau_bk_start($stopped, $res); }      // containers come back even when tar fails
+  if (!empty($res['restart_failed'])) { $err = $res['error']; $res['error'] = ''; }
   $okCode = $r['code'] === 0 || ($r['code'] === 1 && $kind === 'appdata');       // 1 = a file changed while it was read (the containers run)
   if (!$okCode || $r['timeout'] || !is_file($tmp) || (int)@filesize($tmp) < 1) {
     @unlink($tmp);
-    $res['error'] = $r['timeout'] ? 'The backup took longer than 6 hours and was stopped.' : 'The archive could not be written' . (trim($r['err']) !== '' ? ': ' . dau_clip(dau_redact(trim($r['err'])), 160) : '.');
+    $res['error'] = trim(($r['timeout'] ? 'The backup took longer than 6 hours and was stopped.' : 'The archive could not be written' . (trim($r['err']) !== '' ? ': ' . dau_clip(dau_redact(trim($r['err'])), 160) : '.')) . ' ' . ($err ?? ''));
     return $res;
   }
   if ($kind === 'flash') {      // the boot drive is small: prove the archive can be read back
@@ -1717,6 +1785,7 @@ function dau_bk_run($kind, array $cfg) {
   if ($r['code'] === 1) $res['notes'][] = 'Some files changed while they were read (normal while containers run).';
   $res['pruned'] = dau_bk_prune($kind, $b['dest'], $b['keep']);
   $res['kept'] = count(dau_bk_list($kind, $b['dest']));
+  if (isset($err)) { $res['ok'] = false; $res['error'] = $err; }    // the archive is good, but a container is down: that must not look like success
   return $res;
 }
 
@@ -1772,7 +1841,7 @@ function dau_bk_before_update(array &$J, $what) {
   return true;
 }
 ]]></INLINE>
-<SHA256>24430e46e85010083f7ec50a9ec2502a4587b8854fa137609b1d8146afd7376e</SHA256>
+<SHA256>4fec2760fb51c108ca65010f58816d490ecda3b28da9f825dd302f021b4d6e41</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/docker.php" Mode="0644">
@@ -2237,8 +2306,9 @@ function dau_url_hosts($text) {
 function dau_plg_parse($text) {
   if (preg_match('/<!ENTITY\s+\S+\s+(SYSTEM|PUBLIC)\b/i', $text)) return null;
   $prev = libxml_use_internal_errors(true);
-  if (PHP_VERSION_ID < 80000) libxml_disable_entity_loader(true);
+  $loader = PHP_VERSION_ID < 80000 ? libxml_disable_entity_loader(true) : null;     // process-wide on PHP 7: put it back, or later simplexml_load_file() calls fail
   $x = @simplexml_load_string($text, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOENT);
+  if ($loader !== null) libxml_disable_entity_loader($loader);
   libxml_clear_errors(); libxml_use_internal_errors($prev);
   return $x instanceof SimpleXMLElement && $x->getName() === 'PLUGIN' ? $x : null;
 }
@@ -2374,7 +2444,7 @@ function dau_plugin_slots(array $cfg) {
   return $s ? ['plugins' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>23b8ac6266fa1adbbe4499ac370ea094d5f8f6221a27121f22a6253a19a380de</SHA256>
+<SHA256>5338ffc73c874670e8186ae3d5f38b1a4307afe6d65f03dd00aa86f4d4a4ac2c</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/os.php" Mode="0644">
@@ -2455,6 +2525,7 @@ function dau_os_reboot_safe() {
   if (!$a['ok']) return ['ok' => false, 'reason' => 'The array state could not be read.'];
   if (!in_array($a['state'], ['STARTED', 'STOPPED'], true)) return ['ok' => false, 'reason' => 'The array is in state ' . $a['state'] . ' (not a plain started or stopped array).'];
   if ($a['resync'] > 0) return ['ok' => false, 'reason' => 'A parity check, sync or rebuild is running.'];
+  if (dau_pid_alive(DAU_MOVERPID)) return ['ok' => false, 'reason' => 'The mover is running (files are being moved between the cache and the array).'];
   return ['ok' => true, 'reason' => ''];
 }
 
@@ -2567,7 +2638,7 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>6b42dc91c5fad8be867202ef7ae005b4c27206bc963a34039ce9a026e8d07025</SHA256>
+<SHA256>5d289b0f401db8a2d31b0b9db30feabaecb14410c83da1dc739829fb39613490</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/workflow.php" Mode="0644">
@@ -3101,7 +3172,7 @@ define('DAU_QDIR_NAME', '.unraid-autoupdater-quarantine');
 define('DAU_QUARANTINE_DB', DAU_DIR . '/quarantine.json');
 define('DAU_TPL_BACKUPS', DAU_DIR . '/template-backups');
 
-function dau_appdata_roots(array $cfg = null) {
+function dau_appdata_roots(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = $cfg['appdata']['roots'] ?? ['/mnt/user/appdata'];
   $out = [];
@@ -3149,7 +3220,7 @@ function dau_templates_read() {
   foreach (glob(DAU_TEMPLATES . '/my-*.xml') ?: [] as $f) {
     $n = substr(basename($f), 3, -4);
     if (!dau_valid_name($n)) continue;
-    $x = @simplexml_load_file($f, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);
+    $x = @simplexml_load_string((string)@file_get_contents($f), 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);   // read as text: works even while the entity loader is off
     if (!$x) continue;
     $paths = [];
     foreach ($x->Config ?? [] as $c) if (strtolower((string)$c['Type']) === 'path') { $v = trim((string)$c); if ($v !== '' && $v[0] === '/') $paths[] = $v; }
@@ -3167,7 +3238,7 @@ function dau_dir_size($p) {
  * Orphaned appdata folders. A folder is an orphan when no container (any state) maps it or something inside it.
  * Mounts that cover the whole appdata share (e.g. /mnt/user) are shown but never count as ownership.
  */
-function dau_appdata_scan(array $cfg = null) {
+function dau_appdata_scan(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = dau_appdata_roots($cfg);
   if (!$roots) return ['ok' => false, 'error' => 'No appdata folder is set up, or it does not exist. Add it under Settings > Cleanup.'];
@@ -3408,7 +3479,7 @@ function dau_cleanup_summary($a = null, $d = null) {
   return $sum;
 }
 ]]></INLINE>
-<SHA256>354c59020dc3297d35a8a7a16dd026b65b932a1602da484f4b609d5ba23885be</SHA256>
+<SHA256>60947e84d76b25f02568fc9bb58fdc89d8603222d591eff57419c87e06c65dd8</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/jobs.php" Mode="0644">
@@ -5300,6 +5371,7 @@ exit(64);
     if (k === 'appdata') {
       p.appendChild(fSwitch('Also back up right before updates are installed', 'backups.appdata.before_update', 'Runs once before a run that installs Docker or plugin updates, and only when there really is something to install. Nothing is backed up when there is nothing to update.'));
       p.appendChild(fSwitch('Do not install the updates if this backup fails', 'backups.appdata.required', 'Off: a failed backup is reported and the updates go on. On: the updates wait until a backup works.'));
+      p.appendChild(fSwitch('Stop the containers while the backup runs', 'backups.appdata.stop_containers', 'Recommended for databases. Running containers that use the appdata folders are stopped for the backup and started again afterwards (also when the backup fails), in their "update after" order. They are offline for as long as the backup takes.'));
     }
     p.appendChild(fText('Save backups to (a folder under /mnt)', 'backups.' + k + '.dest', 'Example: /mnt/user/backups. Backups go into a folder named Unraid-Swiss-Manager inside it. Use another disk or share than the data being backed up, ideally not the same disk.', '/mnt/user/backups'));
     var kp = h('select', { 'aria-label': 'Backups to keep', style: 'max-width:220px', onchange: function () { b.keep = +kp.value; } });
@@ -5506,7 +5578,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>5fa5bba670a8291213680156e1a2745359016f9cf914ff86e2415419466c4d54</SHA256>
+<SHA256>ccfc1f056a43e928ed9caa9ed6eff281de5c0fd77edbcbf8eb4031910eeed4b0</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

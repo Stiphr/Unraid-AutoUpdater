@@ -113,7 +113,7 @@ function dau_field($name, $value, $inline = true) {
 function dau_clean_text($s, $max) { return dau_clip(dau_redact((string)$s), $max); }
 
 /** Icon used for the webhook avatar and the embed header: the configured https URL, else the bundled default. */
-function dau_discord_icon(array $cfg = null) {
+function dau_discord_icon(?array $cfg = null) {
   $u = $cfg['discord']['icon_url'] ?? '';
   return dau_icon_url_valid($u) ? $u : DAU_DEFAULT_ICON;
 }
