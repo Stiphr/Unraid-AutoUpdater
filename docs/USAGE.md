@@ -59,7 +59,7 @@ Uses Unraid's `plugin check` and `plugin update`. Per plugin: Auto / Notify / Ig
 - same plugin name and source URL, announced version = downloaded version, newer than installed;
 - compatible with this Unraid version (min/max);
 - **no new download host** compared with the installed version (otherwise it is blocked for manual review);
-- the file's SHA-256 is re-checked right before install; a copy of the old `.plg` is kept (last 3) in `/boot/config/plugins/unraid-autoupdater/plugin-recovery`;
+- the file's SHA-256 is re-checked right before install; a copy of the old `.plg` is kept (last 3) in `/boot/config/plugins/unraid-swiss-manager/plugin-recovery`;
 - afterwards the installed file must report the new version.
 
 This plugin never updates itself automatically. No automatic rollback: on failure you get recovery guidance.
@@ -119,11 +119,11 @@ Settings → Discord: enable, paste the webhook (messages are sent as **Unraid S
 
 ## Scheduling
 
-One dispatcher runs every 5 minutes (`/boot/config/plugins/unraid-autoupdater/unraid-autoupdater.cron`, registered through Unraid's `update_cron`, rebuilt at every boot). A schedule that was due while the server was off still runs if it is at most 6 hours late, otherwise it waits for the next occurrence. Newly created schedules do not run retroactively. Bi-weekly means at least 12 days between runs. One lock prevents overlapping jobs; **Stop** ends a job after the current step. A job interrupted by a reboot is recorded as *interrupted* and is not blindly resumed. Times use the server's time zone.
+One dispatcher runs every 5 minutes (`/boot/config/plugins/unraid-swiss-manager/unraid-swiss-manager.cron`, registered through Unraid's `update_cron`, rebuilt at every boot). A schedule that was due while the server was off still runs if it is at most 6 hours late, otherwise it waits for the next occurrence. Newly created schedules do not run retroactively. Bi-weekly means at least 12 days between runs. One lock prevents overlapping jobs; **Stop** ends a job after the current step. A job interrupted by a reboot is recorded as *interrupted* and is not blindly resumed. Times use the server's time zone.
 
 ## Data
 
-`/boot/config/plugins/unraid-autoupdater/`: `config.json`, `secrets.json`, `state.json`, `history.json` (bounded), `plugin-recovery/`. Log: `/var/log/unraid-autoupdater.log` (rotated, structured `key=value`). Settings can be exported/imported (without the webhook).
+`/boot/config/plugins/unraid-swiss-manager/`: `config.json`, `secrets.json`, `state.json`, `history.json` (bounded), `plugin-recovery/`. Log: `/var/log/unraid-swiss-manager.log` (rotated, structured `key=value`). Settings can be exported/imported (without the webhook).
 
 ## Upgrading from an earlier version
 
@@ -148,7 +148,7 @@ Activity tab shows history and the log. *Docker service is not running* banner: 
 
 ## Removal
 
-Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/unraid-autoupdater/` and can be deleted manually.
+Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins/unraid-swiss-manager/` and can be deleted manually.
 
 
 ## Beta features
@@ -179,7 +179,7 @@ Remove from Plugins. Settings, history and backups stay in `/boot/config/plugins
 
 ### Plugin branch, force update and settings files (Settings tab, bottom)
 
-- **Plugin branch**: *Stable* is the `main` branch, *Beta* is the `beta` branch (test servers only; a warning and a confirmation box are shown). Switching installs the plugin from that branch right away and keeps your settings, history and webhook. *Check versions* shows what each branch offers.
+- **Plugin branch**: *Stable* is the `stable` branch, *Beta* is the `beta` branch (test servers only; a warning and a confirmation box are shown). Switching installs the plugin from that branch right away and keeps your settings, history and webhook. *Check versions* shows what each branch offers.
 - **Force update** reinstalls the plugin from the branch you are on even if the version is the same, for example to repair a broken install.
 - **Save settings to a file** downloads all settings (never the Discord webhook) under the name you choose; the default is `Unraid-Swiss-Manager-Settings-YYYY-MM-DD`. **Load settings from a file** shows what the file contains and asks before it replaces the current settings (a copy of the old ones is kept).
 

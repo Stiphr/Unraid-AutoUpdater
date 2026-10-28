@@ -1,3 +1,7 @@
+###2026.10.28
+- Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
+- New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
+- Settings page: ?tab=docker|plugins|os|cleanup|backups|settings|activity opens that tab directly.
 ###2026.11.02
 - New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
 - Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.

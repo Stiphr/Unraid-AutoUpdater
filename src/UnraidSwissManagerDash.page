@@ -1,0 +1,74 @@
+Menu="Dashboard:9"
+---
+<?php
+/* Dashboard tile: a status line, what is waiting (rows only appear when they have something to say; each opens its tab), and one quiet
+   footer with the last and next run. Reads only the plugin's own state, never calls Docker. The Unraid OS version is deliberately not
+   shown here. Styles are scoped to #dau-tile and use the theme's own text colour, so it reads well in every Unraid theme.
+   Can be switched off in Settings > Appearance. */
+try {
+  $dau_on = true;
+  $dau_cf = @json_decode((string)@file_get_contents('/boot/config/plugins/unraid-swiss-manager/config.json'), true);
+  if (is_array($dau_cf) && isset($dau_cf['ui']['widget']) && !$dau_cf['ui']['widget']) $dau_on = false;
+  if ($dau_on) {
+    $dau_csrf = json_encode($var['csrf_token'] ?? '');
+    $mytiles['unraid-swiss-manager']['column2'] = <<<EOT
+<tbody title="Unraid Swiss Manager" id="dau-tile">
+<tr><td>
+<img class="img" src="/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
+<div class="section">Unraid Swiss Manager<br><span class="dau-st"><i id="dau-w-dot" class="dau-dot"></i><span id="dau-w-sum">Checking&hellip;</span></span></div>
+<a href="/Settings/UnraidSwissManager" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
+</td></tr>
+<tr><td>
+<style>
+#dau-tile .dau-st{display:inline-flex;align-items:center;gap:6px}
+#dau-tile .dau-dot{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.35;flex:none}
+#dau-tile .dau-dot.ok{background:#3fb950;opacity:1}#dau-tile .dau-dot.up{background:#e8612c;opacity:1}#dau-tile .dau-dot.bad{background:#e5484d;opacity:1}#dau-tile .dau-dot.run{background:#3b82f6;opacity:1}
+#dau-tile .dau-rows{display:flex;flex-direction:column;gap:2px;margin:2px 0 0}
+#dau-tile a.dau-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 8px;margin:0 -8px;border-radius:6px;color:inherit;text-decoration:none}
+#dau-tile a.dau-row:hover{background:rgba(127,127,127,.12)}
+#dau-tile .dau-k{opacity:.65;white-space:nowrap}
+#dau-tile .dau-v{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dau-tile .dau-v b{font-weight:600}
+#dau-tile .dau-v .dau-m{opacity:.6}
+#dau-tile a.dau-row.up .dau-v b{color:#e8612c}
+#dau-tile a.dau-row.bad .dau-k,#dau-tile a.dau-row.bad .dau-v{color:#e5484d;opacity:1}
+#dau-tile .dau-foot{margin-top:6px;padding-top:6px;border-top:1px solid rgba(127,127,127,.2);font-size:.92em;opacity:.6;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+</style>
+<div class="dau-rows" id="dau-w-rows"></div>
+<div class="dau-foot"><span id="dau-w-last"></span><span id="dau-w-next"></span></div>
+</td></tr>
+<script>
+(function(){
+  var P='/Settings/UnraidSwissManager';
+  function el(t,c,x){var e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;}
+  function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<90) return 'just now'; if(d<5400) return Math.round(d/60)+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
+  function inn(ts,now){ if(!ts) return 'nothing scheduled'; var d=ts-now; if(d<=60) return 'in a minute'; if(d<5400) return 'in '+Math.round(d/60)+' min'; if(d<86400) return 'in '+Math.round(d/3600)+' h'; return new Date(ts*1000).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}); }
+  function pl(n,w){ return n+' '+w+(n===1?'':'s'); }
+  /* one row: label left, value right; "cls" = up (updates waiting) | bad (needs attention) */
+  function row(k,strong,muted,tab,cls){
+    var a=el('a','dau-row'+(cls?' '+cls:'')); a.href=P+'?tab='+tab;
+    var v=el('span','dau-v'); if(strong) v.appendChild(el('b',null,strong)); if(muted) v.appendChild(el('span','dau-m',(strong?' · ':'')+muted));
+    a.appendChild(el('span','dau-k',k)); a.appendChild(v); return a;
+  }
+  var b=new URLSearchParams(); b.append('action','widget'); b.append('csrf_token',$dau_csrf);
+  fetch('/plugins/unraid-swiss-manager/include/api.php',{method:'POST',body:b,credentials:'same-origin'}).then(function(r){return r.json();}).then(function(j){
+    if(!j||j.error) throw 0;
+    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0), rows=document.getElementById('dau-w-rows'), dot=document.getElementById('dau-w-dot');
+    var sum=j.running? 'Working…' : j.failures? 'Needs attention' : !j.at? 'Not checked yet' : total? pl(total,'update')+' waiting' : 'Everything is up to date';
+    document.getElementById('dau-w-sum').textContent=sum;
+    dot.className='dau-dot '+(j.running?'run':j.failures?'bad':total?'up':j.at?'ok':'');
+    rows.appendChild(row('Docker', j.at&&j.docker? pl(j.docker,'update'):'', j.at? (j.docker?'':'Up to date · ')+pl(j.containers,'container') : 'Not checked yet', 'docker', j.docker?'up':''));
+    rows.appendChild(row('Plugins', j.plugins? pl(j.plugins,'update'):'', j.plugins?'':'Up to date', 'plugins', j.plugins?'up':''));
+    if(j.os_update) rows.appendChild(row('Unraid OS','Update available','', 'os', 'up'));
+    if(j.failures) rows.appendChild(row('Attention', pl(j.failures,'recent failure'), 'View', 'activity', 'bad'));
+    if(j.pinned) rows.appendChild(row('Pinned', '', pl(j.pinned,'container')+' held back', 'docker', ''));
+    document.getElementById('dau-w-last').textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':'');
+    document.getElementById('dau-w-next').textContent='Next run '+inn(j.next,j.now);
+  }).catch(function(){ document.getElementById('dau-w-sum').textContent='Status not available'; });
+})();
+</script>
+</tbody>
+EOT;
+  }
+} catch (Throwable $e) { /* never break the Dashboard */ }
+?>

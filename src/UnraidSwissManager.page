@@ -1,11 +1,11 @@
 Menu="Utilities"
 Title="Unraid Swiss Manager"
-Icon="unraid-autoupdater.png"
+Icon="unraid-swiss-manager.png"
 ---
 <?php
-$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/assets/app.js');
+$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/assets/app.js');
 ?>
-<link rel="stylesheet" href="/plugins/unraid-autoupdater/assets/app.css<?=$dau_v?>">
+<link rel="stylesheet" href="/plugins/unraid-swiss-manager/assets/app.css<?=$dau_v?>">
 <div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
-<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/images/unraid-autoupdater.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
-<script src="/plugins/unraid-autoupdater/assets/app.js<?=$dau_v?>"></script>
+<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
+<script src="/plugins/unraid-swiss-manager/assets/app.js<?=$dau_v?>"></script>

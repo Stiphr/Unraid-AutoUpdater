@@ -31,17 +31,22 @@ This plugin was written by me with the help of AI assistants (Claude and ChatGPT
 
 ## Install and update
 
-1. In Unraid open **Plugins → Install Plugin** and paste:
+In Unraid open **Plugins → Install Plugin**, paste the address of the branch you want, and click **Install**.
 
-   ```
-   https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg
-   ```
-2. Open it from **Settings → User Utilities → Unraid Swiss Manager** (or click its icon on the Plugins page).
-3. **Updates** appear on the Plugins page like for any other plugin.
+| Branch | For | Plugin address |
+|---|---|---|
+| **Stable** | Every server | `https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-swiss-manager.plg` |
+| **Beta** | Test servers only: new features first, less tested | `https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-swiss-manager.plg` |
 
-Coming from *Docker Auto Update* (`docker.autoupdate`)? Just update it from the Plugins page. Your settings, history and webhook are kept and the old entry is removed.
+- Open it from **Settings → User Utilities → Unraid Swiss Manager**, or click its icon on the Plugins page.
+- **Updates** appear on the Plugins page like for any other plugin, from the branch you installed.
+- **Switch branch** at any time in the plugin under **Settings → Plugin branch**. Your settings, history and webhook are kept.
 
 By default nothing is changed automatically: Docker auto-updates are off until a container is set to *Auto update*, and OS updates are notify-only.
+
+### Coming from an older name?
+
+The plugin used to be called *Unraid AutoUpdater* (`unraid-autoupdater.plg`) and, before that, *Docker Auto Update* (`docker.autoupdate.plg`). Just update the old entry from the Plugins page. It installs Unraid Swiss Manager, carries over your settings, history, webhook and backups, and the old entry disappears a few seconds later. The two old `.plg` files in this repository only exist for that move.
 
 ## More information
 
@@ -52,6 +57,9 @@ By default nothing is changed automatically: Docker auto-updates are off until a
 ## Development
 
 ```
-python3 build.py 2026.11.01   # builds the .plg files from src/
-php tests/run.php             # all tests, fully mocked
+python3 build.py 2026.10.28            # stable build: unraid-swiss-manager.plg + the redirect stubs
+python3 build.py 2026.10.28b1 --beta   # beta build (commit it to the beta branch)
+php tests/run.php                      # all tests, fully mocked (Linux; never on a real Unraid server)
 ```
+
+Branches: `stable` is what the Stable address installs, `beta` what the Beta address installs. Versions are dates (`2026.10.28`, a letter for a second release that day, `b1`, `b2`… for betas). Unraid compares them as text, so each release must sort after the previous one on its branch.

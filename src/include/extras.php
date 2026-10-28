@@ -321,11 +321,11 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
 
 const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/';
 
-function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'stable') . '/unraid-autoupdater.plg' : ''; }
+function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'stable') . '/' . DAU_SELF_PLG : ''; }
 
 /** Which branch this install follows: read from the installed plugin file's update address. */
 function dau_channel_current() {
-  $f = DAU_PLUGBOOT . '/unraid-autoupdater.plg';
+  $f = DAU_PLUGBOOT . '/' . DAU_SELF_PLG;
   $t = is_file($f) ? (string)@file_get_contents($f, false, null, 0, 4096) : '';
   if (preg_match('#<!ENTITY\s+pluginURL\s+"([^"]+)"#', $t, $m)) return strpos($m[1], '/refs/heads/beta/') !== false ? 'beta' : 'stable';
   return preg_match('/b\d+$/', DAU_VERSION) ? 'beta' : 'stable';
