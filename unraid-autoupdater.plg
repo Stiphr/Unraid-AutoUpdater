@@ -11,6 +11,7 @@
 
 <CHANGES>
 ###2026.10.31b4
+- The stable branch is now called stable (it was main). The Stable channel in Settings uses it; old links keep working.
 - Renamed: the plugin and its repository are now called Unraid Swiss Manager, with a new logo. Nothing else changes: same settings, same schedule, and the plugin keeps its install name, so existing installs update normally.
 - UI refresh (beta). Cleanup tab: Scan, Review, Clean steps; one "Scan for Cleanup Items" button; category cards; each item shows why it is listed and a status (Eligible, Review first, Protected, In use); "Select all eligible" never picks Review first or protected items; Preview (dry run); confirmation lists what can and cannot be undone; results show cleaned, skipped and failed.
 - Fixed unreadable badges such as "Skipped: stopped" (Unraid page style leaked into them) with measured AA contrast in all themes; badges also carry an icon, not only a colour.
@@ -2851,7 +2852,7 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
 
 const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/';
 
-function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'main') . '/unraid-autoupdater.plg' : ''; }
+function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'stable') . '/unraid-autoupdater.plg' : ''; }
 
 /** Which branch this install follows: read from the installed plugin file's update address. */
 function dau_channel_current() {
@@ -2896,7 +2897,7 @@ function dau_channel_install($ch, $force = false) {
   } finally { dau_lock_release($lock); }
 }
 ]]></INLINE>
-<SHA256>b2449c62934108be641e507384d05a8871d8be899675281f2d128fa0ca62807e</SHA256>
+<SHA256>2a6e0d5683fc870d4bdae19e02cdf71e9e370b426c0695baad8cc48b52d8650a</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/appdata.php" Mode="0644">

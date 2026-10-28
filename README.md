@@ -16,7 +16,7 @@ https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/un
 Install the stable plugin the same way:
 
 ```
-https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg
+https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg
 ```
 
-Stable version, features and full instructions: see the [`main` branch](https://github.com/Stiphr/Unraid-Swiss-Manager/tree/main). What is in the beta: [CHANGES.txt](CHANGES.txt).
+Stable version, features and full instructions: see the [`stable` branch](https://github.com/Stiphr/Unraid-Swiss-Manager/tree/stable). What is in the beta: [CHANGES.txt](CHANGES.txt).

@@ -10,7 +10,7 @@ src = root / 'src'
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
 BETA = '--beta' in sys.argv          # a beta build updates itself from the beta branch and does not touch the migration stub
 version = args[0] if args else datetime.date.today().strftime('%Y.%m.%d')
-BRANCH = 'beta' if BETA else 'main'
+BRANCH = 'beta' if BETA else 'stable'
 files = [
     ('UnraidAutoUpdater.page', '0644'), ('UnraidAutoUpdaterDash.page', '0644'),
     ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
@@ -119,7 +119,7 @@ print('built unraid-autoupdater.plg', version, '(beta)' if BETA else '')
 if BETA: sys.exit(0)
 
 # ---- migration stub: keeps the old plugin name updatable and moves installs over to the new one ----
-NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/main/unraid-autoupdater.plg'
+NEW_URL = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-autoupdater.plg'
 stub = """<?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "docker.autoupdate">

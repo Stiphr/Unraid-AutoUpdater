@@ -347,7 +347,7 @@ t('release: version, build, icon and update metadata are consistent', function (
   eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'unraid-autoupdater');
   has($plg, "define('DAU_VERSION',   '$ver');"); lacks($plg, 'DAU_BUILD'); lacks($plg, '@@'); ok(preg_match('/^\d{4}\.\d{2}\.\d{2}([a-z]|b\d+)?$/', $ver) === 1, 'date format'); $beta = (bool)preg_match('/b\d+$/', $ver);
   eq((string)$x['icon'], 'unraid-autoupdater.png'); has($plg, 'images/unraid-autoupdater.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
-  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/' . ($beta ? 'beta' : 'main') . '/unraid-autoupdater.plg');
+  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/' . ($beta ? 'beta' : 'stable') . '/unraid-autoupdater.plg');
   ok(dau_version_newer($ver, '2026.10.29') && dau_version_newer($ver, '2026.10.28f'), 'newer than the previous releases');
   ok(!dau_version_newer($ver, $ver), 'not newer than itself');
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }

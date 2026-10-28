@@ -321,7 +321,7 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
 
 const DAU_CHANNEL_BASE = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/';
 
-function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'main') . '/unraid-autoupdater.plg' : ''; }
+function dau_channel_url($ch) { return in_array($ch, ['stable', 'beta'], true) ? DAU_CHANNEL_BASE . ($ch === 'beta' ? 'beta' : 'stable') . '/unraid-autoupdater.plg' : ''; }
 
 /** Which branch this install follows: read from the installed plugin file's update address. */
 function dau_channel_current() {

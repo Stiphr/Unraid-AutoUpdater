@@ -1,4 +1,5 @@
 ###2026.10.31b4
+- The stable branch is now called stable (it was main). The Stable channel in Settings uses it; old links keep working.
 - Renamed: the plugin and its repository are now called Unraid Swiss Manager, with a new logo. Nothing else changes: same settings, same schedule, and the plugin keeps its install name, so existing installs update normally.
 - UI refresh (beta). Cleanup tab: Scan, Review, Clean steps; one "Scan for Cleanup Items" button; category cards; each item shows why it is listed and a status (Eligible, Review first, Protected, In use); "Select all eligible" never picks Review first or protected items; Preview (dry run); confirmation lists what can and cannot be undone; results show cleaned, skipped and failed.
 - Fixed unreadable badges such as "Skipped: stopped" (Unraid page style leaked into them) with measured AA contrast in all themes; badges also carry an icon, not only a colour.
