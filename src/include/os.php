@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - Unraid OS.
+ * Unraid AutoUpdater - Unraid OS.
  * DEFAULT: check and notify only. Installing an OS update (mode "install") and rebooting afterwards (mode "install_reboot")
  * are opt-in, need an explicit confirmation in the UI, a maintenance window and a waiting period, and use only Unraid's own
  * `plugin update unRAIDServer.plg` (the same thing Tools > Update OS runs) and the stock reboot command. Nothing is rolled back

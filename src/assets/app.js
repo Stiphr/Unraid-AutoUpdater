@@ -1,7 +1,7 @@
-/* Unraid Auto Updater UI. Plain JS, no libraries; every string is inserted as text (never as HTML). */
+/* Unraid AutoUpdater UI. Plain JS, no libraries; every string is inserted as text (never as HTML). */
 (function () {
   'use strict';
-  var API = '/plugins/docker.autoupdate/include/api.php';
+  var API = '/plugins/unraid-autoupdater/include/api.php';
   var root = document.getElementById('dau');
   var S = { tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -91,7 +91,7 @@
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
-    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/docker.autoupdate/images/docker.autoupdate.png' + (window.DAU_IMGV || ''), alt: '', width: 40, height: 40, onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid Auto Updater'), h('div', { class: 'muted sm' }, 'Build ' + (S.ov.build || '') + ' · plugin version ' + S.ov.version + (S.ov.tick_installed ? '' : ' · no schedule is active')))),
+    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-autoupdater/images/unraid-autoupdater.png' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'title' }, S.ov.name || 'Unraid AutoUpdater'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
@@ -398,7 +398,7 @@
       h('div', null, fNum('Retry failed pulls up to', 'global.retry.max', 0, 5, 'Only network/registry errors that left the container untouched are retried. Never retries once the container was changed.', 'times'), fNum('Retry interval', 'global.retry.interval_min', 5, 1440, null, 'minutes'), fSwitch('Remove the old image after a verified update', 'global.cleanup', 'Only that one image, and only if nothing else uses it. Never a broad prune.')))));
     w.appendChild(section('Docker: backups before update (optional)', h('div', null,
       h('p', { class: 'muted sm' }, 'Turn on per container in its Settings. "Config" saves the template and container definition (small). "Image" saves the current image as a tar file (large). "Appdata" archives the container\'s host folders while it is still running, so databases may not be consistent: use a dedicated backup plugin for those.'),
-      h('div', { class: 'grid2' }, h('div', null, fSwitch('Enable backups', 'global.backup.enabled'), fText('Destination folder (under /mnt)', 'global.backup.dest', 'Example: /mnt/user/backups/docker-autoupdate', '/mnt/user/backups'), fNum('Keep newest', 'global.backup.retention', 1, 30, null, 'backups per container')),
+      h('div', { class: 'grid2' }, h('div', null, fSwitch('Enable backups', 'global.backup.enabled'), fText('Destination folder (under /mnt)', 'global.backup.dest', 'Example: /mnt/user/backups/unraid-autoupdater', '/mnt/user/backups'), fNum('Keep newest', 'global.backup.retention', 1, 30, null, 'backups per container')),
         h('div', null, fSwitch('Config (template + settings)', 'global.backup.config'), fSwitch('Image (docker save)', 'global.backup.image'), fSwitch('Appdata folders (not application-consistent)', 'global.backup.appdata'), fSwitch('Backup is required: do not update if it fails', 'global.backup.required'))))));
     w.appendChild(section('Plugins', h('div', { class: 'grid2' },
       h('div', null, fSwitch('Check for plugin updates on a schedule', 'plugins.check_enabled'), fSched('Schedule', 'plugins'), fSwitch('Install updates automatically (plugins set to Auto update)', 'plugins.auto_update', 'OFF by default. Plugins run as root: only enable this for plugins you trust.'),
@@ -429,7 +429,7 @@
       h('div', { class: 'fld' }, h('label', null, 'Batching'), bat), fNum('Maximum messages per run', 'discord.max_messages', 1, 20))));
     w.appendChild(section('Unraid notifications', h('div', null, fSwitch('Docker events', 'notify_unraid.docker'), fSwitch('Plugin events', 'notify_unraid.plugins'), fSwitch('OS events', 'notify_unraid.os'))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
-      h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'docker-autoupdate-config.json' }, 'Export settings'),
+      h('div', { class: 'inl' }, h('a', { class: 'btn', href: API + '?action=export', download: 'unraid-autoupdater-config.json' }, 'Export settings'),
         h('button', { class: 'btn', onclick: importSettings }, 'Import settings…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
       h('p', { class: 'muted sm' }, 'Exports never include the Discord webhook.'))));
     w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', onclick: function () {

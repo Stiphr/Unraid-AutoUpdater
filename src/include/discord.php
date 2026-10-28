@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - Discord webhook notifications.
+ * Unraid AutoUpdater - Discord webhook notifications.
  *  - The URL is read from secrets.json only at send time; it is never logged, never returned by the API and is
  *    scrubbed from every message by dau_redact().
  *  - Only https://discord.com/api/webhooks/... style URLs are ever contacted (see dau_webhook_valid()).
@@ -26,7 +26,7 @@ function dau_http_post($url, $body, $timeout = 10) {
   }
   $res = ['code' => 0, 'headers' => [], 'body' => '', 'error' => ''];
   $ca = is_file('/etc/ssl/certs/ca-certificates.crt') ? '/etc/ssl/certs/ca-certificates.crt' : null;
-  $ua = 'UnraidAutoUpdater/' . DAU_BUILD;
+  $ua = 'UnraidAutoUpdater/' . DAU_VERSION;
   if (function_exists('curl_init')) {
     $ch = curl_init($url);
     $opts = [
@@ -118,11 +118,11 @@ function dau_discord_icon(array $cfg = null) {
   return dau_icon_url_valid($u) ? $u : DAU_DEFAULT_ICON;
 }
 
-/** Brand fields shared by every embed (author line with the icon, footer with build). */
+/** Brand fields shared by every embed (author line with the icon, footer with the version). */
 function dau_discord_brand(array $e, $extraFooter = '') {
   $icon = $GLOBALS['DAU_ICON'] ?? DAU_DEFAULT_ICON;
   $e['author'] = ['name' => DAU_NAME, 'icon_url' => $icon];
-  $e['footer'] = ['text' => DAU_NAME . ' ' . DAU_BUILD . $extraFooter, 'icon_url' => $icon];
+  $e['footer'] = ['text' => DAU_NAME . ' ' . DAU_VERSION . $extraFooter, 'icon_url' => $icon];
   return $e;
 }
 
@@ -201,7 +201,7 @@ function dau_discord_summary_embed(array $sum, $server) {
   $color = ['ok' => 0x2ECC71, 'warnings' => 0xF1C40F, 'failed' => 0xE74C3C][$status] ?? 0x3498DB;
   $lines[] = '**Status:** ' . $text;
   return dau_discord_brand([
-    'title' => 'UNRAID AUTO UPDATER — UPDATE SUMMARY',
+    'title' => 'UNRAID AUTOUPDATER — UPDATE SUMMARY',
     'description' => dau_clip("**Server:** " . dau_clean_text($server, 64) . "\n\n" . implode("\n\n", $lines), 4000),
     'color' => $color,
     'timestamp' => dau_ts_iso(dau_now()),

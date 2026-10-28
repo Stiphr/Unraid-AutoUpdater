@@ -1,6 +1,6 @@
 <?php
 /*
- * Unraid Auto Updater - optional pre-update backups.
+ * Unraid AutoUpdater - optional pre-update backups.
  * Three DIFFERENT things, never conflated:
  *   config  = the container's Unraid template (my-NAME.xml) + `docker inspect` JSON. Small, enough to recreate the container.
  *   image   = `docker save` of the image currently in use (lets you go back to the exact old version offline). Large.

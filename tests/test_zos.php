@@ -181,7 +181,7 @@ t('os: API refuses an install without explicit confirmation', function () {
   $r = api_call('run', ['what' => 'os_install']); has($r['error'] ?? '', 'confirmation');
   $r = api_call('run', ['what' => 'os_install', 'confirm' => '0', 'reboot' => '1']); has($r['error'] ?? '', 'confirmation');
   $o = api_call('os'); ok(isset($o['mode']) && $o['mode'] === 'notify', 'os view'); ok(isset($o['reboot']['ok']));
-  $ov = api_call('overview'); eq($ov['name'], 'Unraid Auto Updater'); eq($ov['build'], DAU_BUILD);
+  $ov = api_call('overview'); eq($ov['name'], 'Unraid AutoUpdater'); eq($ov['version'], DAU_VERSION); ok(!isset($ov['build']), 'only one version');
 });
 
 t('discord: branding (name, grey/orange icon as avatar and header, build label)', function () {
@@ -190,9 +190,9 @@ t('discord: branding (name, grey/orange icon as avatar and header, build label)'
   $GLOBALS['SENT'] = []; $GLOBALS['DAU_HTTP_MOCK'] = function ($u, $b) { $GLOBALS['SENT'][] = json_decode($b, true); return ['code' => 204]; };
   dau_job_main('check');
   ok($GLOBALS['SENT'], 'sent'); $p = $GLOBALS['SENT'][0];
-  eq($p['username'], 'Unraid Auto Updater'); eq($p['avatar_url'], DAU_DEFAULT_ICON); eq($p['allowed_mentions'], ['parse' => []]);
-  $e = $p['embeds'][0]; eq($e['author']['name'], 'Unraid Auto Updater'); eq($e['author']['icon_url'], DAU_DEFAULT_ICON); has($e['footer']['text'], DAU_BUILD); eq($e['footer']['icon_url'], DAU_DEFAULT_ICON);
-  has($e['title'], 'UNRAID AUTO UPDATER');
+  eq($p['username'], 'Unraid AutoUpdater'); eq($p['avatar_url'], DAU_DEFAULT_ICON); eq($p['allowed_mentions'], ['parse' => []]);
+  $e = $p['embeds'][0]; eq($e['author']['name'], 'Unraid AutoUpdater'); eq($e['author']['icon_url'], DAU_DEFAULT_ICON); has($e['footer']['text'], DAU_VERSION); eq($e['footer']['icon_url'], DAU_DEFAULT_ICON);
+  has($e['title'], 'UNRAID AUTOUPDATER');
   /* custom icon, and unsafe values fall back */
   $c['discord']['icon_url'] = 'https://example.com/my-logo.png'; dau_save_config($c); $GLOBALS['SENT'] = []; $st = dau_state_load(); dau_discord_test($st);
   eq($GLOBALS['SENT'][0]['avatar_url'], 'https://example.com/my-logo.png'); eq($GLOBALS['SENT'][0]['embeds'][0]['author']['icon_url'], 'https://example.com/my-logo.png');
@@ -338,22 +338,22 @@ t('workflow: Discord reports the workflow and keeps working', function () {
   dau_secret_set('discord_url', 'https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJ-0123');
   $GLOBALS['SENT'] = []; $GLOBALS['DAU_HTTP_MOCK'] = function ($u, $b) { $GLOBALS['SENT'][] = json_decode($b, true); return ['code' => 204]; };
   os_tick(); $all = json_encode($GLOBALS['SENT']); has($all, 'Pre-OS maintenance started'); has($all, 'OS update stopped'); has($all, 'Plugins: 0 updated, 1 failed'); lacks($all, 'abcdefghijkl');
-  has($all, 'Unraid Auto Updater');
+  has($all, 'Unraid AutoUpdater');
 });
 
 t('release: version, build, icon and update metadata are consistent', function () {
-  $plg = file_get_contents(__DIR__ . '/../docker.autoupdate.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
+  $plg = file_get_contents(__DIR__ . '/../unraid-autoupdater.plg'); $x = dau_plg_parse($plg); ok($x !== null, 'plg parses');
   $ver = (string)$x['version']; $top = trim(strtok(file_get_contents(__DIR__ . '/../CHANGES.txt'), "\n"));
-  eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'docker.autoupdate');
-  has($plg, "define('DAU_VERSION',   '$ver');"); has($plg, "define('DAU_BUILD',     'v1.0.0');"); lacks($plg, '@@');
-  eq((string)$x['icon'], 'docker.autoupdate.png'); has($plg, 'images/docker.autoupdate.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
-  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg');
+  eq($top, '###' . $ver, 'top CHANGES entry = plg version'); eq((string)$x['name'], 'unraid-autoupdater');
+  has($plg, "define('DAU_VERSION',   '$ver');"); lacks($plg, 'DAU_BUILD'); lacks($plg, '@@'); ok(preg_match('/^\d{4}\.\d{2}\.\d{2}[a-z]?$/', $ver) === 1, 'date format');
+  eq((string)$x['icon'], 'unraid-autoupdater.png'); has($plg, 'images/unraid-autoupdater.png'); has($plg, hash('sha256', file_get_contents(__DIR__ . '/../assets/icon.png')));
+  eq((string)$x['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/unraid-autoupdater.plg');
   ok(dau_version_newer($ver, '2026.10.29') && dau_version_newer($ver, '2026.10.28f'), 'newer than the previous releases');
   ok(!dau_version_newer($ver, $ver), 'not newer than itself');
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
   ok($fn >= 15, 'all inline files carry a checksum');
-  has(file_get_contents(__DIR__ . '/../src/DockerAutoUpdate.page'), 'Icon="docker.autoupdate.png"');
-  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/docker.autoupdate.png"); has($js, "class: 'brand'");
+  has(file_get_contents(__DIR__ . '/../src/UnraidAutoUpdater.page'), 'Icon="unraid-autoupdater.png"');
+  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-autoupdater.png"); has($js, "class: 'brand'");
   ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'title'"), 'logo is left of the title');
 });
 
@@ -365,4 +365,40 @@ t('release: settings and webhook survive a plugin update', function () {
   /* settings written by the previous release (no os.pre block) get safe defaults without losing anything */
   $old = $before; unset($old['os']['pre'], $old['os']['mode']); dau_write_json(DAU_CFG, $old); $n = dau_load_config();
   eq($n['os']['pre'], dau_os_pre_defaults()); eq($n['os']['mode'], 'notify'); eq($n['global']['update_delay_hours'], 48); eq($n['containers']['app']['policy'], 'auto');
+});
+
+t('rename: migration stub and one-time migration from docker.autoupdate', function () {
+  $new = dau_plg_parse(file_get_contents(__DIR__ . '/../unraid-autoupdater.plg')); $stub = dau_plg_parse(file_get_contents(__DIR__ . '/../docker.autoupdate.plg'));
+  ok($stub !== null, 'stub parses'); eq((string)$stub['name'], 'docker.autoupdate'); eq((string)$new['name'], 'unraid-autoupdater');
+  eq((string)$stub['version'], (string)$new['version'], 'same version'); ok(dau_version_newer((string)$stub['version'], '2026.10.29a'), 'installed copies are offered the stub');
+  eq((string)$stub['pluginURL'], 'https://raw.githubusercontent.com/Stiphr/Unraid-AutoUpdater/refs/heads/main/docker.autoupdate.plg', 'old installs keep finding updates here');
+  $stubText = file_get_contents(__DIR__ . '/../docker.autoupdate.plg');
+  has($stubText, 'plugin install ' . (string)$new['pluginURL']); has($stubText, 'plugin remove docker.autoupdate.plg'); lacks($stubText, 'rm -rf');
+  eq(count($stub->FILE), 2, 'install script + harmless remove script');
+  /* run the migration block of the new plugin in a sandbox */
+  $blk = null; foreach ($new->FILE as $f) if (isset($f['Run']) && strpos((string)$f->INLINE, 'docker.autoupdate') !== false && strpos((string)$f->INLINE, 'DAU_PLUGS') !== false) $blk = (string)$f->INLINE;
+  ok($blk !== null, 'migration block present'); $box = '/tmp/dau-mig-' . getmypid(); dau_test_rm($box);
+  foreach (['/plugins/docker.autoupdate', '/em/docker.autoupdate', '/run'] as $d) mkdir($box . $d, 0755, true);
+  file_put_contents("$box/plugins/docker.autoupdate/config.json", '{"os":{"mode":"notify"}}'); file_put_contents("$box/plugins/docker.autoupdate/secrets.json", '{"discord_url":"x"}');
+  file_put_contents("$box/plugins/docker.autoupdate/history.json", '[]'); file_put_contents("$box/plugins/docker.autoupdate/docker-autoupdate.cron", "* * * * * x\n"); file_put_contents("$box/run/docker-autoupdate.lock", '');
+  mkdir("$box/plugins/unraid-autoupdater"); file_put_contents("$box/plugins/unraid-autoupdater/history.json", '["new"]');   // already present: must not be overwritten
+  file_put_contents("$box/mig.sh", $blk);
+  $cmd = "DAU_PLUGS=$box/plugins DAU_EMHTTP=$box/em DAU_RUN=$box/run bash $box/mig.sh 2>&1"; $out = shell_exec($cmd);
+  has($out, 'migrated'); eq(file_get_contents("$box/plugins/unraid-autoupdater/config.json"), '{"os":{"mode":"notify"}}'); eq(file_get_contents("$box/plugins/unraid-autoupdater/secrets.json"), '{"discord_url":"x"}');
+  eq(file_get_contents("$box/plugins/unraid-autoupdater/history.json"), '["new"]', 'existing files are never overwritten');
+  ok(!file_exists("$box/plugins/unraid-autoupdater/docker-autoupdate.cron") && !file_exists("$box/plugins/docker.autoupdate.migrated/docker-autoupdate.cron"), 'old schedule removed');
+  ok(!is_dir("$box/plugins/docker.autoupdate") && is_file("$box/plugins/docker.autoupdate.migrated/config.json"), 'old settings kept as .migrated');
+  ok(!is_dir("$box/em/docker.autoupdate") && !file_exists("$box/run/docker-autoupdate.lock"), 'old runtime removed');
+  $out2 = shell_exec($cmd); lacks($out2, 'migrated'); eq(file_get_contents("$box/plugins/unraid-autoupdater/config.json"), '{"os":{"mode":"notify"}}', 'second run does nothing');
+  dau_test_rm($box);
+});
+
+t('rename: no leftovers of the old name in the plugin code or the dashboard', function () {
+  foreach (array_merge(glob(__DIR__ . '/../src/*'), glob(__DIR__ . '/../src/*/*')) as $f) {
+    if (!is_file($f)) continue; $s = file_get_contents($f);
+    foreach (['docker.autoupdate', 'docker-autoupdate', 'DockerAutoUpdate', 'Docker Auto Update', 'Unraid Auto Updater', 'DAU_BUILD'] as $old) lacks($s, $old, basename($f));
+  }
+  ok(is_file(__DIR__ . '/../src/UnraidAutoUpdater.page') && !is_file(__DIR__ . '/../src/DockerAutoUpdate.page'));
+  $css = file_get_contents(__DIR__ . '/../src/assets/app.css'); has($css, '.dau .ver{'); has($css, 'var(--accent)');
+  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "class: 'ver'"); has($js, "'Plugin version ' + S.ov.version"); lacks($js, 'Build ');
 });

@@ -1,0 +1,11 @@
+Menu="Utilities"
+Title="Unraid AutoUpdater"
+Icon="unraid-autoupdater.png"
+---
+<?php
+$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/assets/app.js');
+?>
+<link rel="stylesheet" href="/plugins/unraid-autoupdater/assets/app.css<?=$dau_v?>">
+<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
+<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-autoupdater/images/unraid-autoupdater.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>;</script>
+<script src="/plugins/unraid-autoupdater/assets/app.js<?=$dau_v?>"></script>

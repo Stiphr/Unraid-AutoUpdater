@@ -35,7 +35,7 @@ function plg_env($latest = '2', $newXml = null, array $o = []) {
 }
 
 t('plugins: detection skips Unraid itself, marks self', function () {
-  $i = plg_env(); eq(array_keys($i), [DAU_SELF_PLG, 'foo.plg']); eq($i['foo.plg']['version'], '1'); ok($i[DAU_SELF_PLG]['self']);
+  $i = plg_env(); eq(array_keys($i), ['foo.plg', DAU_SELF_PLG]); eq($i['foo.plg']['version'], '1'); ok($i[DAU_SELF_PLG]['self']);
   $c = dau_plugins_check_all(dau_defaults(), $i); ok(isset($c['avail']['foo.plg']));
 });
 

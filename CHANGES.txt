@@ -1,3 +1,7 @@
+###2026.10.30
+- Renamed to Unraid AutoUpdater (plugin name unraid-autoupdater). Existing installs update through a one-time migration that keeps settings, history and the webhook; the old "docker.autoupdate" entry is removed automatically.
+- One version everywhere: the plugin version (date based) is the only version shown, on the dashboard, in Discord and in the README.
+- New dashboard header: larger logo, bold title and the plugin version in orange.
 ###2026.10.29a
 - Pre-OS maintenance workflow: before an Unraid OS update is installed, plugins (and optionally Docker containers) are updated, the result is verified and the system is re-checked. The OS update only proceeds if the required steps succeeded; optional confirmation step, abort at any time, notifications on the dashboard, Unraid and Discord. Docker updates before the OS are OFF by default.
 - The logo is shown beside the title on the dashboard and as the plugin's icon on the Plugins page (installed locally, restored at every boot).

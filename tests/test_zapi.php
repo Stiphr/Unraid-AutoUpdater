@@ -3,7 +3,7 @@
 
 function api_call($action, array $post = [], $method = 'POST', $csrf = 'tok') {
   @mkdir('/usr/local/emhttp/plugins', 0755, true);
-  if (!is_link('/usr/local/emhttp/plugins/docker.autoupdate')) @symlink(realpath(__DIR__ . '/../src'), '/usr/local/emhttp/plugins/docker.autoupdate');
+  if (!is_link('/usr/local/emhttp/plugins/unraid-autoupdater')) @symlink(realpath(__DIR__ . '/../src'), '/usr/local/emhttp/plugins/unraid-autoupdater');
   file_put_contents(DAU_VARINI, "NAME=\"Tower\"\ncsrf_token=\"tok\"\n");
   $pre = sys_get_temp_dir() . '/dau-api-pre.php';
   file_put_contents($pre, '<?php $_SERVER["REQUEST_METHOD"]=' . var_export($method, true) . '; $_POST=' . var_export(['action' => $action] + ($csrf !== null ? ['csrf_token' => $csrf] : []) + $post, true) . ';');
@@ -35,7 +35,7 @@ t('api: container and plugin settings are sanitised', function () {
   api_call('set_container', ['names' => json_encode(['web', '../etc', 'x y']), 'data' => json_encode(['policy' => 'auto', 'delay_hours' => -5, 'schedule' => ['frequency' => 'hourly']])]);
   $c = dau_load_config(); ok(isset($c['containers']['web'])); eq(count($c['containers']), 1);
   eq($c['containers']['web']['policy'], 'auto'); ok($c['containers']['web']['delay_hours'] === null || $c['containers']['web']['delay_hours'] >= 0);
-  api_call('set_plugin', ['files' => json_encode(['a.plg', 'docker.autoupdate.plg', '../x.plg']), 'data' => json_encode(['policy' => 'auto'])]);
+  api_call('set_plugin', ['files' => json_encode(['a.plg', 'unraid-autoupdater.plg', '../x.plg']), 'data' => json_encode(['policy' => 'auto'])]);
   $c = dau_load_config(); eq(array_keys($c['plugins']['items']), ['a.plg']);
   has(api_call('run', ['what' => 'docker', 'names' => json_encode([])])['error'] ?? '', 'Nothing');
   has(api_call('run', ['what' => 'rm -rf'])['error'] ?? '', 'Unknown');
@@ -50,4 +50,4 @@ t('api: import accepts an export file and keeps a copy of the old settings', fun
   has(api_call('import', ['config' => 'not json'])['error'] ?? '', 'Invalid');
 });
 
-t('cleanup api test helper files', function () { @unlink('/usr/local/emhttp/plugins/docker.autoupdate'); @unlink(sys_get_temp_dir() . '/dau-api-pre.php'); ok(true); });
+t('cleanup api test helper files', function () { @unlink('/usr/local/emhttp/plugins/unraid-autoupdater'); @unlink(sys_get_temp_dir() . '/dau-api-pre.php'); ok(true); });
