@@ -2,6 +2,12 @@
 
 # Unraid AutoUpdater
 
+<p align="center">
+<img src="https://img.shields.io/github/v/release/Stiphr/Unraid-AutoUpdater?label=release&color=0078d4" alt="Release version">
+<img src="https://img.shields.io/badge/Unraid-tested%20with%207.3.4-e8e8e8?labelColor=e8612c" alt="Unraid tested with 7.3.4">
+<img src="https://img.shields.io/github/issues/Stiphr/Unraid-AutoUpdater?label=issues&color=44cc11" alt="Open issues">
+</p>
+
 Keep your Unraid server up to date from one dashboard: Docker containers, plugins and Unraid OS, with schedules, safety checks, history and Discord notifications. It only uses Unraid's own update mechanisms and never bypasses its checks.
 
 ## Features
