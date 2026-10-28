@@ -9,7 +9,7 @@ define('DAU_QDIR_NAME', '.unraid-autoupdater-quarantine');
 define('DAU_QUARANTINE_DB', DAU_DIR . '/quarantine.json');
 define('DAU_TPL_BACKUPS', DAU_DIR . '/template-backups');
 
-function dau_appdata_roots(array $cfg = null) {
+function dau_appdata_roots(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = $cfg['appdata']['roots'] ?? ['/mnt/user/appdata'];
   $out = [];
@@ -75,7 +75,7 @@ function dau_dir_size($p) {
  * Orphaned appdata folders. A folder is an orphan when no container (any state) maps it or something inside it.
  * Mounts that cover the whole appdata share (e.g. /mnt/user) are shown but never count as ownership.
  */
-function dau_appdata_scan(array $cfg = null) {
+function dau_appdata_scan(?array $cfg = null) {
   $cfg = $cfg ?: dau_load_config();
   $roots = dau_appdata_roots($cfg);
   if (!$roots) return ['ok' => false, 'error' => 'No appdata folder is set up, or it does not exist. Add it under Settings > Cleanup.'];

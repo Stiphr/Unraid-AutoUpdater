@@ -1,3 +1,9 @@
+###2026.11.02
+- New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
+- Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
+- Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- Improved: an automatic reboot after an OS update also waits while the mover is running.
+- Improved: no deprecation warnings on newer PHP versions.
 ###2026.11.01
 - New: Backups tab. Weekly or monthly backups of your appdata folders and of the boot drive to a folder you choose, optionally just before updates; keep 1, 2 or 3 copies.
 - New: Cleanup tab with a guided Scan, Review, Clean flow for unused appdata folders (restorable quarantine), Docker images, volumes, leftover containers and saved templates; dry run and clear confirmations.

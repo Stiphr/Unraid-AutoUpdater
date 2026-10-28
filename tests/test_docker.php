@@ -148,6 +148,21 @@ t('docker: backup retention keeps newest sets', function () {
   dau_test_rm('/mnt/dau-test-bk2');
 });
 
+t('docker: a failed safety backup never pushes out an older good set', function () {
+  @mkdir('/mnt/dau-test-bk3/app', 0755, true);
+  foreach (['20260101-000000', '20260102-000000'] as $s) touch("/mnt/dau-test-bk3/app/$s-config.json");
+  $cfg = dau_defaults(); $cfg['global']['backup'] = ['enabled' => true, 'dest' => '/mnt/dau-test-bk3', 'retention' => 2, 'config' => true, 'image' => true, 'appdata' => false, 'required' => false];
+  mock_exec(function ($a) {
+    if (in_array('save', $a, true)) return ['code' => 1, 'err' => 'no space'];
+    if (in_array('inspect', $a, true)) return ['out' => "1000\n"];
+    return null;
+  });
+  $r = dau_backup_run($cfg, 'app', ['Image' => 'sha256:abc']);
+  ok(!$r['ok'], 'image part failed'); ok(is_file('/mnt/dau-test-bk3/app/20260101-000000-config.json'), 'oldest good set kept');
+  eq(glob('/mnt/dau-test-bk3/app/.*.partial'), [], 'no partial file left');
+  dau_test_rm('/mnt/dau-test-bk3');
+});
+
 t('docker: slots', function () {
   $cfg = dau_defaults(); $cfg['global']['enabled'] = true;
   $cfg['containers'] = ['a' => ['policy' => 'auto'], 'b' => ['policy' => 'ignore'], 'c' => ['policy' => 'auto', 'schedule' => ['frequency' => 'weekly', 'time' => '05:00', 'weekday' => 2, 'monthday' => 1]]];
