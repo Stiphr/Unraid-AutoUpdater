@@ -2,10 +2,10 @@ Menu="Dashboard:9"
 Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>')"
 ---
 <?php
-/* Dashboard tile: a status pill, what is waiting (rows only appear when they have something to say; each opens its tab), and a quiet
-   footer with the last and next run and "Check now" (updates stay behind their confirmation on the tabs). It refreshes only while a job
-   runs and reads only the plugin's own state, never Docker. The Unraid OS version is deliberately not
-   shown here. Styles are scoped to #dau-tile and use the theme's own text colour, so it reads well in every Unraid theme.
+/* Dashboard tile: a status pill, one card each for Docker, Plugins and Unraid OS, and a quiet footer with the last check, next run and last
+   backup. Cards with updates have an Update button: it lists what would be updated right in the tile and needs a second click, then runs the same
+   job as the tabs. While a job runs the tile shows its progress. It refreshes only then and reads only the plugin's own state, never Docker, until
+   Update is clicked. The Unraid OS version is deliberately not shown here. Styles are scoped to #dau-tile and use the theme's own text colour.
    Can be switched off in Settings > Appearance. */
 try {
   $dau_on = true;
@@ -13,83 +13,142 @@ try {
   if (is_array($dau_cf) && isset($dau_cf['ui']['widget']) && !$dau_cf['ui']['widget']) $dau_on = false;
   if ($dau_on) {
     $dau_csrf = json_encode($var['csrf_token'] ?? '');
+    $dau_page = json_encode(isset($dau_cf['ui']['menu_tab']) && !$dau_cf['ui']['menu_tab'] ? '/Settings/UnraidSwissManager' : '/SwissManager');
     $dau_light = in_array(strtok((string)($display['theme'] ?? ''), '-'), ['white', 'azure'], true) ? ' class="dau-light"' : '';
     $mytiles['unraid-swiss-manager']['column2'] = <<<EOT
 <tbody title="Unraid Swiss Manager" id="dau-tile"$dau_light>
 <tr><td>
-<img class="img" src="/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
+<img class="img" src="/plugins/unraid-swiss-manager/images/unraid-swiss-manager.svg" alt="" width="32" height="32" style="object-fit:contain;border-radius:7px" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
 <div class="section">Unraid Swiss Manager<br><span class="dau-pill" id="dau-w-pill"><i id="dau-w-dot" class="dau-dot"></i><span id="dau-w-sum">Checking&hellip;</span></span></div>
-<a href="/Settings/UnraidSwissManager" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
+<a href="/Settings/UnraidSwissManager" id="dau-w-open" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
 </td></tr>
 <tr><td>
 <style>
-#dau-tile{--dau-ok:#3fb950;--dau-up:#f0793f;--dau-bad:#ff6b5e;--dau-run:#6f93e0}
+#dau-tile{--dau-ok:#3fb950;--dau-up:#ff7a45;--dau-bad:#ff6b5e;--dau-run:#6f93e0;--dau-btn:#d9480f;--dau-line:rgba(127,127,127,.22);--dau-soft:rgba(127,127,127,.09)}
 #dau-tile.dau-light{--dau-ok:#16794c;--dau-up:#b23d17;--dau-bad:#c4332a;--dau-run:#2457c5}
 #dau-tile .dau-pill{display:inline-flex;align-items:center;gap:6px;padding:0 8px;margin-top:2px;border:1px solid rgba(127,127,127,.35);border-radius:999px;font-size:.92em;line-height:1.6}
 #dau-tile .dau-dot{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.35;flex:none}
 #dau-tile .dau-pill.ok{color:var(--dau-ok);border-color:var(--dau-ok)}#dau-tile .dau-pill.up{color:var(--dau-up);border-color:var(--dau-up)}#dau-tile .dau-pill.bad{color:var(--dau-bad);border-color:var(--dau-bad)}#dau-tile .dau-pill.run{color:var(--dau-run);border-color:var(--dau-run)}
 #dau-tile .dau-pill.ok .dau-dot,#dau-tile .dau-pill.up .dau-dot,#dau-tile .dau-pill.bad .dau-dot,#dau-tile .dau-pill.run .dau-dot{opacity:1}
-#dau-tile .dau-rows{display:flex;flex-direction:column;gap:2px;margin:2px 0 0}
-#dau-tile a.dau-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 8px;margin:0 -8px;border-radius:6px;color:inherit;text-decoration:none}
-#dau-tile a.dau-row:hover{background:rgba(127,127,127,.12)}
-#dau-tile .dau-k{opacity:.65;white-space:nowrap}
-#dau-tile .dau-v{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#dau-tile .dau-v b{font-weight:600}
-#dau-tile .dau-v .dau-m{opacity:.6}
-#dau-tile a.dau-row.up .dau-v b{color:var(--dau-up)}
-#dau-tile a.dau-row.bad .dau-k,#dau-tile a.dau-row.bad .dau-v{color:var(--dau-bad);opacity:1}
-#dau-tile .dau-foot{margin-top:6px;padding-top:6px;border-top:1px solid rgba(127,127,127,.2);font-size:.92em;display:flex;justify-content:space-between;align-items:center;gap:6px 12px;flex-wrap:wrap}
-#dau-tile .dau-times{opacity:.65;display:flex;gap:4px 12px;flex-wrap:wrap}
-#dau-tile button.dau-go{margin:0;padding:1px 10px;min-width:0;font-size:1em;line-height:1.6;background:none;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+#dau-tile .dau-body{width:0;min-width:100%}      /* long text wraps here instead of widening the Dashboard column */
+#dau-tile .dau-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:2px 0 0}
+#dau-tile .dau-card{display:flex;flex-direction:column;gap:6px;min-width:0;padding:8px 9px;background:var(--dau-soft);border:1px solid var(--dau-line);border-radius:8px}
+#dau-tile .dau-card.up{border-color:var(--dau-up)}
+#dau-tile a.dau-main{display:block;color:inherit;text-decoration:none;min-width:0}
+#dau-tile .dau-k{display:block;font-size:.88em;opacity:.7}
+#dau-tile .dau-n{display:block;font-size:1.75em;font-weight:600;line-height:1.25}
+#dau-tile .dau-card.up .dau-n{color:var(--dau-up)}
+#dau-tile .dau-card.ok .dau-n{color:var(--dau-ok);font-size:1.45em;line-height:1.5}
+#dau-tile .dau-s{display:block;font-size:.85em;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dau-tile a.dau-alert{display:flex;justify-content:space-between;gap:12px;margin-top:8px;padding:6px 9px;border-radius:8px;color:var(--dau-bad);background:var(--dau-soft);border:1px solid var(--dau-bad);text-decoration:none}
+#dau-tile .dau-prog{margin-top:8px}
+#dau-tile .dau-prog-t{display:flex;justify-content:space-between;gap:12px;font-size:.92em}
+#dau-tile .dau-prog-t span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dau-tile .dau-bar{height:4px;margin-top:4px;border-radius:2px;background:var(--dau-line);overflow:hidden}
+#dau-tile .dau-bar i{display:block;height:100%;background:var(--dau-run);transition:width .4s}
+#dau-tile .dau-ask{margin-top:8px;padding:8px 9px;border:1px solid var(--dau-up);border-radius:8px;background:var(--dau-soft)}
+#dau-tile .dau-ask p,#dau-tile .dau-ask small{white-space:normal;overflow-wrap:anywhere}
+#dau-tile .dau-ask p{margin:0 0 4px}
+#dau-tile .dau-ask small{display:block;opacity:.7;margin-bottom:6px}
+#dau-tile .dau-ask-b{display:flex;justify-content:flex-end;gap:6px}
+#dau-tile .dau-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--dau-line);font-size:.92em;display:flex;justify-content:space-between;align-items:center;gap:6px 12px}
+#dau-tile .dau-times{opacity:.7;display:flex;gap:2px 12px;flex-wrap:wrap;min-width:0}
+#dau-tile button.dau-go{flex:none;margin:0;padding:2px 10px;min-width:0;font-size:1em;line-height:1.5;background:none;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+#dau-tile button.dau-go.pri{background:var(--dau-btn);border-color:var(--dau-btn);color:#fff;font-weight:600}
+#dau-tile a.dau-go{display:block;text-align:center;padding:2px 6px;font-size:1em;line-height:1.5;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;text-decoration:none}
+#dau-tile button.dau-go:hover,#dau-tile a.dau-go:hover{filter:brightness(1.12);box-shadow:none}
 #dau-tile button.dau-go:disabled{opacity:.45;cursor:default}
+#dau-tile .dau-card button.dau-go{width:100%;padding:2px 4px}
 </style>
-<div class="dau-rows" id="dau-w-rows"></div>
-<div class="dau-foot"><span class="dau-times"><span id="dau-w-last"></span><span id="dau-w-next"></span></span><button type="button" class="dau-go" id="dau-w-go">Check now</button></div>
+<div class="dau-body">
+<div class="dau-cards" id="dau-w-cards"></div>
+<div id="dau-w-prog"></div>
+<div id="dau-w-ask"></div>
+<div id="dau-w-alert"></div>
+<div class="dau-foot"><span class="dau-times"><span id="dau-w-last"></span><span id="dau-w-next"></span><span id="dau-w-bk"></span></span><button type="button" class="dau-go" id="dau-w-go">Check now</button></div>
+</div>
 </td></tr>
 <script>
 (function(){
-  var P='/Settings/UnraidSwissManager', API='/plugins/unraid-swiss-manager/include/api.php', timer=null;
+  var API='/plugins/unraid-swiss-manager/include/api.php', timer=null, asked=false, P=$dau_page;
+  byId('dau-w-open').href=P;
   function el(t,c,x){var e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;}
   function byId(i){return document.getElementById(i);}
   function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<90) return 'just now'; if(d<5400) return Math.round(d/60)+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
   function inn(ts,now){ if(!ts) return 'nothing scheduled'; var d=ts-now; if(d<=60) return 'in a minute'; if(d<5400) return 'in '+Math.round(d/60)+' min'; if(d<86400) return 'in '+Math.round(d/3600)+' h'; return new Date(ts*1000).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}); }
   function full(ts){ return ts? new Date(ts*1000).toLocaleString():''; }
   function pl(n,w){ return n+' '+w+(n===1?'':'s'); }
-  /* one row: label left, value right; "cls" = up (updates waiting) | bad (needs attention) */
-  function row(k,strong,muted,tab,cls){
-    var a=el('a','dau-row'+(cls?' '+cls:'')); a.href=P+'?tab='+tab;
-    var v=el('span','dau-v'); if(strong) v.appendChild(el('b',null,strong)); if(muted) v.appendChild(el('span','dau-m',(strong?' · ':'')+muted));
-    a.appendChild(el('span','dau-k',k)); a.appendChild(v); return a;
-  }
   function post(action,extra){
     var b=new URLSearchParams(); b.append('action',action); b.append('csrf_token',$dau_csrf);
     for(var k in (extra||{})) b.append(k,extra[k]);
     return fetch(API,{method:'POST',body:b,credentials:'same-origin'}).then(function(r){return r.json();});
   }
+  /* one card: the upper part opens its tab; "act" is a button or link below it */
+  function card(k,tab,cls,n,s,act){
+    var c=el('div','dau-card'+(cls?' '+cls:'')), a=el('a','dau-main'); a.href=P+'?tab='+tab;
+    a.appendChild(el('span','dau-k',k)); a.appendChild(el('span','dau-n',n)); a.appendChild(el('span','dau-s',s)); a.title=s;
+    c.appendChild(a); if(act) c.appendChild(act); return c;
+  }
+  function btn(x,cls,fn){ var b=el('button','dau-go'+(cls?' '+cls:''),x); b.type='button'; b.onclick=fn; return b; }
   function draw(j){
-    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0), rows=byId('dau-w-rows');
-    var sum=j.running? 'Working…' : j.failures? 'Needs attention' : !j.at? 'Not checked yet' : total? pl(total,'update')+' waiting' : 'Up to date';
+    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0), cards=byId('dau-w-cards'), busy=!!j.running;
+    var sum=busy? 'Working…' : j.failures? 'Needs attention' : !j.at? 'Not checked yet' : total? pl(total,'update')+' waiting' : 'Up to date';
     byId('dau-w-sum').textContent=sum;
-    byId('dau-w-pill').className='dau-pill '+(j.running?'run':j.failures?'bad':total?'up':j.at?'ok':'');
-    while(rows.firstChild) rows.removeChild(rows.firstChild);
-    rows.appendChild(row('Docker', j.at&&j.docker? pl(j.docker,'update'):'', j.at? (j.docker?'':'Up to date · ')+pl(j.containers,'container') : 'Not checked yet', 'docker', j.docker?'up':''));
-    rows.appendChild(row('Plugins', j.plugins? pl(j.plugins,'update'):'', j.plugins?'':'Up to date', 'plugins', j.plugins?'up':''));
-    if(j.os_update) rows.appendChild(row('Unraid OS','Update available','', 'os', 'up'));
-    if(j.failures) rows.appendChild(row('Attention', pl(j.failures,'recent failure'), 'View', 'activity', 'bad'));
-    if(j.pinned) rows.appendChild(row('Pinned', '', pl(j.pinned,'container')+' held back', 'docker', ''));
-    var l=byId('dau-w-last'), n=byId('dau-w-next');
-    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':''); l.title=full(j.last_run);
-    n.textContent='Next run '+inn(j.next,j.now); n.title=full(j.next);
-    byId('dau-w-go').disabled=!!j.running;
+    byId('dau-w-pill').className='dau-pill '+(busy?'run':j.failures?'bad':total?'up':j.at?'ok':'');
+    while(cards.firstChild) cards.removeChild(cards.firstChild);
+    var up=function(what){ var b=btn('Update','pri',function(){ask(what);}); b.disabled=busy; return b; };
+    cards.appendChild(j.at&&j.docker? card('Docker','docker','up',String(j.docker),pl(j.docker,'update')+' of '+j.containers,up('docker')) : card('Docker','docker',j.at?'ok':'',j.at?'✓':'–',j.at? pl(j.containers,'container') : 'Not checked yet'));
+    cards.appendChild(j.plugins? card('Plugins','plugins','up',String(j.plugins),pl(j.plugins,'update'),up('plugins')) : card('Plugins','plugins',j.at?'ok':'',j.at?'✓':'–',j.at?'Up to date':'Not checked yet'));
+    var os=el('a','dau-go','Review'); os.href=P+'?tab=os';
+    cards.appendChild(j.os_update? card('Unraid OS','os','up','New','Update available',os) : card('Unraid OS','os',j.at?'ok':'',j.at?'✓':'–',j.at?'Up to date':'Not checked yet'));
+    var pr=byId('dau-w-prog'); while(pr.firstChild) pr.removeChild(pr.firstChild);
+    if(busy){
+      var w=el('div','dau-prog'), t=el('div','dau-prog-t'), bar=el('div','dau-bar'), i=el('i'), pct=j.total? Math.round((j.done||0)/j.total*100):0;
+      t.appendChild(el('span',null,j.phase||'Running')); if(j.total) t.appendChild(el('span',null,(j.done||0)+' of '+j.total));
+      i.style.width=(j.total?Math.max(4,pct):100)+'%'; if(!j.total) i.style.opacity='.45'; bar.appendChild(i); w.appendChild(t); w.appendChild(bar); pr.appendChild(w);
+      closeAsk();
+    }
+    var al=byId('dau-w-alert'); while(al.firstChild) al.removeChild(al.firstChild);
+    if(j.failures){ var a=el('a','dau-alert'); a.href=P+'?tab=activity'; a.appendChild(el('span',null,pl(j.failures,'recent failure'))); a.appendChild(el('span',null,'View')); al.appendChild(a); }
+    var l=byId('dau-w-last'), n=byId('dau-w-next'), b=byId('dau-w-bk');
+    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.last_run);
+    n.textContent='Next '+(j.next_label? j.next_label+' ':'')+inn(j.next,j.now); n.title=full(j.next);
+    b.textContent=j.backup_at? 'Backup '+ago(j.backup_at,j.now)+(j.backup_ok===false?' (failed)':'') : ''; b.title=full(j.backup_at);
+    byId('dau-w-go').disabled=busy;
+  }
+  function closeAsk(){ asked=false; var a=byId('dau-w-ask'); while(a.firstChild) a.removeChild(a.firstChild); }
+  /* Update: lists what would be updated, nothing runs until the second click */
+  function ask(what){
+    if(asked) return; asked=true;
+    var a=byId('dau-w-ask'), box=el('div','dau-ask'), docker=what==='docker';
+    box.appendChild(el('p',null,'Looking up what would be updated…')); a.appendChild(box);
+    var show=function(names,labels){
+      while(box.firstChild) box.removeChild(box.firstChild);
+      if(!names.length){ box.appendChild(el('p',null,'Nothing can be updated from here. Open the tab for details.')); box.appendChild(btn('Close','',closeAsk)); return; }
+      var shown=labels.slice(0,6).join(', ')+(labels.length>6? ' and '+(labels.length-6)+' more':'');
+      box.appendChild(el('p',null,'Update '+pl(names.length,docker?'container':'plugin')+'?'));
+      box.appendChild(el('small',null,shown+(docker?'. Each one restarts, so expect short downtime.':'. Each one is validated, then installed.')));
+      var r=el('div','dau-ask-b'), go=btn('Update now','pri',function(){
+        go.disabled=true;
+        post('run',{what:what,names:JSON.stringify(names)}).then(function(j){ closeAsk(); if(j&&j.error) byId('dau-w-sum').textContent=j.error; load(); }).catch(function(){ closeAsk(); load(); });
+      });
+      r.appendChild(btn('Cancel','',closeAsk)); r.appendChild(go); box.appendChild(r);
+    };
+    (docker? post('preview') : post('plugins')).then(function(j){
+      if(!j||j.error) throw 0;
+      var rows=(docker? j.rows : j.rows.filter(function(r){return r.latest&&!r.self&&!r.skipped;}));
+      if(docker) rows=rows.filter(function(r){return r.managed;});
+      show(rows.map(function(r){return docker? r.name : r.file;}),rows.map(function(r){return r.name;}));
+    }).catch(function(){ while(box.firstChild) box.removeChild(box.firstChild); box.appendChild(el('p',null,'That did not work. Try again from the tab.')); box.appendChild(btn('Close','',closeAsk)); });
   }
   function load(){
     clearTimeout(timer);
-    if(!byId('dau-w-rows')) return;      /* the tile was removed from the page */
+    if(!byId('dau-w-cards')) return;      /* the tile was removed from the page */
     post('widget').then(function(j){
       if(!j||j.error) throw 0;
       draw(j);
-      if(j.running) timer=setTimeout(load,5000);      /* only while something runs */
-    }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
+      if(j.running) timer=setTimeout(load,3000);      /* only while something runs */
+          }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
   }
   byId('dau-w-go').addEventListener('click',function(){
     var b=this; b.disabled=true;

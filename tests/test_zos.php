@@ -358,7 +358,7 @@ t('release: version, build, icon and update metadata are consistent', function (
   $fn = 0; foreach ($x->FILE as $f) if (isset($f->SHA256)) { $fn++; $in = trim((string)$f->INLINE, " \t\n\r\0\x0b") . "\n"; eq(hash('sha256', $in), (string)$f->SHA256, 'checksum ' . $f['Name']); }
   ok($fn >= 15, 'all inline files carry a checksum');
   has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'Icon="unraid-swiss-manager.png"');
-  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-swiss-manager.png"); has($js, "class: 'brand'");
+  $js = file_get_contents(__DIR__ . '/../src/assets/app.js'); has($js, "images/unraid-swiss-manager.svg"); has($js, "class: 'brand'");
   ok(strpos($js, "class: 'brand'") < strpos($js, "class: 'dau-name'"), 'logo is left of the title');
 });
 

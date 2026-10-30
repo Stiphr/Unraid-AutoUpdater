@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-swiss-manager">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.30b1">
+<!ENTITY version "2026.11.01b1">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-swiss-manager.plg">
@@ -10,29 +10,48 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-swiss-manager.png">
 
 <CHANGES>
-###2026.10.30b1
-- BETA. Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
-- BETA. Fix: a container is no longer removed when the other containers cannot be checked for using its network.
-- BETA. Safety: containers stopped for a backup are written down first, so the next job starts them again after a kill, power loss or reboot (after more than a day it reports them instead). A container interrupted during an update is started again the same way.
-- BETA. Fix: a backup destination inside the appdata folder is now refused through any name of the share (/mnt/cache/appdata/x as well as /mnt/user/appdata/x).
-- BETA. Backups: "Stop the containers" refuses to run live when Docker does not answer, starts containers on another one's network after it (and stops them with it). A flash backup no longer fails when a file changes while it is read.
-- BETA. Skip, Approve and Unpin now wait for a running job instead of being overwritten by it. Failed backups and removals count as failures in Discord and pass quiet hours. A damaged state or history file is kept and logged; a damaged settings file is copied once, not on every load. Importing settings keeps plugin policies. Container updates and removals change the Dashboard numbers right away. Unraid 7.3.10 now counts as newer than 7.3.9.
-- BETA. Faster: plugin details are read from their files, not through four processes per plugin on every page load.
-- BETA. New: a progress stepper and a live log while a job runs; each schedule says in words when it runs next; an "Unsaved changes" bar in Settings; Automatic theme that follows Unraid (White and Azure are now readable); messages and dialogs survive page refreshes; a failed refresh offers Try again.
-- BETA. New Dashboard tile: a status pill, full times on hover, a Check now button, and it refreshes while a job runs.
-###2026.10.29b1
-- BETA. New: remove containers and plugins from the Docker and Plugins tabs (per row or "Remove selected…"), always behind a confirmation. Containers are stopped and removed (never forced); optionally their image is deleted (kept if another container uses it) and their saved template archived. Appdata is never deleted here. Plugins are uninstalled with Unraid's own plugin tool; this plugin and Unraid itself cannot be removed from here.
-###2026.10.28b1
-- BETA. Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager from the beta branch, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
-- BETA. New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
-- BETA. Settings page: ?tab=docker|plugins|os|cleanup|backups|settings|activity opens that tab directly.
-###2026.11.02b1
-- BETA. New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
-- BETA. Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
-- BETA. Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
-- BETA. Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
-- BETA. Improved: an automatic reboot after an OS update also waits while the mover is running.
-- BETA. Improved: no deprecation warnings on newer PHP versions.
+###2026.11.01b1
+- New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
+- Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
+- Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.
+- Fix: the Dashboard tile said "Needs attention" for old failures, even for a plugin that no longer exists. A failure now counts for 3 days, and only until that item succeeds again.
+- New Dashboard tile: cards for Docker, Plugins and Unraid OS, an Update button on cards with updates (it lists what would change and needs a second click), live progress while a job runs, and the next run and last backup in the footer.
+- New logo: white on orange, as SVG in the plugin. Unraid's Plugins page still uses a PNG made from it.
+- Plugin checks now default to Weekly, Sunday 04:00 on new installs. Existing schedules are not changed.
+- Fix: the Unraid time zone setting was read under the wrong name. Scheduled jobs were not affected.
+###2026.10.31
+- Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
+- Fix: a container is no longer removed when the other containers cannot be checked for using its network.
+- Safety: containers stopped for a backup are written down first, so the next job starts them again after a kill, power loss or reboot (after more than a day it reports them instead). A container interrupted during an update is started again the same way.
+- Fix: a backup destination inside the appdata folder is now refused through any name of the share (/mnt/cache/appdata/x as well as /mnt/user/appdata/x).
+- Backups: "Stop the containers" refuses to run live when Docker does not answer, starts containers on another one's network after it (and stops them with it). A flash backup no longer fails when a file changes while it is read.
+- Skip, Approve and Unpin now wait for a running job instead of being overwritten by it. Failed backups and removals count as failures in Discord and pass quiet hours. A damaged state or history file is kept and logged; a damaged settings file is copied once, not on every load. Importing settings keeps plugin policies. Container updates and removals change the Dashboard numbers right away. Unraid 7.3.10 now counts as newer than 7.3.9.
+- Faster: plugin details are read from their files, not through four processes per plugin on every page load.
+- New: a progress stepper and a live log while a job runs; each schedule says in words when it runs next; an "Unsaved changes" bar in Settings; Automatic theme that follows Unraid (White and Azure are now readable); messages and dialogs survive page refreshes; a failed refresh offers Try again.
+- New Dashboard tile: a status pill, full times on hover, a Check now button, and it refreshes while a job runs.
+###2026.10.29
+- New: remove containers and plugins. Docker and Plugins tabs have a Remove button on each row and "Remove selected…" for several at once, always behind a confirmation.
+- Containers: stopped and removed (never forced). Optionally their image is deleted too (Docker keeps it if another container uses it), and optionally their saved template is archived to Cleanup, where it can be restored. By default the template stays, so Apps > Previous Apps can reinstall it with the same settings. Appdata folders are never deleted here: the Cleanup tab can quarantine unused ones afterwards. A container that other containers use as their network is not removed.
+- Plugins: uninstalled with Unraid's own plugin tool (the same as Plugins > Remove) and checked afterwards. This plugin and Unraid itself cannot be removed from here.
+- Every removal is listed in Activity; a failed one also sends a notification.
+###2026.10.28
+- Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
+- New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
+- Settings page: ?tab=docker|plugins|os|cleanup|backups|settings|activity opens that tab directly.
+###2026.11.02
+- New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
+- Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
+- Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
+- Improved: an automatic reboot after an OS update also waits while the mover is running.
+- Improved: no deprecation warnings on newer PHP versions.
+###2026.11.01
+- New: Backups tab. Weekly or monthly backups of your appdata folders and of the boot drive to a folder you choose, optionally just before updates; keep 1, 2 or 3 copies.
+- New: Cleanup tab with a guided Scan, Review, Clean flow for unused appdata folders (restorable quarantine), Docker images, volumes, leftover containers and saved templates; dry run and clear confirmations.
+- New: update dependencies, hold back major-version jumps, skip a version, roll a container back, release notes, quiet hours, statistics, Dashboard tile.
+- New: Settings can be saved to and loaded from a named file; the plugin branch (Stable or Beta) can be switched, with a Force update.
+- Improved: readable status colours in every theme, clearer labels and layouts, phone-friendly screens.
+- Changed: the web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). The plugin keeps its install name, so it updates normally. Update an old bookmark.
 ###2026.10.31b7
 - BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6
@@ -124,15 +143,21 @@
 Title="Unraid Swiss Manager"
 Icon="unraid-swiss-manager.png"
 ---
-<?php
-$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/assets/app.js');
-?>
-<link rel="stylesheet" href="/plugins/unraid-swiss-manager/assets/app.css<?=$dau_v?>">
-<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
-<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>; window.DAU_THEME = <?=json_encode((string)strtok((string)($display['theme'] ?? ''), '-'))?>;</script>
-<script src="/plugins/unraid-swiss-manager/assets/app.js<?=$dau_v?>"></script>
+<?php include "$docroot/plugins/unraid-swiss-manager/include/page.php"; ?>
 ]]></INLINE>
-<SHA256>9596af265f8162f57a25375ad7eeef427d37e31217f7d9729b5dad68c50ec909</SHA256>
+<SHA256>85f0767f32ee618c86133f4f02343ac27d79c7277bb822a0f2978d1ee12174d9</SHA256>
+</FILE>
+
+<FILE Name="&emhttp;/SwissManager.page" Mode="0644">
+<INLINE><![CDATA[Menu="Tasks:85"
+Name="Swiss Manager"
+Title="Unraid Swiss Manager"
+Code="f0ad"
+Cond="(json_decode((string)@file_get_contents('/boot/config/plugins/unraid-swiss-manager/config.json'),true)['ui']['menu_tab'] ?? true) !== false"
+---
+<?php include "$docroot/plugins/unraid-swiss-manager/include/page.php"; ?>
+]]></INLINE>
+<SHA256>3ccecc1c97099179cd2584c3c674ebe93500b79535c5cbbeb0dabbd84ec6d6d0</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/UnraidSwissManagerDash.page" Mode="0644">
@@ -140,10 +165,10 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager
 Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>')"
 ---
 <?php
-/* Dashboard tile: a status pill, what is waiting (rows only appear when they have something to say; each opens its tab), and a quiet
-   footer with the last and next run and "Check now" (updates stay behind their confirmation on the tabs). It refreshes only while a job
-   runs and reads only the plugin's own state, never Docker. The Unraid OS version is deliberately not
-   shown here. Styles are scoped to #dau-tile and use the theme's own text colour, so it reads well in every Unraid theme.
+/* Dashboard tile: a status pill, one card each for Docker, Plugins and Unraid OS, and a quiet footer with the last check, next run and last
+   backup. Cards with updates have an Update button: it lists what would be updated right in the tile and needs a second click, then runs the same
+   job as the tabs. While a job runs the tile shows its progress. It refreshes only then and reads only the plugin's own state, never Docker, until
+   Update is clicked. The Unraid OS version is deliberately not shown here. Styles are scoped to #dau-tile and use the theme's own text colour.
    Can be switched off in Settings > Appearance. */
 try {
   $dau_on = true;
@@ -151,83 +176,142 @@ try {
   if (is_array($dau_cf) && isset($dau_cf['ui']['widget']) && !$dau_cf['ui']['widget']) $dau_on = false;
   if ($dau_on) {
     $dau_csrf = json_encode($var['csrf_token'] ?? '');
+    $dau_page = json_encode(isset($dau_cf['ui']['menu_tab']) && !$dau_cf['ui']['menu_tab'] ? '/Settings/UnraidSwissManager' : '/SwissManager');
     $dau_light = in_array(strtok((string)($display['theme'] ?? ''), '-'), ['white', 'azure'], true) ? ' class="dau-light"' : '';
     $mytiles['unraid-swiss-manager']['column2'] = <<<EOT
 <tbody title="Unraid Swiss Manager" id="dau-tile"$dau_light>
 <tr><td>
-<img class="img" src="/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png" alt="" width="32" height="32" style="object-fit:contain" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
+<img class="img" src="/plugins/unraid-swiss-manager/images/unraid-swiss-manager.svg" alt="" width="32" height="32" style="object-fit:contain;border-radius:7px" onerror="this.outerHTML='<i class=&quot;fa fa-refresh f32&quot;></i>'">
 <div class="section">Unraid Swiss Manager<br><span class="dau-pill" id="dau-w-pill"><i id="dau-w-dot" class="dau-dot"></i><span id="dau-w-sum">Checking&hellip;</span></span></div>
-<a href="/Settings/UnraidSwissManager" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
+<a href="/Settings/UnraidSwissManager" id="dau-w-open" title="Open Unraid Swiss Manager"><i class="fa fa-fw fa-cog chevron"></i></a>
 </td></tr>
 <tr><td>
 <style>
-#dau-tile{--dau-ok:#3fb950;--dau-up:#f0793f;--dau-bad:#ff6b5e;--dau-run:#6f93e0}
+#dau-tile{--dau-ok:#3fb950;--dau-up:#ff7a45;--dau-bad:#ff6b5e;--dau-run:#6f93e0;--dau-btn:#d9480f;--dau-line:rgba(127,127,127,.22);--dau-soft:rgba(127,127,127,.09)}
 #dau-tile.dau-light{--dau-ok:#16794c;--dau-up:#b23d17;--dau-bad:#c4332a;--dau-run:#2457c5}
 #dau-tile .dau-pill{display:inline-flex;align-items:center;gap:6px;padding:0 8px;margin-top:2px;border:1px solid rgba(127,127,127,.35);border-radius:999px;font-size:.92em;line-height:1.6}
 #dau-tile .dau-dot{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.35;flex:none}
 #dau-tile .dau-pill.ok{color:var(--dau-ok);border-color:var(--dau-ok)}#dau-tile .dau-pill.up{color:var(--dau-up);border-color:var(--dau-up)}#dau-tile .dau-pill.bad{color:var(--dau-bad);border-color:var(--dau-bad)}#dau-tile .dau-pill.run{color:var(--dau-run);border-color:var(--dau-run)}
 #dau-tile .dau-pill.ok .dau-dot,#dau-tile .dau-pill.up .dau-dot,#dau-tile .dau-pill.bad .dau-dot,#dau-tile .dau-pill.run .dau-dot{opacity:1}
-#dau-tile .dau-rows{display:flex;flex-direction:column;gap:2px;margin:2px 0 0}
-#dau-tile a.dau-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 8px;margin:0 -8px;border-radius:6px;color:inherit;text-decoration:none}
-#dau-tile a.dau-row:hover{background:rgba(127,127,127,.12)}
-#dau-tile .dau-k{opacity:.65;white-space:nowrap}
-#dau-tile .dau-v{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#dau-tile .dau-v b{font-weight:600}
-#dau-tile .dau-v .dau-m{opacity:.6}
-#dau-tile a.dau-row.up .dau-v b{color:var(--dau-up)}
-#dau-tile a.dau-row.bad .dau-k,#dau-tile a.dau-row.bad .dau-v{color:var(--dau-bad);opacity:1}
-#dau-tile .dau-foot{margin-top:6px;padding-top:6px;border-top:1px solid rgba(127,127,127,.2);font-size:.92em;display:flex;justify-content:space-between;align-items:center;gap:6px 12px;flex-wrap:wrap}
-#dau-tile .dau-times{opacity:.65;display:flex;gap:4px 12px;flex-wrap:wrap}
-#dau-tile button.dau-go{margin:0;padding:1px 10px;min-width:0;font-size:1em;line-height:1.6;background:none;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+#dau-tile .dau-body{width:0;min-width:100%}      /* long text wraps here instead of widening the Dashboard column */
+#dau-tile .dau-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:2px 0 0}
+#dau-tile .dau-card{display:flex;flex-direction:column;gap:6px;min-width:0;padding:8px 9px;background:var(--dau-soft);border:1px solid var(--dau-line);border-radius:8px}
+#dau-tile .dau-card.up{border-color:var(--dau-up)}
+#dau-tile a.dau-main{display:block;color:inherit;text-decoration:none;min-width:0}
+#dau-tile .dau-k{display:block;font-size:.88em;opacity:.7}
+#dau-tile .dau-n{display:block;font-size:1.75em;font-weight:600;line-height:1.25}
+#dau-tile .dau-card.up .dau-n{color:var(--dau-up)}
+#dau-tile .dau-card.ok .dau-n{color:var(--dau-ok);font-size:1.45em;line-height:1.5}
+#dau-tile .dau-s{display:block;font-size:.85em;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dau-tile a.dau-alert{display:flex;justify-content:space-between;gap:12px;margin-top:8px;padding:6px 9px;border-radius:8px;color:var(--dau-bad);background:var(--dau-soft);border:1px solid var(--dau-bad);text-decoration:none}
+#dau-tile .dau-prog{margin-top:8px}
+#dau-tile .dau-prog-t{display:flex;justify-content:space-between;gap:12px;font-size:.92em}
+#dau-tile .dau-prog-t span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dau-tile .dau-bar{height:4px;margin-top:4px;border-radius:2px;background:var(--dau-line);overflow:hidden}
+#dau-tile .dau-bar i{display:block;height:100%;background:var(--dau-run);transition:width .4s}
+#dau-tile .dau-ask{margin-top:8px;padding:8px 9px;border:1px solid var(--dau-up);border-radius:8px;background:var(--dau-soft)}
+#dau-tile .dau-ask p,#dau-tile .dau-ask small{white-space:normal;overflow-wrap:anywhere}
+#dau-tile .dau-ask p{margin:0 0 4px}
+#dau-tile .dau-ask small{display:block;opacity:.7;margin-bottom:6px}
+#dau-tile .dau-ask-b{display:flex;justify-content:flex-end;gap:6px}
+#dau-tile .dau-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--dau-line);font-size:.92em;display:flex;justify-content:space-between;align-items:center;gap:6px 12px}
+#dau-tile .dau-times{opacity:.7;display:flex;gap:2px 12px;flex-wrap:wrap;min-width:0}
+#dau-tile button.dau-go{flex:none;margin:0;padding:2px 10px;min-width:0;font-size:1em;line-height:1.5;background:none;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;cursor:pointer;text-transform:none;letter-spacing:0}
+#dau-tile button.dau-go.pri{background:var(--dau-btn);border-color:var(--dau-btn);color:#fff;font-weight:600}
+#dau-tile a.dau-go{display:block;text-align:center;padding:2px 6px;font-size:1em;line-height:1.5;color:inherit;border:1px solid rgba(127,127,127,.45);border-radius:6px;text-decoration:none}
+#dau-tile button.dau-go:hover,#dau-tile a.dau-go:hover{filter:brightness(1.12);box-shadow:none}
 #dau-tile button.dau-go:disabled{opacity:.45;cursor:default}
+#dau-tile .dau-card button.dau-go{width:100%;padding:2px 4px}
 </style>
-<div class="dau-rows" id="dau-w-rows"></div>
-<div class="dau-foot"><span class="dau-times"><span id="dau-w-last"></span><span id="dau-w-next"></span></span><button type="button" class="dau-go" id="dau-w-go">Check now</button></div>
+<div class="dau-body">
+<div class="dau-cards" id="dau-w-cards"></div>
+<div id="dau-w-prog"></div>
+<div id="dau-w-ask"></div>
+<div id="dau-w-alert"></div>
+<div class="dau-foot"><span class="dau-times"><span id="dau-w-last"></span><span id="dau-w-next"></span><span id="dau-w-bk"></span></span><button type="button" class="dau-go" id="dau-w-go">Check now</button></div>
+</div>
 </td></tr>
 <script>
 (function(){
-  var P='/Settings/UnraidSwissManager', API='/plugins/unraid-swiss-manager/include/api.php', timer=null;
+  var API='/plugins/unraid-swiss-manager/include/api.php', timer=null, asked=false, P=$dau_page;
+  byId('dau-w-open').href=P;
   function el(t,c,x){var e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;}
   function byId(i){return document.getElementById(i);}
   function ago(ts,now){ if(!ts) return 'never'; var d=Math.max(0,now-ts); if(d<90) return 'just now'; if(d<5400) return Math.round(d/60)+' min ago'; if(d<129600) return Math.round(d/3600)+' h ago'; return Math.round(d/86400)+' d ago'; }
   function inn(ts,now){ if(!ts) return 'nothing scheduled'; var d=ts-now; if(d<=60) return 'in a minute'; if(d<5400) return 'in '+Math.round(d/60)+' min'; if(d<86400) return 'in '+Math.round(d/3600)+' h'; return new Date(ts*1000).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}); }
   function full(ts){ return ts? new Date(ts*1000).toLocaleString():''; }
   function pl(n,w){ return n+' '+w+(n===1?'':'s'); }
-  /* one row: label left, value right; "cls" = up (updates waiting) | bad (needs attention) */
-  function row(k,strong,muted,tab,cls){
-    var a=el('a','dau-row'+(cls?' '+cls:'')); a.href=P+'?tab='+tab;
-    var v=el('span','dau-v'); if(strong) v.appendChild(el('b',null,strong)); if(muted) v.appendChild(el('span','dau-m',(strong?' · ':'')+muted));
-    a.appendChild(el('span','dau-k',k)); a.appendChild(v); return a;
-  }
   function post(action,extra){
     var b=new URLSearchParams(); b.append('action',action); b.append('csrf_token',$dau_csrf);
     for(var k in (extra||{})) b.append(k,extra[k]);
     return fetch(API,{method:'POST',body:b,credentials:'same-origin'}).then(function(r){return r.json();});
   }
+  /* one card: the upper part opens its tab; "act" is a button or link below it */
+  function card(k,tab,cls,n,s,act){
+    var c=el('div','dau-card'+(cls?' '+cls:'')), a=el('a','dau-main'); a.href=P+'?tab='+tab;
+    a.appendChild(el('span','dau-k',k)); a.appendChild(el('span','dau-n',n)); a.appendChild(el('span','dau-s',s)); a.title=s;
+    c.appendChild(a); if(act) c.appendChild(act); return c;
+  }
+  function btn(x,cls,fn){ var b=el('button','dau-go'+(cls?' '+cls:''),x); b.type='button'; b.onclick=fn; return b; }
   function draw(j){
-    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0), rows=byId('dau-w-rows');
-    var sum=j.running? 'Working…' : j.failures? 'Needs attention' : !j.at? 'Not checked yet' : total? pl(total,'update')+' waiting' : 'Up to date';
+    var total=(j.docker||0)+(j.plugins||0)+(j.os_update?1:0), cards=byId('dau-w-cards'), busy=!!j.running;
+    var sum=busy? 'Working…' : j.failures? 'Needs attention' : !j.at? 'Not checked yet' : total? pl(total,'update')+' waiting' : 'Up to date';
     byId('dau-w-sum').textContent=sum;
-    byId('dau-w-pill').className='dau-pill '+(j.running?'run':j.failures?'bad':total?'up':j.at?'ok':'');
-    while(rows.firstChild) rows.removeChild(rows.firstChild);
-    rows.appendChild(row('Docker', j.at&&j.docker? pl(j.docker,'update'):'', j.at? (j.docker?'':'Up to date · ')+pl(j.containers,'container') : 'Not checked yet', 'docker', j.docker?'up':''));
-    rows.appendChild(row('Plugins', j.plugins? pl(j.plugins,'update'):'', j.plugins?'':'Up to date', 'plugins', j.plugins?'up':''));
-    if(j.os_update) rows.appendChild(row('Unraid OS','Update available','', 'os', 'up'));
-    if(j.failures) rows.appendChild(row('Attention', pl(j.failures,'recent failure'), 'View', 'activity', 'bad'));
-    if(j.pinned) rows.appendChild(row('Pinned', '', pl(j.pinned,'container')+' held back', 'docker', ''));
-    var l=byId('dau-w-last'), n=byId('dau-w-next');
-    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':''); l.title=full(j.last_run);
-    n.textContent='Next run '+inn(j.next,j.now); n.title=full(j.next);
-    byId('dau-w-go').disabled=!!j.running;
+    byId('dau-w-pill').className='dau-pill '+(busy?'run':j.failures?'bad':total?'up':j.at?'ok':'');
+    while(cards.firstChild) cards.removeChild(cards.firstChild);
+    var up=function(what){ var b=btn('Update','pri',function(){ask(what);}); b.disabled=busy; return b; };
+    cards.appendChild(j.at&&j.docker? card('Docker','docker','up',String(j.docker),pl(j.docker,'update')+' of '+j.containers,up('docker')) : card('Docker','docker',j.at?'ok':'',j.at?'✓':'–',j.at? pl(j.containers,'container') : 'Not checked yet'));
+    cards.appendChild(j.plugins? card('Plugins','plugins','up',String(j.plugins),pl(j.plugins,'update'),up('plugins')) : card('Plugins','plugins',j.at?'ok':'',j.at?'✓':'–',j.at?'Up to date':'Not checked yet'));
+    var os=el('a','dau-go','Review'); os.href=P+'?tab=os';
+    cards.appendChild(j.os_update? card('Unraid OS','os','up','New','Update available',os) : card('Unraid OS','os',j.at?'ok':'',j.at?'✓':'–',j.at?'Up to date':'Not checked yet'));
+    var pr=byId('dau-w-prog'); while(pr.firstChild) pr.removeChild(pr.firstChild);
+    if(busy){
+      var w=el('div','dau-prog'), t=el('div','dau-prog-t'), bar=el('div','dau-bar'), i=el('i'), pct=j.total? Math.round((j.done||0)/j.total*100):0;
+      t.appendChild(el('span',null,j.phase||'Running')); if(j.total) t.appendChild(el('span',null,(j.done||0)+' of '+j.total));
+      i.style.width=(j.total?Math.max(4,pct):100)+'%'; if(!j.total) i.style.opacity='.45'; bar.appendChild(i); w.appendChild(t); w.appendChild(bar); pr.appendChild(w);
+      closeAsk();
+    }
+    var al=byId('dau-w-alert'); while(al.firstChild) al.removeChild(al.firstChild);
+    if(j.failures){ var a=el('a','dau-alert'); a.href=P+'?tab=activity'; a.appendChild(el('span',null,pl(j.failures,'recent failure'))); a.appendChild(el('span',null,'View')); al.appendChild(a); }
+    var l=byId('dau-w-last'), n=byId('dau-w-next'), b=byId('dau-w-bk');
+    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.last_run);
+    n.textContent='Next '+(j.next_label? j.next_label+' ':'')+inn(j.next,j.now); n.title=full(j.next);
+    b.textContent=j.backup_at? 'Backup '+ago(j.backup_at,j.now)+(j.backup_ok===false?' (failed)':'') : ''; b.title=full(j.backup_at);
+    byId('dau-w-go').disabled=busy;
+  }
+  function closeAsk(){ asked=false; var a=byId('dau-w-ask'); while(a.firstChild) a.removeChild(a.firstChild); }
+  /* Update: lists what would be updated, nothing runs until the second click */
+  function ask(what){
+    if(asked) return; asked=true;
+    var a=byId('dau-w-ask'), box=el('div','dau-ask'), docker=what==='docker';
+    box.appendChild(el('p',null,'Looking up what would be updated…')); a.appendChild(box);
+    var show=function(names,labels){
+      while(box.firstChild) box.removeChild(box.firstChild);
+      if(!names.length){ box.appendChild(el('p',null,'Nothing can be updated from here. Open the tab for details.')); box.appendChild(btn('Close','',closeAsk)); return; }
+      var shown=labels.slice(0,6).join(', ')+(labels.length>6? ' and '+(labels.length-6)+' more':'');
+      box.appendChild(el('p',null,'Update '+pl(names.length,docker?'container':'plugin')+'?'));
+      box.appendChild(el('small',null,shown+(docker?'. Each one restarts, so expect short downtime.':'. Each one is validated, then installed.')));
+      var r=el('div','dau-ask-b'), go=btn('Update now','pri',function(){
+        go.disabled=true;
+        post('run',{what:what,names:JSON.stringify(names)}).then(function(j){ closeAsk(); if(j&&j.error) byId('dau-w-sum').textContent=j.error; load(); }).catch(function(){ closeAsk(); load(); });
+      });
+      r.appendChild(btn('Cancel','',closeAsk)); r.appendChild(go); box.appendChild(r);
+    };
+    (docker? post('preview') : post('plugins')).then(function(j){
+      if(!j||j.error) throw 0;
+      var rows=(docker? j.rows : j.rows.filter(function(r){return r.latest&&!r.self&&!r.skipped;}));
+      if(docker) rows=rows.filter(function(r){return r.managed;});
+      show(rows.map(function(r){return docker? r.name : r.file;}),rows.map(function(r){return r.name;}));
+    }).catch(function(){ while(box.firstChild) box.removeChild(box.firstChild); box.appendChild(el('p',null,'That did not work. Try again from the tab.')); box.appendChild(btn('Close','',closeAsk)); });
   }
   function load(){
     clearTimeout(timer);
-    if(!byId('dau-w-rows')) return;      /* the tile was removed from the page */
+    if(!byId('dau-w-cards')) return;      /* the tile was removed from the page */
     post('widget').then(function(j){
       if(!j||j.error) throw 0;
       draw(j);
-      if(j.running) timer=setTimeout(load,5000);      /* only while something runs */
-    }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
+      if(j.running) timer=setTimeout(load,3000);      /* only while something runs */
+          }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
   }
   byId('dau-w-go').addEventListener('click',function(){
     var b=this; b.disabled=true;
@@ -242,7 +326,19 @@ EOT;
 } catch (Throwable $e) { /* never break the Dashboard */ }
 ?>
 ]]></INLINE>
-<SHA256>f47f500aea8e7d303732a0a15dbe3b4e18b35620e9750fdc006a72cfd02a37b6</SHA256>
+<SHA256>935e961f22dd01478195fdb15b581ae4ad7cb3444f0a505e0dd48912f67fd3f7</SHA256>
+</FILE>
+
+<FILE Name="&emhttp;/include/page.php" Mode="0644">
+<INLINE><![CDATA[<?php
+$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/assets/app.js');
+?>
+<link rel="stylesheet" href="/plugins/unraid-swiss-manager/assets/app.css<?=$dau_v?>">
+<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
+<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>; window.DAU_THEME = <?=json_encode((string)strtok((string)($display['theme'] ?? ''), '-'))?>;</script>
+<script src="/plugins/unraid-swiss-manager/assets/app.js<?=$dau_v?>"></script>
+]]></INLINE>
+<SHA256>dfb7a02da417a6af52b71b39217932f926b8176f095a6d84ddd238e29420e785</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/lib.php" Mode="0644">
@@ -260,7 +356,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.30b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.11.01b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-swiss-manager');
 define('DAU_DIR',       '/boot/config/plugins/unraid-swiss-manager');
@@ -289,12 +385,13 @@ define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
 define('DAU_MOVERPID',  '/var/run/mover.pid');
+define('DAU_OSCHECK',   '/usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/unraidcheck');
 define('DAU_SELF_PLG',  'unraid-swiss-manager.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
 
 $__ident = @parse_ini_file('/boot/config/ident.cfg');
-if (is_array($__ident) && !empty($__ident['timezone'])) @date_default_timezone_set($__ident['timezone']);
+if (is_array($__ident) && !empty($__ident['timeZone'])) @date_default_timezone_set($__ident['timeZone']);
 unset($__ident);
 
 /* ---------- small string helpers (PHP 7.4 has no str_contains & friends) ---------- */
@@ -561,7 +658,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>65424f5c165a0306ee04f61d46cc1bdc0d26d1bf9e58318b4d050c2e429d71d6</SHA256>
+<SHA256>c44224555a00aff760e23e941a9330d03ba382ff5e3f0f8555db8120510e7bd2</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -613,7 +710,7 @@ function dau_defaults() {
       ],
     ],
     'containers' => [],
-    'plugins' => $sched + [
+    'plugins' => ['frequency' => 'weekly'] + $sched + [      // Sunday 04:00
       'check_enabled' => true,          // scheduled detection + notifications
       'auto_update'   => false,         // MASTER SWITCH: automatic installation is opt-in
       'default_policy' => 'notify',
@@ -649,7 +746,7 @@ function dau_defaults() {
     'appdata' => ['roots' => ['/mnt/user/appdata'], 'safe_mode' => true, 'ignore' => [], 'purge_days' => 0, 'report' => false],
     /* scheduled backups of appdata and of the boot drive: see backups.php */
     'backups' => dau_bk_defaults(),
-    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
+    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true, 'menu_tab' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -806,7 +903,7 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
   if (isset($in['appdata']) && is_array($in['appdata'])) $cur['appdata'] = dau_apply_spec($cur['appdata'], $in['appdata'], ['roots' => ['paths'], 'safe_mode' => ['bool'], 'ignore' => ['folders'], 'purge_days' => ['int', 0, 365], 'report' => ['bool']]);
   if (isset($in['backups']) && is_array($in['backups'])) $cur['backups'] = dau_apply_spec($cur['backups'], $in['backups'], dau_bk_spec());
-  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool'], 'menu_tab' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {
@@ -944,7 +1041,7 @@ function dau_export_config() {
   return ['exported_at' => dau_ts_iso(dau_now()), 'plugin_version' => DAU_VERSION, 'secrets_included' => false, 'config' => $cfg];
 }
 ]]></INLINE>
-<SHA256>b24386e28b6dc15e260e6cbb824f40e16b76eaec83658bb79f6cf1adc763b70f</SHA256>
+<SHA256>5245767132d8edcd77ab66ceb428a48b5e403cd0b1bd92e93f92c09da5fda40b</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/schedule.php" Mode="0644">
@@ -1214,6 +1311,18 @@ function dau_history_load() {
   return array_map('dau_history_normalize', array_values(array_filter(dau_read_json_kept(DAU_HIST, [], 'history'), 'is_array')));
 }
 
+/** Failed actions that still matter: the newest entry of that item failed, within the last 3 days. A later success or an old failure does not count. */
+function dau_recent_failures() {
+  $n = 0; $seen = [];
+  foreach (dau_history_load() as $e) {
+    $k = $e['type'] . '|' . $e['name'];
+    if (isset($seen[$k])) continue;
+    $seen[$k] = true;
+    if ($e['result'] === 'failed' && dau_now() - (int)($e['ts'] ?? $e['finished']) <= 3 * 86400) $n++;
+  }
+  return $n;
+}
+
 /**
  * $e: type, name, action, result, started, finished, prev{version,id,digest}, new{...}, verification{result,detail},
  *     attempts, error, trigger, message. Newest first; capped to history.max_entries.
@@ -1316,7 +1425,7 @@ function dau_recover_interrupted(array &$st, $max) {
   return $c;
 }
 ]]></INLINE>
-<SHA256>ca508b821d3890c6d1c2909ae6ed085fa7dab28727bf01f040bd0fdda77ccea9</SHA256>
+<SHA256>0a34239b1100a0cdf5458951097e3cbd00c47155b66ef35950e2ab8bcc6b53c9</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/discord.php" Mode="0644">
@@ -2665,14 +2774,28 @@ function dau_plugin_slots(array $cfg) {
  * Unraid Swiss Manager - Unraid OS.
  * DEFAULT: check and notify only. Installing an OS update (mode "install") and rebooting afterwards (mode "install_reboot")
  * are opt-in, need an explicit confirmation in the UI, a maintenance window and a waiting period, and use only Unraid's own
- * `plugin update unRAIDServer.plg` (the same thing Tools > Update OS runs) and the stock reboot command. Nothing is rolled back
- * automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
+ * `plugin update unRAIDServer.plg` and the stock reboot command, and only when Unraid's plugin feed offers that exact release (see
+ * dau_os_feed_block). Nothing is rolled back automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
  */
 
 /** Unraid releases are compared as versions, so 7.3.10 is newer than 7.3.9. Plugins keep Unraid's text comparison (dau_version_newer). */
 function dau_os_newer($latest, $installed) { return (string)$latest !== '' && version_compare((string)$latest, (string)$installed, '>'); }
 
+/**
+ * Current Unraid keeps its releases at releases.unraid.net; the update address inside unRAIDServer.plg stopped moving (it still offers 7.0.1).
+ * So ask Unraid's own checker. json=true makes it print the answer and skip its own notification. Older Unraid has no such script and uses the plg.
+ */
 function dau_os_check() {
+  $script = $GLOBALS['DAU_OSCHECK'] ?? DAU_OSCHECK;
+  if (is_file($script)) {
+    $r = dau_run(['/usr/bin/env', 'QUERY_STRING=json=true', $script], 120);
+    if ($r['timeout']) return ['ok' => false, 'error' => 'check timed out'];
+    $j = json_decode(trim($r['out']), true);
+    $v = is_array($j) ? (string)($j['version'] ?? '') : '';
+    if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $v)) return ['ok' => false, 'error' => dau_clip(dau_redact((string)($j['error'] ?? 'The OS update check returned an unexpected version.')), 200)];
+    $notes = is_string($j['changelogPretty'] ?? null) ? 'Release notes: ' . dau_clip($j['changelogPretty'], 300) : '';
+    return ['ok' => true, 'latest' => $v, 'notes' => $notes];
+  }
   $res = dau_plugin_check('unRAIDServer.plg');
   if (!$res['ok']) return $res;
   if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $res['latest'])) return ['ok' => false, 'error' => 'The OS update check returned an unexpected version.'];
@@ -2706,7 +2829,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
   if (dau_os_newer($latest, $installed)) {
-    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
+    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = $check['notes'] ?? dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
       $os['notified'] = $latest;
@@ -2787,6 +2910,16 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
 /* ---------------- install + reboot ---------------- */
 
 /**
+ * The installer here is `plugin update unRAIDServer.plg`, which installs whatever the plg's feed offers. That may be an old release or nothing, so it is
+ * only used when the feed offers exactly $latest. Returns why not, or ''.
+ */
+function dau_os_feed_block($latest) {
+  $p = dau_plugin_check('unRAIDServer.plg');
+  if ($p['ok'] && $p['latest'] === (string)$latest) return '';
+  return 'Unraid ' . $latest . ' can only be installed from Tools > Update OS here: Unraid\'s plugin feed ' . ($p['ok'] ? 'offers ' . $p['latest'] : 'did not answer') . '. Nothing was changed.';
+}
+
+/**
  * Install the OS update through `plugin update unRAIDServer.plg` after a fresh check and the standard plugin validation.
  * The new release only becomes active after a reboot. Result: staged | failed | blocked.
  */
@@ -2798,6 +2931,8 @@ function dau_os_install(array $cfg, $latest) {
   $chk = dau_os_check();
   if (!$chk['ok']) { $res['error'] = 'Fresh update check failed: ' . $chk['error']; return $done(); }
   if ($chk['latest'] !== $latest) { $res['result'] = 'blocked'; $res['error'] = 'The offered version changed from ' . $latest . ' to ' . $chk['latest'] . ' during the check.'; return $done(); }
+  $why = dau_os_feed_block($latest);
+  if ($why !== '') { $res['result'] = 'blocked'; $res['error'] = $why; $res['next'] = 'Install it yourself from Tools > Update OS after reading the release notes.'; return $done(); }
   $res['stage'] = 'validate';
   $p = dau_os_plugin_entry();
   $v = dau_plugin_validate($p, $latest);
@@ -2853,7 +2988,7 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>ffad1a72ddf23692c1c220160904230a8602b975831fdd9dab26202002a5ff61</SHA256>
+<SHA256>50c2ec311ea57ad265de76ba47d934a28b1536fca6446aa8bef35166f3fde05f</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/workflow.php" Mode="0644">
@@ -4039,6 +4174,13 @@ function dau_job_os(array &$J, array $opts = []) {
   $latest = (string)$J['st']['os']['available'];
   if (!empty($opts['skip_pre']) && $e['state'] === 'awaiting_confirmation') $e['state'] = 'ready';
   if ($e['state'] === 'ready') {
+    $why = dau_os_feed_block($latest);       // before the pre-OS maintenance, which would otherwise update plugins for an install that cannot happen
+    if ($why !== '') {
+      $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'blocked', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', ['installed' => dau_os_version(), 'available' => $latest, 'stage' => 'check', 'error' => $why, 'next' => 'Install it from Tools > Update OS.']);
+      dau_log('warn', 'os', 'Unraid OS', 'install', 'blocked', $why);
+      return;
+    }
     $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
     if ($w !== 'proceed') return;
     dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS', 'stage' => 'install']);
@@ -4314,7 +4456,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>5f59dacfea7efbe2c4255a99768c7995b9c72a2bb118af5012960c1115d79177</SHA256>
+<SHA256>8ff95083fad56caad9644cec78c107aba3a6c7b9add8a7d36daf2b4a82a48c4b</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -4410,7 +4552,7 @@ switch ($action) {
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
         'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
-        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => dau_recent_failures(),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
@@ -4440,13 +4582,16 @@ switch ($action) {
     fail('Unknown type');
   }
   case 'widget': {       // light: state files only, no Docker call (used by the Dashboard tile)
-    $st = dau_state_load(); $cfg = dau_load_config();
+    $st = dau_state_load(); $cfg = dau_load_config(); $ri = dau_run_info(); $pr = (array)$ri['progress'];
+    $nx = null; foreach (api_next_runs($cfg, $st) as $r) if ($r['next'] && (!$nx || $r['next'] < $nx['next'])) $nx = $r;
+    $bk = null; foreach ($st['backups'] as $b) if (is_array($b) && !empty($b['at']) && (!$bk || $b['at'] > $bk['at'])) $bk = $b;
     out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
          'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
-         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
-         'next' => (function () use ($cfg, $st) { $t = array_filter(array_column(api_next_runs($cfg, $st), 'next')); return $t ? min($t) : null; })(),
+         'failures' => dau_recent_failures(),
+         'next' => $nx['next'] ?? null, 'next_label' => $nx['label'] ?? '',
+         'backup_at' => $bk['at'] ?? 0, 'backup_ok' => $bk['ok'] ?? null,
          'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
-         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
+         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => $ri['running'], 'phase' => (string)($pr['phase'] ?? ''), 'done' => (int)($pr['done'] ?? 0), 'total' => (int)($pr['total'] ?? 0), 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
   }
   case 'cleanup_scan': { out(dau_cleanup_scan()); }
   case 'appdata_scan': { out(dau_appdata_scan()); }
@@ -4740,7 +4885,25 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>34c332e87b0620fcd428cd565869283a4b69b305105e12b16dbedd5be8f22f03</SHA256>
+<SHA256>16e86d1e7346747d205fa5f90cad4786087bc6f76848e229627a3fc881f4f38a</SHA256>
+</FILE>
+
+<FILE Name="&emhttp;/images/unraid-swiss-manager.svg" Mode="0644">
+<INLINE><![CDATA[<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Unraid Swiss Manager">
+  <rect width="1024" height="1024" rx="180" fill="#ff5e2a"/>
+  <g fill="#fff">
+    <path d="Layer_1"/>
+    <path d="M252.2,152.1h0c10.2,10.2,10.2,26.8,0,37l-63.1,63.1c-10.2,10.2-26.8,10.2-37,0h0c-10.2-10.2-10.2-26.8,0-37l63.1-63.1c10.2-10.2,26.8-10.2,37,0Z"/>
+    <path d="M357.6,179.3h0c10.8,10.8,10.8,28.3,0,39.1l-139.2,139.2c-10.8,10.8-28.3,10.8-39.1,0h0c-10.8-10.8-10.8-28.3,0-39.1l139.2-139.2c10.8-10.8,28.3-10.8,39.1,0Z"/>
+    <path d="M469.6,204.3h0c11.4,11.4,11.4,29.9,0,41.3l-224,224c-11.4,11.4-29.9,11.4-41.3,0h0c-11.4-11.4-11.4-29.9,0-41.3l224-224c11.4-11.4,29.9-11.4,41.3,0Z"/>
+    <path d="M806.6,478.3l-328.3,328.3c-12.6,12.6-33.1,12.6-45.7,0s-9.5-14.6-9.5-22.8,3.2-16.5,9.5-22.8l101.1-101.1-34.8-34.8-43.5,43.5c-4.8,4.8-12.6,4.8-17.4,0l-82.6-82.6c-4.8-4.8-4.8-12.6,0-17.4l43.5-43.5-34.8-34.8-101.1,101.1c-12.6,12.6-33.1,12.6-45.7,0s-9.5-14.6-9.5-22.8,3.2-16.5,9.5-22.8l328.3-328.3c12.6-12.6,33.1-12.6,45.7,0s12.6,33,0,45.7l-127.2,127.2,34.8,34.8,43.5-43.5c4.8-4.8,12.6-4.8,17.4,0l82.6,82.6c4.8,4.8,4.8,12.6,0,17.4l-43.5,43.5,34.8,34.8,127.2-127.2c12.6-12.6,33.1-12.6,45.7,0s12.6,33.1,0,45.7Z"/>
+    <path d="M819.7,554.4h0c11.4,11.4,11.4,29.9,0,41.3l-224,224c-11.4,11.4-29.9,11.4-41.3,0h0c-11.4-11.4-11.4-29.9,0-41.3l224-224c11.4-11.4,29.9-11.4,41.3,0Z"/>
+    <path d="M844.7,666.4h0c10.8,10.8,10.8,28.3,0,39.1l-139.2,139.2c-10.8,10.8-28.3,10.8-39.1,0h0c-10.8-10.8-10.8-28.3,0-39.1l139.2-139.2c10.8-10.8,28.3-10.8,39.1,0Z"/>
+    <path d="M871.9,771.8h0c10.2,10.2,10.2,26.8,0,37l-63.1,63.1c-10.2,10.2-26.8,10.2-37,0h0c-10.2-10.2-10.2-26.8,0-37l63.1-63.1c10.2-10.2,26.8-10.2,37,0Z"/>
+  </g>
+</svg>
+]]></INLINE>
+<SHA256>ff69c55eef99f1f8d64103a9712fa43c4035473039b3f8921902e8df40d6c348</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -5161,7 +5324,7 @@ exit(64);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
     if (busy) startPoll();      // also a job this page did not start: a scheduled run, or another browser tab
-    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'dau-name' }, S.ov.name || 'Unraid Swiss Manager'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
+    root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-swiss-manager/images/unraid-swiss-manager.svg' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'dau-name' }, S.ov.name || 'Unraid Swiss Manager'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
     if (S.loadErr) root.appendChild(h('div', { class: 'banner bad' }, h('div', { class: 'inl' }, h('span', { class: 'grow' }, 'This tab could not be refreshed: ' + S.loadErr), h('button', { class: 'btn sm', onclick: function () { load(); } }, 'Try again'))));
@@ -5204,7 +5367,7 @@ exit(64);
       card('Docker updates', c.docker_updates, 'available now', c.docker_updates ? 'hot' : ''),
       card('Plugins', c.plugins, c.plugin_updates + ' with updates', c.plugin_updates ? 'hot' : ''),
       card('Unraid OS', c.os_installed || '?', c.os_available ? 'Update available: ' + c.os_available : (c.os_error ? 'Check failed' : 'Up to date'), c.os_available ? 'hot' : ''),
-      card('Recent failures', c.failures, 'in the last 20 actions', c.failures ? 'bad' : ''),
+      card('Recent failures', c.failures, 'in the last 3 days', c.failures ? 'bad' : ''),
       card('Last run', ago(c.last_run), c.last_result && c.last_result.status ? 'Result: ' + c.last_result.status : '')));
     var nx = h('div');
     if (!c.next.length) nx.appendChild(h('div', { class: 'muted' }, 'Nothing is scheduled. Turn on a schedule in Settings, or set a container to "Auto update".'));
@@ -5975,7 +6138,8 @@ exit(64);
     w.appendChild(section('Appearance', h('div', { class: 'grid2' },
       h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'auto' }, 'Automatic (follows the Unraid theme)'), h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
         (function () { var c = h('input', { type: 'color', value: d.ui.accent || '#f15a2c', 'aria-label': 'Accent colour', onchange: function () { d.ui.accent = c.value; applyTheme(d.ui); } }); return h('div', { class: 'fld' }, h('label', null, 'Accent colour'), h('div', { class: 'inl' }, c, h('button', { class: 'btn sm', onclick: function () { d.ui.accent = '#f15a2c'; render(); } }, 'Reset'))); })(),
-        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
+        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.'),
+        fSwitch('Show Swiss Manager in the Unraid top menu', 'ui.menu_tab', 'Takes effect the next time a page is opened. It stays under Settings > User Utilities either way.')),
       h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: saveSettingsFile }, 'Save settings to a file…'),
@@ -6088,7 +6252,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>3262f1ba599b6da2813a6655db8889566f6f12002af234ab35836f7618f0fa00</SHA256>
+<SHA256>4655e586874ec188d05a0d8bcacc85264a6668b351901b27b23be7de3ca4565a</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">
@@ -6120,450 +6284,372 @@ done
 <FILE Run="/bin/bash">
 <INLINE>
 mkdir -p &emhttp;/images
-echo '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
-2O9FxBhjJIqid912223vahoIK9pYmm934gEAu2nTpvdHUfSHIlK11hpVdXxaEEIIWegb/FhrjYiU
-6/X67zdO9mu3/DsRABq/oBsaGgo2b978mXq9/huquj0IAssQQAghZKGf6qeqO6Io+o0tW7Z8bmho
-KEj29td2/zwd251vbGwsGh4etrfffvt36vX6M51zY2EYNkKA8qlCCCFkgTX7WefcWLVafeaWLVtu
-bsX2vkhpDwBmO0BoeHjY3nTTTfv7+/s/n8lkBoIgWA9AVJVnCBBCCOn6Ub8xxlhrjXPuuvHx8f99
-991370229+1o1dt2+uJs27ZNR0ZGzL/+679GDz300A0rV668X0SGgiAo8CAhQggh3V7y994fcM69
-5rbbbvvgnj173MjIiLn++ut9p3++NHXey/DwsBkdHXVPe9rTzs9ms9dba58RRZEmHZOWTydCCCHd
-IH4RMUEQiHPuFufc6zdv3vzj4eFh26p9/buyAjDblMC3vvWtXWefffZnnXMBgGcEQWCSaoBwzwBC
-CCEpnuv3SaOfeu/fF4bhK2+99dZHEvmnqtE9lTIdGRkxGzdu9ACwYcOGZwC4KgiCy5xzSIIAqwGE
-EEJStZ2vMSaw1iKKoludc+/YsmXL9wHIyMiINJzGAIATqlA4AHbDhg1vAfBOa+0i5xynBQghhKSm
-3G+tFefcOICrNm3a9BEALo2jfqRhGeBx4pINEtymTZuuds5tcM59QUQkKbF4tGnLREIIIaQJ3yj3
-i4g4577onNuwadOmq7tB/t20B/90gyAArF+//lnGmHcbY56pqnDONfoDuGKAEEJIq8Wv1lorIvDe
-3+K933jbbbd9GwDS1ui3EAIAZlQsPACsW7fuD6y1bzXGnN8IAgCESwcJIYRgnvfvB9As/nsAfPjW
-W2/9zGx+6iahdk3yAuAb+yZv3rz5M9u3b7/YOfcnqnpPEATWWmsauy5xR0FCCCEnu4NfIn6TTD3f
-45z7k+3bt1/ckH/ipK6bku7qJXXNcyznnntu9tRTT32Fqr5aRC41xsA5B1WNABhWBQghhJzAaN+L
-SGCthfceqnq7iHxq165d/3zvvfdWZzqoG1kIa+plaGjINu2nbC677LLnquofqeoLwjDMeu8bD2CU
-rBzgXgKEEEIeNdoXkcAYA2MMoiiqAvgPVf1/t912202NEX6yh3/XV5kXkghnBgFceumlTxSRYRF5
-sTHmQmttoyqgTWcNsDJACCHo3U5+EbEiIk2OuNt7/xVVHd2yZct/Nz55oYh/IQaAmSsGtJHW1q5d
-G2YymWcAeKmIvMAYc6oxBjMqAya5HqwOEELIAh3lN3brax7pe+/hnHsEwH8AGK3Vat/bunVrPfka
-Mzw8LN3S2d/rAaAZMzQ0ZJqrAkNDQ4uq1eqvishzADzXGHNWY47Hez+dCJO+AQYCQgjp7rK+JvP5
-BoBpSD/ZWfZ+ADd472+qVCrfufvuu8dnjPYX9F4zvSI3GR4eNgDQ3LCxbt26vIhsEJHnqeqzROSJ
-xphsIxGqauOtUfKRGaGA4YAQQjo/qm+WfeNebUUEIoKmim9VVf9bRL6tqt9Q1U2bN28uo6mxPPGE
-74VVZL0osFnDwPDwsH3wwQfPFpH1xpinquqlAM43xhSttUjWfU6HguTZdkQ4aHz/OCMccW0ZFAgh
-ZG5ib8j9CNk3Sz658U7LPtkXBt77EoAfA9iiqnep6m2nn376fTPv/b0kfVBMxw4Djb+79NJLl1tr
-L1TVxwE4XUTOBnC2qp4OoGiMyRljICJHhILmP2e+Twgh5DhuziKPer/5T1VtjOorAEoi8iCA+1T1
-PgAPisgvnHN3b9myZRdmWULeq9JnADj6tZChoSEDAM19A80MDQ0F4+PjxUKhcFYSDM4VkWUA+kVk
-QFX7AQyISH/yfr+IDADI8BITQshxUVPVQwAmRGRCVScAHErePwRgQlX3ArhXRH5RKpXuX7JkycSx
-7tvJfb0hfI7KAPz/TFDvWuZkvHcAAAAASUVORK5CYII=' | base64 -d > /tmp/dau-icon.png 2>/dev/null
-if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = "21534bc25167a35036f951c8803762d2ee153621b9f208ce204e93c6bbc9e9d4" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-swiss-manager.png; chmod 644 &emhttp;/images/unraid-swiss-manager.png; else echo "icon check failed, skipped"; fi
+echo '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' | base64 -d > /tmp/dau-icon.png 2>/dev/null
+if [ "$(sha256sum /tmp/dau-icon.png | cut -d' ' -f1)" = "e90c2920eedd06147543447a2cd3569ed57f0af0cd5c4ea09461d65d8551e7df" ]; then mv -f /tmp/dau-icon.png &emhttp;/images/unraid-swiss-manager.png; chmod 644 &emhttp;/images/unraid-swiss-manager.png; else echo "icon check failed, skipped"; fi
 rm -f /tmp/dau-icon.png
 </INLINE>
 </FILE>
@@ -6577,7 +6663,7 @@ chmod 755 &emhttp;/scripts/run.php
 echo ""
 echo "----------------------------------------------------"
 echo " Unraid Swiss Manager &version; installed"
-echo " Open it from Settings > User Utilities > Unraid Swiss Manager"
+echo " Open it from Swiss Manager in the top menu, or Settings > User Utilities > Unraid Swiss Manager"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

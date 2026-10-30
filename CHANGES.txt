@@ -1,26 +1,45 @@
-###2026.10.30b1
-- BETA. Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
-- BETA. Fix: a container is no longer removed when the other containers cannot be checked for using its network.
-- BETA. Safety: containers stopped for a backup are written down first, so the next job starts them again after a kill, power loss or reboot (after more than a day it reports them instead). A container interrupted during an update is started again the same way.
-- BETA. Fix: a backup destination inside the appdata folder is now refused through any name of the share (/mnt/cache/appdata/x as well as /mnt/user/appdata/x).
-- BETA. Backups: "Stop the containers" refuses to run live when Docker does not answer, starts containers on another one's network after it (and stops them with it). A flash backup no longer fails when a file changes while it is read.
-- BETA. Skip, Approve and Unpin now wait for a running job instead of being overwritten by it. Failed backups and removals count as failures in Discord and pass quiet hours. A damaged state or history file is kept and logged; a damaged settings file is copied once, not on every load. Importing settings keeps plugin policies. Container updates and removals change the Dashboard numbers right away. Unraid 7.3.10 now counts as newer than 7.3.9.
-- BETA. Faster: plugin details are read from their files, not through four processes per plugin on every page load.
-- BETA. New: a progress stepper and a live log while a job runs; each schedule says in words when it runs next; an "Unsaved changes" bar in Settings; Automatic theme that follows Unraid (White and Azure are now readable); messages and dialogs survive page refreshes; a failed refresh offers Try again.
-- BETA. New Dashboard tile: a status pill, full times on hover, a Check now button, and it refreshes while a job runs.
-###2026.10.29b1
-- BETA. New: remove containers and plugins from the Docker and Plugins tabs (per row or "Remove selected…"), always behind a confirmation. Containers are stopped and removed (never forced); optionally their image is deleted (kept if another container uses it) and their saved template archived. Appdata is never deleted here. Plugins are uninstalled with Unraid's own plugin tool; this plugin and Unraid itself cannot be removed from here.
-###2026.10.28b1
-- BETA. Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager from the beta branch, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
-- BETA. New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
-- BETA. Settings page: ?tab=docker|plugins|os|cleanup|backups|settings|activity opens that tab directly.
-###2026.11.02b1
-- BETA. New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
-- BETA. Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
-- BETA. Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
-- BETA. Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
-- BETA. Improved: an automatic reboot after an OS update also waits while the mover is running.
-- BETA. Improved: no deprecation warnings on newer PHP versions.
+###2026.11.01b1
+- New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
+- Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
+- Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.
+- Fix: the Dashboard tile said "Needs attention" for old failures, even for a plugin that no longer exists. A failure now counts for 3 days, and only until that item succeeds again.
+- New Dashboard tile: cards for Docker, Plugins and Unraid OS, an Update button on cards with updates (it lists what would change and needs a second click), live progress while a job runs, and the next run and last backup in the footer.
+- New logo: white on orange, as SVG in the plugin. Unraid's Plugins page still uses a PNG made from it.
+- Plugin checks now default to Weekly, Sunday 04:00 on new installs. Existing schedules are not changed.
+- Fix: the Unraid time zone setting was read under the wrong name. Scheduled jobs were not affected.
+###2026.10.31
+- Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
+- Fix: a container is no longer removed when the other containers cannot be checked for using its network.
+- Safety: containers stopped for a backup are written down first, so the next job starts them again after a kill, power loss or reboot (after more than a day it reports them instead). A container interrupted during an update is started again the same way.
+- Fix: a backup destination inside the appdata folder is now refused through any name of the share (/mnt/cache/appdata/x as well as /mnt/user/appdata/x).
+- Backups: "Stop the containers" refuses to run live when Docker does not answer, starts containers on another one's network after it (and stops them with it). A flash backup no longer fails when a file changes while it is read.
+- Skip, Approve and Unpin now wait for a running job instead of being overwritten by it. Failed backups and removals count as failures in Discord and pass quiet hours. A damaged state or history file is kept and logged; a damaged settings file is copied once, not on every load. Importing settings keeps plugin policies. Container updates and removals change the Dashboard numbers right away. Unraid 7.3.10 now counts as newer than 7.3.9.
+- Faster: plugin details are read from their files, not through four processes per plugin on every page load.
+- New: a progress stepper and a live log while a job runs; each schedule says in words when it runs next; an "Unsaved changes" bar in Settings; Automatic theme that follows Unraid (White and Azure are now readable); messages and dialogs survive page refreshes; a failed refresh offers Try again.
+- New Dashboard tile: a status pill, full times on hover, a Check now button, and it refreshes while a job runs.
+###2026.10.29
+- New: remove containers and plugins. Docker and Plugins tabs have a Remove button on each row and "Remove selected…" for several at once, always behind a confirmation.
+- Containers: stopped and removed (never forced). Optionally their image is deleted too (Docker keeps it if another container uses it), and optionally their saved template is archived to Cleanup, where it can be restored. By default the template stays, so Apps > Previous Apps can reinstall it with the same settings. Appdata folders are never deleted here: the Cleanup tab can quarantine unused ones afterwards. A container that other containers use as their network is not removed.
+- Plugins: uninstalled with Unraid's own plugin tool (the same as Plugins > Remove) and checked afterwards. This plugin and Unraid itself cannot be removed from here.
+- Every removal is listed in Activity; a failed one also sends a notification.
+###2026.10.28
+- Renamed: the plugin file is now unraid-swiss-manager.plg (it was unraid-autoupdater.plg). Update the old entry on the Plugins page once: it installs Unraid Swiss Manager, carries over settings, history, webhook and backups, and removes itself. Version numbers start again at 2026.10.28 under the new name.
+- New Dashboard tile: a status dot and summary, one clean row per item (only when it has something to say), and a single line with the last and next run. Each row opens its tab. Fixes labels running into their values on Unraid 7.
+- Settings page: ?tab=docker|plugins|os|cleanup|backups|settings|activity opens that tab directly.
+###2026.11.02
+- New: Backups tab, appdata: "Stop the containers while the backup runs" (off by default). Running containers that use the appdata folders are stopped for the backup and started again afterwards in their "update after" order, also when the backup fails, so databases are captured consistently. A container that does not come back is reported as a failed backup.
+- Fix: a per-container safety backup that failed halfway no longer pushes the oldest good backup out; image and appdata parts are written under a temporary name first.
+- Fix: scheduled appdata backups no longer include the Cleanup quarantine folder.
+- Fix (Unraid 6.9 / PHP 7.4): after a plugin update check, saved container templates could not be read, so Cleanup did not warn about folders a saved template still uses and listed no saved templates.
+- Improved: an automatic reboot after an OS update also waits while the mover is running.
+- Improved: no deprecation warnings on newer PHP versions.
+###2026.11.01
+- New: Backups tab. Weekly or monthly backups of your appdata folders and of the boot drive to a folder you choose, optionally just before updates; keep 1, 2 or 3 copies.
+- New: Cleanup tab with a guided Scan, Review, Clean flow for unused appdata folders (restorable quarantine), Docker images, volumes, leftover containers and saved templates; dry run and clear confirmations.
+- New: update dependencies, hold back major-version jumps, skip a version, roll a container back, release notes, quiet hours, statistics, Dashboard tile.
+- New: Settings can be saved to and loaded from a named file; the plugin branch (Stable or Beta) can be switched, with a Force update.
+- Improved: readable status colours in every theme, clearer labels and layouts, phone-friendly screens.
+- Changed: the web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). The plugin keeps its install name, so it updates normally. Update an old bookmark.
 ###2026.10.31b7
 - BETA. The plugin's web address is now Settings/UnraidSwissManager (it was Settings/UnraidAutoUpdater). Links in notifications, Discord messages and the Dashboard tile use it. The old page file is removed on update; an old bookmark needs updating.
 ###2026.10.31b6
