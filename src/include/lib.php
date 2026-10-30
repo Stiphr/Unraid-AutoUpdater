@@ -41,12 +41,13 @@ define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
 define('DAU_MOVERPID',  '/var/run/mover.pid');
+define('DAU_OSCHECK',   '/usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/unraidcheck');
 define('DAU_SELF_PLG',  'unraid-swiss-manager.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
 
 $__ident = @parse_ini_file('/boot/config/ident.cfg');
-if (is_array($__ident) && !empty($__ident['timezone'])) @date_default_timezone_set($__ident['timezone']);
+if (is_array($__ident) && !empty($__ident['timeZone'])) @date_default_timezone_set($__ident['timeZone']);
 unset($__ident);
 
 /* ---------- small string helpers (PHP 7.4 has no str_contains & friends) ---------- */

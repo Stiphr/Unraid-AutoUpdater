@@ -16,8 +16,8 @@ if unknown or len(args) > 1 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?(b\d+
     sys.exit(__doc__ + '\nNothing was built. A beta version (2026.10.30b1) needs --beta, and --beta needs a beta version.')
 BRANCH = 'beta' if BETA else 'stable'
 files = [
-    ('UnraidSwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),
-    ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
+    ('UnraidSwissManager.page', '0644'), ('SwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),
+    ('include/page.php', '0644'), ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
     ('include/discord.php', '0644'), ('include/backup.php', '0644'), ('include/backups.php', '0644'), ('include/docker.php', '0644'), ('include/plugins.php', '0644'),
     ('include/os.php', '0644'), ('include/workflow.php', '0644'), ('include/extras.php', '0644'), ('include/appdata.php', '0644'), ('include/remove.php', '0644'), ('include/jobs.php', '0644'), ('include/api.php', '0644'),
     ('scripts/run.php', '0755'), ('assets/app.css', '0644'), ('assets/app.js', '0644'),
@@ -106,7 +106,7 @@ chmod 755 &emhttp;/scripts/run.php
 echo ""
 echo "----------------------------------------------------"
 echo " Unraid Swiss Manager &version; installed"
-echo " Open it from Settings > User Utilities > Unraid Swiss Manager"
+echo " Open it from Swiss Manager in the top menu, or Settings > User Utilities > Unraid Swiss Manager"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

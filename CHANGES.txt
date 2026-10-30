@@ -1,3 +1,10 @@
+###2026.11.01
+- New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
+- Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
+- Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.
+- Fix: the Dashboard tile said "Needs attention" for old failures, even for a plugin that no longer exists. A failure now counts for 3 days, and only until that item succeeds again.
+- Plugin checks now default to Weekly, Sunday 04:00 on new installs. Existing schedules are not changed.
+- Fix: the Unraid time zone setting was read under the wrong name. Scheduled jobs were not affected.
 ###2026.10.31
 - Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
 - Fix: a container is no longer removed when the other containers cannot be checked for using its network.

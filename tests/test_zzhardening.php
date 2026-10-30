@@ -228,6 +228,51 @@ t('ui: toasts and dialogs live outside the page that render() rebuilds; polling 
   $js = file_get_contents(__DIR__ . '/../src/assets/app.js');
   has($js, 'layer.appendChild(bg)'); has($js, 'layer.appendChild(t)'); lacks($js, 'root.appendChild(bg)'); lacks($js, 'root.appendChild(t)');
   has($js, 'if (busy) startPoll();'); has($js, 'S.pollBusy'); has($js, "function keep(k)");
-  $page = file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'); has($page, 'window.DAU_THEME');
+  $page = file_get_contents(__DIR__ . '/../src/include/page.php'); has($page, 'window.DAU_THEME');
   $dash = file_get_contents(__DIR__ . '/../src/UnraidSwissManagerDash.page'); has($dash, 'Cond="version_compare'); has($dash, 'dau-w-go');
+});
+
+t('os: the check uses Unraid\'s own checker, which skips its notification, and keeps its release notes link', function () {
+  $s = DAU_PLUGTMP . '/unraidcheck'; file_put_contents($s, '#!/bin/sh'); $GLOBALS['DAU_OSCHECK'] = $s;
+  $argv = [];
+  mock_exec(function ($a) use (&$argv) { $argv = $a; return ['out' => json_encode(['version' => '7.4.0', 'isNewer' => true, 'changelogPretty' => 'https://docs.unraid.net/x/'])]; });
+  $c = dau_os_check(); ok($c['ok']); eq($c['latest'], '7.4.0'); ok(in_array('QUERY_STRING=json=true', $argv, true)); eq(end($argv), $s);
+  $st = dau_state_defaults(); $ev = dau_os_process($st, $c, 100); eq($st['os']['available'], '7.4.0'); has($ev[0]['reason'], 'docs.unraid.net');
+  mock_exec(function ($a) { return ['out' => '{"error":"could not connect"}']; }); $c = dau_os_check(); ok(!$c['ok']); has($c['error'], 'could not connect');
+  mock_exec(function ($a) { return ['out' => 'not json']; }); ok(!dau_os_check()['ok']);
+  unset($GLOBALS['DAU_OSCHECK']); @unlink($s); mock_exec(function ($a) { return null; });
+});
+
+t('os: an install stops when the plugin feed offers another release (it must never install what the feed offers instead)', function () {
+  os_env('7.0.1'); os_cfg('install');
+  $s = DAU_PLUGTMP . '/unraidcheck'; file_put_contents($s, '#!/bin/sh'); $GLOBALS['DAU_OSCHECK'] = $s;
+  $prev = $GLOBALS['DAU_EXEC_MOCK'];
+  mock_exec(function ($a, $i = null) use ($prev) { if (basename($a[0]) === 'env') return ['out' => '{"version":"7.4.0"}']; return $prev($a, $i); });
+  $st = dau_state_load(); $st['os']['first_seen'] = 1; dau_state_save($st);
+  os_tick(); $os = dau_state_load()['os'];
+  eq($os['available'], '7.4.0'); has($os['attempted']['reason'] ?? '', 'Tools > Update OS'); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0);
+  $why = dau_os_feed_block('7.4.0'); has($why, 'offers 7.0.1'); eq(dau_os_feed_block('7.0.1'), '');
+  eq(dau_os_install(dau_load_config(), '7.4.0')['result'], 'blocked'); eq(count(calls_matching('plugin update unRAIDServer.plg')), 0);
+  unset($GLOBALS['DAU_OSCHECK']); @unlink($s);
+});
+
+t('tile: only recent failures of items that have not succeeded since count', function () {
+  @unlink(DAU_HIST); $now = dau_now();
+  $add = function ($n, $r, $age) use ($now) { dau_history_add(['type' => 'plugin', 'name' => $n, 'action' => 'update', 'result' => $r, 'started' => $now - $age, 'finished' => $now - $age]); };
+  $add('old', 'failed', 4 * 86400); $add('fixed', 'failed', 3600); $add('fixed', 'updated', 60); $add('new', 'failed', 600);
+  eq(dau_recent_failures(), 1);
+  @unlink(DAU_HIST);
+});
+
+t('plugins default to Weekly, Sunday 04:00, and a saved schedule is kept', function () {
+  $d = dau_defaults()['plugins']; eq(dau_sched_text(dau_sched_of($d)), 'Weekly, Sunday 04:00'); eq(dau_defaults()['os']['frequency'], 'daily');
+});
+
+t('top menu: a tab that shares the page with Settings and can be hidden', function () {
+  $tab = file_get_contents(__DIR__ . '/../src/SwissManager.page'); has($tab, 'Menu="Tasks:85"'); has($tab, 'Name="Swiss Manager"'); has($tab, 'include/page.php'); has($tab, "['ui']['menu_tab']");
+  has(file_get_contents(__DIR__ . '/../src/UnraidSwissManager.page'), 'include/page.php'); ok(dau_defaults()['ui']['menu_tab']);
+  $b = file_get_contents(__DIR__ . '/../build.py'); has($b, "'SwissManager.page'"); has($b, "'include/page.php'");
+  $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg'); has($plg, 'Name="&emhttp;/SwissManager.page"'); has($plg, 'Name="&emhttp;/include/page.php"');
+  $cond = ''; preg_match('/^Cond="(.*)"$/m', $tab, $m); $f = function ($j) use ($m) { return eval('return ' . str_replace('/boot/config/plugins/unraid-swiss-manager/config.json', $j, $m[1]) . ';'); };
+  $x = DAU_PLUGTMP . '/c.json'; ok($f($x . '.missing')); file_put_contents($x, '{"ui":{"menu_tab":false}}'); ok(!$f($x)); file_put_contents($x, '{"ui":{"menu_tab":true}}'); ok($f($x)); file_put_contents($x, '{'); ok($f($x)); @unlink($x);
 });

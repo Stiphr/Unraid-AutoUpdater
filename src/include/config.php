@@ -46,7 +46,7 @@ function dau_defaults() {
       ],
     ],
     'containers' => [],
-    'plugins' => $sched + [
+    'plugins' => ['frequency' => 'weekly'] + $sched + [      // Sunday 04:00
       'check_enabled' => true,          // scheduled detection + notifications
       'auto_update'   => false,         // MASTER SWITCH: automatic installation is opt-in
       'default_policy' => 'notify',
@@ -82,7 +82,7 @@ function dau_defaults() {
     'appdata' => ['roots' => ['/mnt/user/appdata'], 'safe_mode' => true, 'ignore' => [], 'purge_days' => 0, 'report' => false],
     /* scheduled backups of appdata and of the boot drive: see backups.php */
     'backups' => dau_bk_defaults(),
-    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
+    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true, 'menu_tab' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -239,7 +239,7 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
   if (isset($in['appdata']) && is_array($in['appdata'])) $cur['appdata'] = dau_apply_spec($cur['appdata'], $in['appdata'], ['roots' => ['paths'], 'safe_mode' => ['bool'], 'ignore' => ['folders'], 'purge_days' => ['int', 0, 365], 'report' => ['bool']]);
   if (isset($in['backups']) && is_array($in['backups'])) $cur['backups'] = dau_apply_spec($cur['backups'], $in['backups'], dau_bk_spec());
-  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool'], 'menu_tab' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {

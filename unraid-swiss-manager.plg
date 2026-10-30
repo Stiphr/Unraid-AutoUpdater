@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-swiss-manager">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.10.31">
+<!ENTITY version "2026.11.01">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-swiss-manager.plg">
@@ -10,6 +10,13 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-swiss-manager.png">
 
 <CHANGES>
+###2026.11.01
+- New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
+- Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
+- Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.
+- Fix: the Dashboard tile said "Needs attention" for old failures, even for a plugin that no longer exists. A failure now counts for 3 days, and only until that item succeeds again.
+- Plugin checks now default to Weekly, Sunday 04:00 on new installs. Existing schedules are not changed.
+- Fix: the Unraid time zone setting was read under the wrong name. Scheduled jobs were not affected.
 ###2026.10.31
 - Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
 - Fix: a container is no longer removed when the other containers cannot be checked for using its network.
@@ -134,15 +141,21 @@
 Title="Unraid Swiss Manager"
 Icon="unraid-swiss-manager.png"
 ---
-<?php
-$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/assets/app.js');
-?>
-<link rel="stylesheet" href="/plugins/unraid-swiss-manager/assets/app.css<?=$dau_v?>">
-<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
-<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>; window.DAU_THEME = <?=json_encode((string)strtok((string)($display['theme'] ?? ''), '-'))?>;</script>
-<script src="/plugins/unraid-swiss-manager/assets/app.js<?=$dau_v?>"></script>
+<?php include "$docroot/plugins/unraid-swiss-manager/include/page.php"; ?>
 ]]></INLINE>
-<SHA256>9596af265f8162f57a25375ad7eeef427d37e31217f7d9729b5dad68c50ec909</SHA256>
+<SHA256>85f0767f32ee618c86133f4f02343ac27d79c7277bb822a0f2978d1ee12174d9</SHA256>
+</FILE>
+
+<FILE Name="&emhttp;/SwissManager.page" Mode="0644">
+<INLINE><![CDATA[Menu="Tasks:85"
+Name="Swiss Manager"
+Title="Unraid Swiss Manager"
+Code="f0ad"
+Cond="(json_decode((string)@file_get_contents('/boot/config/plugins/unraid-swiss-manager/config.json'),true)['ui']['menu_tab'] ?? true) !== false"
+---
+<?php include "$docroot/plugins/unraid-swiss-manager/include/page.php"; ?>
+]]></INLINE>
+<SHA256>3ccecc1c97099179cd2584c3c674ebe93500b79535c5cbbeb0dabbd84ec6d6d0</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/UnraidSwissManagerDash.page" Mode="0644">
@@ -255,6 +268,18 @@ EOT;
 <SHA256>f47f500aea8e7d303732a0a15dbe3b4e18b35620e9750fdc006a72cfd02a37b6</SHA256>
 </FILE>
 
+<FILE Name="&emhttp;/include/page.php" Mode="0644">
+<INLINE><![CDATA[<?php
+$dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/assets/app.js');
+?>
+<link rel="stylesheet" href="/plugins/unraid-swiss-manager/assets/app.css<?=$dau_v?>">
+<div id="dau" class="dau"><div class="dau-loading">Loading</div></div>
+<script>window.DAU_IMGV = '?v=' + <?=(int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png')?>; window.DAU_CSRF = <?=json_encode($var['csrf_token'] ?? '')?>; window.DAU_THEME = <?=json_encode((string)strtok((string)($display['theme'] ?? ''), '-'))?>;</script>
+<script src="/plugins/unraid-swiss-manager/assets/app.js<?=$dau_v?>"></script>
+]]></INLINE>
+<SHA256>dfb7a02da417a6af52b71b39217932f926b8176f095a6d84ddd238e29420e785</SHA256>
+</FILE>
+
 <FILE Name="&emhttp;/include/lib.php" Mode="0644">
 <INLINE><![CDATA[<?php
 /*
@@ -270,7 +295,7 @@ EOT;
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.10.31');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.11.01');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-swiss-manager');
 define('DAU_DIR',       '/boot/config/plugins/unraid-swiss-manager');
@@ -299,12 +324,13 @@ define('DAU_VARINI',    '/var/local/emhttp/var.ini');
 define('DAU_BOOT',      '/boot');
 define('DAU_REBOOT',    '/sbin/reboot');
 define('DAU_MOVERPID',  '/var/run/mover.pid');
+define('DAU_OSCHECK',   '/usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/unraidcheck');
 define('DAU_SELF_PLG',  'unraid-swiss-manager.plg');
 define('DAU_CATCHUP',   6 * 3600);      // a missed schedule still runs if it is at most this late
 define('DAU_TICK_MIN',  5);             // dispatcher interval in minutes
 
 $__ident = @parse_ini_file('/boot/config/ident.cfg');
-if (is_array($__ident) && !empty($__ident['timezone'])) @date_default_timezone_set($__ident['timezone']);
+if (is_array($__ident) && !empty($__ident['timeZone'])) @date_default_timezone_set($__ident['timeZone']);
 unset($__ident);
 
 /* ---------- small string helpers (PHP 7.4 has no str_contains & friends) ---------- */
@@ -571,7 +597,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>ca64aecfeb51cf722eae522a92aa25da6e38ffcfa729d7236e9712b771bf2678</SHA256>
+<SHA256>39aedca8d802c656768eaefad00bdd7dfbb3e1095a5891bdc483cd778de82e35</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -623,7 +649,7 @@ function dau_defaults() {
       ],
     ],
     'containers' => [],
-    'plugins' => $sched + [
+    'plugins' => ['frequency' => 'weekly'] + $sched + [      // Sunday 04:00
       'check_enabled' => true,          // scheduled detection + notifications
       'auto_update'   => false,         // MASTER SWITCH: automatic installation is opt-in
       'default_policy' => 'notify',
@@ -659,7 +685,7 @@ function dau_defaults() {
     'appdata' => ['roots' => ['/mnt/user/appdata'], 'safe_mode' => true, 'ignore' => [], 'purge_days' => 0, 'report' => false],
     /* scheduled backups of appdata and of the boot drive: see backups.php */
     'backups' => dau_bk_defaults(),
-    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
+    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true, 'menu_tab' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -816,7 +842,7 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
   if (isset($in['appdata']) && is_array($in['appdata'])) $cur['appdata'] = dau_apply_spec($cur['appdata'], $in['appdata'], ['roots' => ['paths'], 'safe_mode' => ['bool'], 'ignore' => ['folders'], 'purge_days' => ['int', 0, 365], 'report' => ['bool']]);
   if (isset($in['backups']) && is_array($in['backups'])) $cur['backups'] = dau_apply_spec($cur['backups'], $in['backups'], dau_bk_spec());
-  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool'], 'menu_tab' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {
@@ -954,7 +980,7 @@ function dau_export_config() {
   return ['exported_at' => dau_ts_iso(dau_now()), 'plugin_version' => DAU_VERSION, 'secrets_included' => false, 'config' => $cfg];
 }
 ]]></INLINE>
-<SHA256>b24386e28b6dc15e260e6cbb824f40e16b76eaec83658bb79f6cf1adc763b70f</SHA256>
+<SHA256>5245767132d8edcd77ab66ceb428a48b5e403cd0b1bd92e93f92c09da5fda40b</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/schedule.php" Mode="0644">
@@ -1224,6 +1250,18 @@ function dau_history_load() {
   return array_map('dau_history_normalize', array_values(array_filter(dau_read_json_kept(DAU_HIST, [], 'history'), 'is_array')));
 }
 
+/** Failed actions that still matter: the newest entry of that item failed, within the last 3 days. A later success or an old failure does not count. */
+function dau_recent_failures() {
+  $n = 0; $seen = [];
+  foreach (dau_history_load() as $e) {
+    $k = $e['type'] . '|' . $e['name'];
+    if (isset($seen[$k])) continue;
+    $seen[$k] = true;
+    if ($e['result'] === 'failed' && dau_now() - (int)($e['ts'] ?? $e['finished']) <= 3 * 86400) $n++;
+  }
+  return $n;
+}
+
 /**
  * $e: type, name, action, result, started, finished, prev{version,id,digest}, new{...}, verification{result,detail},
  *     attempts, error, trigger, message. Newest first; capped to history.max_entries.
@@ -1326,7 +1364,7 @@ function dau_recover_interrupted(array &$st, $max) {
   return $c;
 }
 ]]></INLINE>
-<SHA256>ca508b821d3890c6d1c2909ae6ed085fa7dab28727bf01f040bd0fdda77ccea9</SHA256>
+<SHA256>0a34239b1100a0cdf5458951097e3cbd00c47155b66ef35950e2ab8bcc6b53c9</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/discord.php" Mode="0644">
@@ -2675,14 +2713,28 @@ function dau_plugin_slots(array $cfg) {
  * Unraid Swiss Manager - Unraid OS.
  * DEFAULT: check and notify only. Installing an OS update (mode "install") and rebooting afterwards (mode "install_reboot")
  * are opt-in, need an explicit confirmation in the UI, a maintenance window and a waiting period, and use only Unraid's own
- * `plugin update unRAIDServer.plg` (the same thing Tools > Update OS runs) and the stock reboot command. Nothing is rolled back
- * automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
+ * `plugin update unRAIDServer.plg` and the stock reboot command, and only when Unraid's plugin feed offers that exact release (see
+ * dau_os_feed_block). Nothing is rolled back automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
  */
 
 /** Unraid releases are compared as versions, so 7.3.10 is newer than 7.3.9. Plugins keep Unraid's text comparison (dau_version_newer). */
 function dau_os_newer($latest, $installed) { return (string)$latest !== '' && version_compare((string)$latest, (string)$installed, '>'); }
 
+/**
+ * Current Unraid keeps its releases at releases.unraid.net; the update address inside unRAIDServer.plg stopped moving (it still offers 7.0.1).
+ * So ask Unraid's own checker. json=true makes it print the answer and skip its own notification. Older Unraid has no such script and uses the plg.
+ */
 function dau_os_check() {
+  $script = $GLOBALS['DAU_OSCHECK'] ?? DAU_OSCHECK;
+  if (is_file($script)) {
+    $r = dau_run(['/usr/bin/env', 'QUERY_STRING=json=true', $script], 120);
+    if ($r['timeout']) return ['ok' => false, 'error' => 'check timed out'];
+    $j = json_decode(trim($r['out']), true);
+    $v = is_array($j) ? (string)($j['version'] ?? '') : '';
+    if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $v)) return ['ok' => false, 'error' => dau_clip(dau_redact((string)($j['error'] ?? 'The OS update check returned an unexpected version.')), 200)];
+    $notes = is_string($j['changelogPretty'] ?? null) ? 'Release notes: ' . dau_clip($j['changelogPretty'], 300) : '';
+    return ['ok' => true, 'latest' => $v, 'notes' => $notes];
+  }
   $res = dau_plugin_check('unRAIDServer.plg');
   if (!$res['ok']) return $res;
   if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $res['latest'])) return ['ok' => false, 'error' => 'The OS update check returned an unexpected version.'];
@@ -2716,7 +2768,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
   if (dau_os_newer($latest, $installed)) {
-    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
+    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = $check['notes'] ?? dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
       $os['notified'] = $latest;
@@ -2797,6 +2849,16 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
 /* ---------------- install + reboot ---------------- */
 
 /**
+ * The installer here is `plugin update unRAIDServer.plg`, which installs whatever the plg's feed offers. That may be an old release or nothing, so it is
+ * only used when the feed offers exactly $latest. Returns why not, or ''.
+ */
+function dau_os_feed_block($latest) {
+  $p = dau_plugin_check('unRAIDServer.plg');
+  if ($p['ok'] && $p['latest'] === (string)$latest) return '';
+  return 'Unraid ' . $latest . ' can only be installed from Tools > Update OS here: Unraid\'s plugin feed ' . ($p['ok'] ? 'offers ' . $p['latest'] : 'did not answer') . '. Nothing was changed.';
+}
+
+/**
  * Install the OS update through `plugin update unRAIDServer.plg` after a fresh check and the standard plugin validation.
  * The new release only becomes active after a reboot. Result: staged | failed | blocked.
  */
@@ -2808,6 +2870,8 @@ function dau_os_install(array $cfg, $latest) {
   $chk = dau_os_check();
   if (!$chk['ok']) { $res['error'] = 'Fresh update check failed: ' . $chk['error']; return $done(); }
   if ($chk['latest'] !== $latest) { $res['result'] = 'blocked'; $res['error'] = 'The offered version changed from ' . $latest . ' to ' . $chk['latest'] . ' during the check.'; return $done(); }
+  $why = dau_os_feed_block($latest);
+  if ($why !== '') { $res['result'] = 'blocked'; $res['error'] = $why; $res['next'] = 'Install it yourself from Tools > Update OS after reading the release notes.'; return $done(); }
   $res['stage'] = 'validate';
   $p = dau_os_plugin_entry();
   $v = dau_plugin_validate($p, $latest);
@@ -2863,7 +2927,7 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>ffad1a72ddf23692c1c220160904230a8602b975831fdd9dab26202002a5ff61</SHA256>
+<SHA256>50c2ec311ea57ad265de76ba47d934a28b1536fca6446aa8bef35166f3fde05f</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/workflow.php" Mode="0644">
@@ -4049,6 +4113,13 @@ function dau_job_os(array &$J, array $opts = []) {
   $latest = (string)$J['st']['os']['available'];
   if (!empty($opts['skip_pre']) && $e['state'] === 'awaiting_confirmation') $e['state'] = 'ready';
   if ($e['state'] === 'ready') {
+    $why = dau_os_feed_block($latest);       // before the pre-OS maintenance, which would otherwise update plugins for an install that cannot happen
+    if ($why !== '') {
+      $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'blocked', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', ['installed' => dau_os_version(), 'available' => $latest, 'stage' => 'check', 'error' => $why, 'next' => 'Install it from Tools > Update OS.']);
+      dau_log('warn', 'os', 'Unraid OS', 'install', 'blocked', $why);
+      return;
+    }
     $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
     if ($w !== 'proceed') return;
     dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS', 'stage' => 'install']);
@@ -4324,7 +4395,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>5f59dacfea7efbe2c4255a99768c7995b9c72a2bb118af5012960c1115d79177</SHA256>
+<SHA256>8ff95083fad56caad9644cec78c107aba3a6c7b9add8a7d36daf2b4a82a48c4b</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -4420,7 +4491,7 @@ switch ($action) {
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
         'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
-        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => dau_recent_failures(),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
@@ -4453,7 +4524,7 @@ switch ($action) {
     $st = dau_state_load(); $cfg = dau_load_config();
     out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
          'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
-         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+         'failures' => dau_recent_failures(),
          'next' => (function () use ($cfg, $st) { $t = array_filter(array_column(api_next_runs($cfg, $st), 'next')); return $t ? min($t) : null; })(),
          'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
          'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
@@ -4750,7 +4821,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>34c332e87b0620fcd428cd565869283a4b69b305105e12b16dbedd5be8f22f03</SHA256>
+<SHA256>e366cce476a4aaa7a3608f8200bfe779248133c761d4511a86c352adadbbb94b</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/scripts/run.php" Mode="0755">
@@ -5214,7 +5285,7 @@ exit(64);
       card('Docker updates', c.docker_updates, 'available now', c.docker_updates ? 'hot' : ''),
       card('Plugins', c.plugins, c.plugin_updates + ' with updates', c.plugin_updates ? 'hot' : ''),
       card('Unraid OS', c.os_installed || '?', c.os_available ? 'Update available: ' + c.os_available : (c.os_error ? 'Check failed' : 'Up to date'), c.os_available ? 'hot' : ''),
-      card('Recent failures', c.failures, 'in the last 20 actions', c.failures ? 'bad' : ''),
+      card('Recent failures', c.failures, 'in the last 3 days', c.failures ? 'bad' : ''),
       card('Last run', ago(c.last_run), c.last_result && c.last_result.status ? 'Result: ' + c.last_result.status : '')));
     var nx = h('div');
     if (!c.next.length) nx.appendChild(h('div', { class: 'muted' }, 'Nothing is scheduled. Turn on a schedule in Settings, or set a container to "Auto update".'));
@@ -5985,7 +6056,8 @@ exit(64);
     w.appendChild(section('Appearance', h('div', { class: 'grid2' },
       h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'auto' }, 'Automatic (follows the Unraid theme)'), h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
         (function () { var c = h('input', { type: 'color', value: d.ui.accent || '#f15a2c', 'aria-label': 'Accent colour', onchange: function () { d.ui.accent = c.value; applyTheme(d.ui); } }); return h('div', { class: 'fld' }, h('label', null, 'Accent colour'), h('div', { class: 'inl' }, c, h('button', { class: 'btn sm', onclick: function () { d.ui.accent = '#f15a2c'; render(); } }, 'Reset'))); })(),
-        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
+        fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.'),
+        fSwitch('Show Swiss Manager in the Unraid top menu', 'ui.menu_tab', 'Takes effect the next time a page is opened. It stays under Settings > User Utilities either way.')),
       h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
     w.appendChild(section('Data', h('div', null, fNum('History entries to keep', 'history.max_entries', 20, 1000), fNum('Log size before rotation', 'log.max_kb', 64, 8192, null, 'KB'),
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: saveSettingsFile }, 'Save settings to a file…'),
@@ -6098,7 +6170,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>3262f1ba599b6da2813a6655db8889566f6f12002af234ab35836f7618f0fa00</SHA256>
+<SHA256>e89507b037555d416bbe4976a4d590f4fb0407f0ddbe39f2e107e85722a835af</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">
@@ -6587,7 +6659,7 @@ chmod 755 &emhttp;/scripts/run.php
 echo ""
 echo "----------------------------------------------------"
 echo " Unraid Swiss Manager &version; installed"
-echo " Open it from Settings > User Utilities > Unraid Swiss Manager"
+echo " Open it from Swiss Manager in the top menu, or Settings > User Utilities > Unraid Swiss Manager"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

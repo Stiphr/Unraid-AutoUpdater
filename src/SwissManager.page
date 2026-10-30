@@ -1,0 +1,7 @@
+Menu="Tasks:85"
+Name="Swiss Manager"
+Title="Unraid Swiss Manager"
+Code="f0ad"
+Cond="(json_decode((string)@file_get_contents('/boot/config/plugins/unraid-swiss-manager/config.json'),true)['ui']['menu_tab'] ?? true) !== false"
+---
+<?php include "$docroot/plugins/unraid-swiss-manager/include/page.php"; ?>
