@@ -10,13 +10,16 @@ function out($d, $code = 200) { http_response_code($code); echo json_encode($d, 
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
-$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek', 'channel_check'];
+$READ = ['overview', 'docker', 'plugins', 'os', 'history', 'log', 'status', 'export', 'preview', 'notes', 'cleanup_scan', 'widget', 'appdata_scan', 'quarantine_list', 'tpl_scan', 'appdata_peek', 'channel_check', 'sched_preview'];
 if (!in_array($action, $READ, true)) {
   if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('This action requires POST.', 405);
   /* The CSRF token is checked (and then removed from $_POST) by Unraid's own auto-prepended local_prepend.php for every POST,
      so it must not be re-checked here: it is already gone. Mutations are POST-only. */
 }
 $json = function ($k) { $v = json_decode((string)($_POST[$k] ?? ''), true); return is_array($v) ? $v : null; };
+
+/* A job keeps the state in memory and saves all of it, so a change made next to a running job would be overwritten: every change to the state takes the job lock. */
+function api_lock() { $l = dau_lock_wait(); if (!$l) fail('A job is running. Try again when it has finished.', 409); return $l; }
 
 /** One line in the Activity tab for a cleanup action (the details are in the log). */
 function api_clean_hist($what, $result, $message = '') {
@@ -133,7 +136,20 @@ switch ($action) {
   case 'appdata_peek': { out(dau_appdata_peek((string)($_POST['id'] ?? $_GET['id'] ?? ''))); }
   case 'history': { out(['rows' => array_slice(dau_history_load(), 0, 200)]); }
   case 'log': { out(['log' => dau_log_tail(300)]); }
-  case 'status': { out(['run' => dau_run_info()]); }
+  case 'status': {
+    $o = ['run' => dau_run_info()];
+    if (!empty($_POST['log']) || !empty($_GET['log'])) $o['log'] = dau_log_recent(80);
+    out($o);
+  }
+  /* what a schedule means, in words, with its next runs (server time zone) */
+  case 'sched_preview': {
+    $v = function ($k, $d) { return $_POST[$k] ?? $_GET[$k] ?? $d; };
+    $s = dau_clean_schedule(['frequency' => (string)$v('frequency', ''), 'time' => (string)$v('time', ''), 'weekday' => (int)$v('weekday', 0), 'monthday' => (int)$v('monthday', 1)]);
+    if (!$s) fail('Unknown schedule');
+    $next = []; $t = dau_now();
+    for ($i = 0; $i < 3; $i++) { $t = dau_occ_after($s, $t); if (!$t) break; $next[] = $t; if ($s['frequency'] === 'biweekly') $t += 13 * 86400; }
+    out(['text' => dau_sched_text($s), 'next' => $next, 'now' => dau_now()]);
+  }
 
   /* what a bulk update WILL do, shown before the user confirms */
   case 'preview': {
@@ -159,13 +175,15 @@ switch ($action) {
 
   case 'save_config': {
     $in = $json('config'); if ($in === null) fail('Invalid settings payload');
-    unset($in['containers']);
+    unset($in['containers'], $in['appdata']['ignore']);      // both have their own actions: an older copy in the browser must not undo them
     $cfg = dau_sanitize_config($in, dau_load_config());
     if (!empty($in['discord']['webhook_url'])) {
       $u = (string)$in['discord']['webhook_url'];
       if (!dau_webhook_valid($u)) fail('That is not a valid Discord webhook URL.');
+      $lock = api_lock();
       dau_secret_set('discord_url', $u);
       $st = dau_state_load(); $st['discord']['invalid'] = false; dau_state_save($st);
+      dau_lock_release($lock);
     }
     api_save($cfg);
     out(['ok' => true, 'config' => api_config_view($cfg)]);
@@ -194,8 +212,10 @@ switch ($action) {
 
   case 'approve': {
     $n = (string)($_POST['name'] ?? ''); if (!dau_valid_name($n)) fail('Invalid name');
+    $lock = api_lock();
     $cs = dau_containers() ?? []; $st = dau_state_load();
-    foreach ($cs as $c) if ($c['name'] === $n && $c['remote']) { $st['docker']['approved'][$n] = (string)$c['remote']; dau_state_save($st); out(['ok' => true]); }
+    foreach ($cs as $c) if ($c['name'] === $n && $c['remote']) { $st['docker']['approved'][$n] = (string)$c['remote']; dau_state_save($st); dau_lock_release($lock); out(['ok' => true]); }
+    dau_lock_release($lock);
     fail('No pending update with a known image to approve for this container.');
   }
 
@@ -268,6 +288,7 @@ switch ($action) {
 
   /* skip one specific version (a newer one is announced again) */
   case 'skip': case 'unskip': {
+    $lock = api_lock();
     $type = (string)($_POST['type'] ?? ''); $n = (string)($_POST['name'] ?? ''); $st = dau_state_load(); $skip = $action === 'skip';
     if ($type === 'docker') {
       if (!dau_valid_name($n)) fail('Invalid name');
@@ -284,7 +305,7 @@ switch ($action) {
       if ($skip && empty($st['os']['available'])) fail('No OS update to skip.');
       $st['os']['skipped'] = $skip ? (string)$st['os']['available'] : '';
     } else fail('Unknown type');
-    dau_state_save($st); out(['ok' => true]);
+    dau_state_save($st); dau_lock_release($lock); out(['ok' => true]);
   }
 
   case 'unpin': {
@@ -363,19 +384,24 @@ switch ($action) {
   case 'os_abort': {
     /* abort the pre-OS workflow: a running job stops after its current step, a paused one is cancelled here */
     if (dau_run_info()['running']) { @touch(DAU_STOPFLAG); out(['ok' => true, 'running' => true]); }
+    $lock = api_lock();
     $st = dau_state_load(); $wf = $st['os']['workflow'] ?? null;
     if (is_array($wf)) {
       dau_history_add(['type' => 'os', 'name' => 'Unraid OS', 'action' => 'prerequisites', 'result' => 'aborted', 'started' => (int)$wf['started'], 'finished' => dau_now(), 'trigger' => 'manual', 'error' => 'Aborted by the user. Nothing was installed.'], dau_load_config()['history']['max_entries']);
       $st['os']['workflow'] = null; dau_state_save($st);
     }
+    dau_lock_release($lock);
     out(['ok' => true, 'running' => false]);
   }
 
-  case 'stop': { @touch(DAU_STOPFLAG); out(['ok' => true]); }
+  case 'stop': { if (dau_run_info()['running']) @touch(DAU_STOPFLAG); out(['ok' => true]); }      // with no job running the flag would cancel the next scheduled run
 
   case 'test_discord': {
     $st = dau_state_load(); $u = (string)($_POST['url'] ?? '');
-    $r = dau_discord_test($st, $u !== '' ? $u : null); dau_state_save($st); out($r);
+    $r = dau_discord_test($st, $u !== '' ? $u : null);
+    $lock = dau_lock_try();      // sending can take seconds, so only the Discord status is written, on a fresh copy; next to a running job it is left out
+    if ($lock) { $cur = dau_state_load(); $cur['discord'] = $st['discord']; dau_state_save($cur); dau_lock_release($lock); }
+    out($r);
   }
 
   case 'clear_webhook': { dau_secret_set('discord_url', ''); $cfg = dau_load_config(); $cfg['discord']['enabled'] = false; api_save($cfg); out(['ok' => true]); }
@@ -384,12 +410,12 @@ switch ($action) {
     $in = $json('config'); if ($in === null) fail('Invalid file');
     if (isset($in['config']) && is_array($in['config'])) $in = $in['config'];
     $cur = dau_load_config();
-    $cfg = dau_sanitize_config($in, dau_defaults());
+    $cfg = dau_import_config($in);
     dau_write_json(DAU_DIR . '/config.before-import.json', $cur);
     api_save($cfg); out(['ok' => true]);
   }
 
-  case 'clear_history': { dau_write_json(DAU_HIST, []); out(['ok' => true]); }
+  case 'clear_history': { $lock = api_lock(); dau_write_json(DAU_HIST, []); dau_lock_release($lock); out(['ok' => true]); }
 
   default: fail('Unknown action', 404);
 }

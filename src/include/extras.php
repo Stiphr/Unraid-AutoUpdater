@@ -15,7 +15,7 @@ function dau_quiet_now(array $cfg, $ts = null) {
 
 /** Events that may be sent during quiet hours when "let urgent messages through" is on. */
 function dau_event_urgent(array $ev) {
-  return in_array($ev['kind'], ['failed', 'retry_exhausted', 'os_install_failed', 'os_prereq_failed', 'os_unverified', 'os_rebooting', 'os_reboot_blocked', 'rollback_failed', 'os_staged'], true);
+  return in_array($ev['kind'], ['failed', 'retry_exhausted', 'os_install_failed', 'os_prereq_failed', 'os_unverified', 'os_rebooting', 'os_reboot_blocked', 'rollback_failed', 'os_staged', 'backup_failed', 'remove_failed', 'recovered'], true);
 }
 
 /** @return array [events to send now, events to hold] */

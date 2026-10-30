@@ -1,3 +1,13 @@
+###2026.10.30b1
+- BETA. Fix: when Docker does not answer, or a server has more than about 85 containers, the container list was read as empty and pins, rollback records and skipped versions were wiped. It now counts as "unknown" and nothing is lost.
+- BETA. Fix: a container is no longer removed when the other containers cannot be checked for using its network.
+- BETA. Safety: containers stopped for a backup are written down first, so the next job starts them again after a kill, power loss or reboot (after more than a day it reports them instead). A container interrupted during an update is started again the same way.
+- BETA. Fix: a backup destination inside the appdata folder is now refused through any name of the share (/mnt/cache/appdata/x as well as /mnt/user/appdata/x).
+- BETA. Backups: "Stop the containers" refuses to run live when Docker does not answer, starts containers on another one's network after it (and stops them with it). A flash backup no longer fails when a file changes while it is read.
+- BETA. Skip, Approve and Unpin now wait for a running job instead of being overwritten by it. Failed backups and removals count as failures in Discord and pass quiet hours. A damaged state or history file is kept and logged; a damaged settings file is copied once, not on every load. Importing settings keeps plugin policies. Container updates and removals change the Dashboard numbers right away. Unraid 7.3.10 now counts as newer than 7.3.9.
+- BETA. Faster: plugin details are read from their files, not through four processes per plugin on every page load.
+- BETA. New: a progress stepper and a live log while a job runs; each schedule says in words when it runs next; an "Unsaved changes" bar in Settings; Automatic theme that follows Unraid (White and Azure are now readable); messages and dialogs survive page refreshes; a failed refresh offers Try again.
+- BETA. New Dashboard tile: a status pill, full times on hover, a Check now button, and it refreshes while a job runs.
 ###2026.10.29b1
 - BETA. New: remove containers and plugins from the Docker and Plugins tabs (per row or "Remove selected…"), always behind a confirmation. Containers are stopped and removed (never forced); optionally their image is deleted (kept if another container uses it) and their saved template archived. Appdata is never deleted here. Plugins are uninstalled with Unraid's own plugin tool; this plugin and Unraid itself cannot be removed from here.
 ###2026.10.28b1

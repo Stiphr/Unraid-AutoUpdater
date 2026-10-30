@@ -22,6 +22,7 @@ define('DAU_STATE',     DAU_DIR . '/state.json');
 define('DAU_HIST',      DAU_DIR . '/history.json');
 define('DAU_CRON',      DAU_DIR . '/unraid-swiss-manager.cron');
 define('DAU_RECOVERY',  DAU_DIR . '/plugin-recovery');
+define('DAU_STOPPED',   DAU_DIR . '/backup-stopped.json');      // containers a running backup has stopped; removed when they are started again
 define('DAU_LOG',       '/var/log/unraid-swiss-manager.log');
 define('DAU_LOCK',      '/var/run/unraid-swiss-manager.lock');
 define('DAU_PROGRESS',  '/var/run/unraid-swiss-manager.progress');
@@ -74,6 +75,26 @@ function dau_read_json($file, $default) {
   return is_array($d) ? $d : $default;
 }
 
+/** Keep one copy per damaged content on the flash drive (never one per load) and say so in the log. Returns true when a new copy was made. */
+function dau_keep_damaged($file, $raw, $base) {
+  $copy = DAU_DIR . '/' . $base . '.corrupt-' . substr(hash('sha256', (string)$raw), 0, 12) . '.json';
+  if (is_file($copy)) return false;
+  @copy($file, $copy);
+  dau_log('error', 'config', '-', 'load', 'fail', basename($file) . ' is not valid JSON; safe defaults are used. The damaged file was kept as ' . basename($copy) . '.');
+  return true;
+}
+
+/** dau_read_json for a file whose loss matters: damage is logged and a copy is kept before the defaults take over. */
+function dau_read_json_kept($file, $default, $base) {
+  if (!is_file($file)) return $default;
+  $raw = @file_get_contents($file);
+  if ($raw === false) return $default;
+  $d = json_decode($raw, true);
+  if (is_array($d)) return $d;
+  dau_keep_damaged($file, $raw, $base);
+  return $default;
+}
+
 /** Atomic write. Skips the write when the content is unchanged (the flash drive has limited write cycles). */
 function dau_write_json($file, $data, $private = false) {
   $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
@@ -81,7 +102,7 @@ function dau_write_json($file, $data, $private = false) {
   if (is_file($file) && @file_get_contents($file) === $json) return true;
   @mkdir(dirname($file), 0755, true);
   $tmp = $file . '.tmp' . getmypid();
-  if (@file_put_contents($tmp, $json) === false) return false;
+  if (@file_put_contents($tmp, $json) === false) { @unlink($tmp); return false; }
   if ($private) @chmod($tmp, 0600);
   if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
   return true;
@@ -193,6 +214,18 @@ function dau_log_tail($n = 200) {
   return implode("\n", array_slice($out, -$n)) . ($out ? "\n" : '');
 }
 
+/** The newest lines only (reads the end of the file): cheap enough for the live log, which asks every few seconds. */
+function dau_log_recent($n = 80) {
+  clearstatcache(true, DAU_LOG);
+  $size = is_file(DAU_LOG) ? (int)@filesize(DAU_LOG) : 0;
+  if ($size < 1) return '';
+  $f = @fopen(DAU_LOG, 'r'); if (!$f) return '';
+  fseek($f, max(0, $size - 32768)); $t = (string)fread($f, 32768); fclose($f);
+  $l = explode("\n", rtrim($t, "\n"));
+  if ($size > 32768) array_shift($l);      // the first line is cut off
+  return implode("\n", array_slice($l, -$n));
+}
+
 /* ---------- lock, progress, stop flag ---------- */
 
 /** Non-blocking exclusive lock shared by every job type. Returns a handle or false. */
@@ -203,6 +236,11 @@ function dau_lock_try() {
   fclose($fp);
   return false;
 }
+/** For a job or a change the person asked for: a status check can hold the lock for a moment, which must not make the request fail. */
+function dau_lock_wait() {
+  for ($i = 0; $i < 4; $i++) { $fp = dau_lock_try(); if ($fp) return $fp; usleep(50000); }
+  return false;
+}
 function dau_lock_release($fp) { if (is_resource($fp)) { @flock($fp, LOCK_UN); @fclose($fp); } }
 
 function dau_is_locked() {
@@ -211,7 +249,10 @@ function dau_is_locked() {
   return true;
 }
 
-function dau_progress($p) { @file_put_contents(DAU_PROGRESS, json_encode($p)); }
+function dau_progress($p) {      // through a temporary name: the status poll never reads half a file
+  $tmp = DAU_PROGRESS . '.tmp' . getmypid();
+  if (@file_put_contents($tmp, json_encode($p)) !== false) @rename($tmp, DAU_PROGRESS);
+}
 
 function dau_run_info() {
   $p = dau_read_json(DAU_PROGRESS, []);

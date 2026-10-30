@@ -197,7 +197,7 @@ t('discord: branding (name, grey/orange icon as avatar and header, build label)'
   ok($GLOBALS['SENT'], 'sent'); $p = $GLOBALS['SENT'][0];
   eq($p['username'], 'Unraid Swiss Manager'); eq($p['avatar_url'], DAU_DEFAULT_ICON); eq($p['allowed_mentions'], ['parse' => []]);
   $e = $p['embeds'][0]; eq($e['author']['name'], 'Unraid Swiss Manager'); eq($e['author']['icon_url'], DAU_DEFAULT_ICON); has($e['footer']['text'], DAU_VERSION); eq($e['footer']['icon_url'], DAU_DEFAULT_ICON);
-  has($e['title'], 'UNRAID AUTOUPDATER');
+  has($e['title'], 'UNRAID SWISS MANAGER');
   /* custom icon, and unsafe values fall back */
   $c['discord']['icon_url'] = 'https://example.com/my-logo.png'; dau_save_config($c); $GLOBALS['SENT'] = []; $st = dau_state_load(); dau_discord_test($st);
   eq($GLOBALS['SENT'][0]['avatar_url'], 'https://example.com/my-logo.png'); eq($GLOBALS['SENT'][0]['embeds'][0]['author']['icon_url'], 'https://example.com/my-logo.png');

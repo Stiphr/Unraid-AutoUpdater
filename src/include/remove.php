@@ -9,27 +9,18 @@
  * Plugin: Unraid's own `plugin remove NAME.plg`, verified afterwards. This plugin and Unraid itself are never removed from here.
  */
 
-/** Containers whose network mode is "container:<name or id>" of this one. */
+/** Containers whose network mode is "container:<name or id>" of this one. null = that could not be checked. */
 function dau_rm_net_dependants($name, $id) {
+  $all = dau_inspect_all();
+  if ($all === null) return null;
+  $ids = $id !== '' ? [$id => $name] : [];
+  foreach ($all as $c) $ids[(string)($c['Id'] ?? '')] = ltrim((string)($c['Name'] ?? ''), '/');
   $out = [];
-  foreach (dau_inspect_all() ?? [] as $c) {
-    $n = ltrim((string)($c['Name'] ?? ''), '/'); $mode = (string)($c['HostConfig']['NetworkMode'] ?? '');
-    if ($n === $name || strpos($mode, 'container:') !== 0) continue;
-    $t = substr($mode, 10);
-    if ($t === $name || ($id !== '' && ($t === $id || (strlen($t) >= 12 && strpos($id, $t) === 0)))) $out[] = $n;
+  foreach ($all as $c) {
+    $n = ltrim((string)($c['Name'] ?? ''), '/');
+    if ($n !== $name && dau_net_provider($c['HostConfig']['NetworkMode'] ?? '', $ids) === $name) $out[] = $n;
   }
   return $out;
-}
-
-/** `docker inspect` of every container (any state). null = Docker not available. */
-function dau_inspect_all() {
-  $r = dau_docker(['ps', '-aq', '--no-trunc'], 30);
-  if ($r['code'] !== 0) return null;
-  $ids = array_values(array_filter(preg_split('/\s+/', trim($r['out']))));
-  if (!$ids) return [];
-  $r = dau_docker(array_merge(['inspect'], $ids), 90);
-  $d = json_decode($r['out'], true);
-  return is_array($d) ? $d : null;
 }
 
 /**
@@ -47,6 +38,7 @@ function dau_docker_remove($name, array $o) {
   $res['prev'] = ['id' => dau_short_id($imageId), 'digest' => $image];
   foreach ($i['Mounts'] ?? [] as $m) if (($m['Type'] ?? '') === 'bind' && strpos((string)($m['Source'] ?? ''), '/mnt/') === 0) $res['appdata'][] = (string)$m['Source'];
   $deps = dau_rm_net_dependants($name, $id);
+  if ($deps === null) { $res['result'] = 'blocked'; $res['error'] = 'Docker did not say which containers use this one\'s network, so it was not removed.'; return $done(); }
   if ($deps) { $res['result'] = 'blocked'; $res['error'] = 'Other containers use its network: ' . implode(', ', $deps) . '. Remove or change those first.'; return $done(); }
 
   if (!empty($i['State']['Running']) || in_array($i['State']['Status'] ?? '', ['running', 'restarting', 'paused'], true)) {
@@ -120,6 +112,10 @@ function dau_job_remove(array &$J, $what, array $names, array $o) {
     dau_log($res['result'] === 'removed' ? 'info' : ($res['result'] === 'blocked' ? 'warn' : 'error'), $what === 'docker' ? 'docker' : 'plugin', $label, 'remove', $res['result'], $res['error'] ?: $msg);
     if ($res['result'] === 'failed') $J['sum'][$sum]['failed']++; elseif ($res['result'] === 'blocked') $J['sum'][$sum]['skipped']++;
     $J['events'][] = dau_ev($what === 'docker' ? 'docker' : 'plugin', $label, $res['result'] === 'removed' ? 'removed' : 'remove_failed', ['error' => $res['error'], 'next' => $res['next'], 'silent' => $res['result'] === 'removed']);
+  }
+  if ($what === 'docker') {
+    $cs = dau_containers();
+    if ($cs !== null) { $J['st']['summary']['containers'] = count($cs); $J['st']['summary']['docker_updates'] = count(array_filter($cs, function ($x) { return $x['update'] === true; })); }
   }
   if ($what === 'plugins') { $J['st']['plugins']['available'] = array_intersect_key($J['st']['plugins']['available'], dau_plugins_installed()); $J['st']['summary']['plugin_updates'] = count($J['st']['plugins']['available']); }
   dau_state_save($J['st']);

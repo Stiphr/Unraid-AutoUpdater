@@ -4,6 +4,9 @@
   var API = '/plugins/unraid-swiss-manager/include/api.php';
   var root = document.getElementById('dau');
   var S = { copen: {}, hist: null, ad: null, cs: null, cresult: null, cerr: {}, qr: null, tp: null, clean: null, csel: { img: {}, con: {} }, tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
+  /* toasts and dialogs live next to the page, not in it: render() rebuilds the page and must not take them along */
+  var layer = h('div', { class: 'dau dau-layer' });
+  root.parentNode.insertBefore(layer, root.nextSibling);
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var FREQ = [['6h', 'Every 6 hours'], ['12h', 'Every 12 hours'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every two weeks'], ['monthly', 'Monthly']];
   var POL = [['auto', 'Auto update'], ['notify', 'Notify only'], ['ignore', 'Ignore']];
@@ -36,7 +39,7 @@
   function ago(ts) { if (!ts) return 'never'; var s = Math.max(0, S.ov ? S.ov.now - ts : Date.now() / 1000 - ts); if (s < 90) return 'just now'; if (s < 5400) return Math.round(s / 60) + ' min ago'; if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' d ago'; }
   function when(ts) { return ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '-'; }
   function dur(s) { s = Math.round(s || 0); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'; }
-  function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : '') }, msg); root.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
+  function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: bad ? 'alert' : 'status' }, msg); layer.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
 
   function api(action, data, post) {
     var fd = new URLSearchParams(); fd.append('action', action);   // urlencoded, not multipart: multipart POSTs hang on Unraid's web server
@@ -46,17 +49,22 @@
       return r.json().catch(function () { return { error: 'Unexpected response (' + r.status + ')' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'Request failed (' + r.status + ')'; return j; });
     }).catch(function () { return { error: 'Could not reach the server.' }; });
   }
-  function act(action, data, okMsg) { return api(action, data, true).then(function (j) { if (j.error) toast(j.error, true); else if (okMsg) toast(okMsg); return j; }); }
+  /* while a change is on its way the buttons rest, so a double click cannot send it twice */
+  var acting = 0;
+  function wait(d) { acting += d; [root, layer].forEach(function (e) { e.classList.toggle('dau-wait', acting > 0); }); }
+  function act(action, data, okMsg) { wait(1); return api(action, data, true).then(function (j) { wait(-1); if (j.error) toast(j.error, true); else if (okMsg) toast(okMsg); return j; }); }
 
   /* ---------- loading ---------- */
   function load(which) {
     var jobs = [];
     var want = which || S.tab;
     jobs.push(api('overview').then(function (j) { if (!j.error) { S.ov = j; if (!S.draft) S.draft = JSON.parse(JSON.stringify(j.config)); } else S.err = j.error; }));
-    if (want === 'docker') jobs.push(api('docker').then(function (j) { S.docker = j; }));
-    if (want === 'plugins') jobs.push(api('plugins').then(function (j) { S.plugins = j; }));
-    if (want === 'os') jobs.push(api('os').then(function (j) { S.os = j; }));
-    if (want === 'backups') jobs.push(api('backups').then(function (j) { S.bk = j.error ? null : j; }));
+    /* a failed request keeps what is on screen and says so; it never replaces the data with an error */
+    function keep(k) { return function (j) { if (j.error) S.loadErr = j.error; else { S.loadErr = ''; S[k] = j; } }; }
+    if (want === 'docker') jobs.push(api('docker').then(keep('docker')));
+    if (want === 'plugins') jobs.push(api('plugins').then(keep('plugins')));
+    if (want === 'os') jobs.push(api('os').then(keep('os')));
+    if (want === 'backups') jobs.push(api('backups').then(keep('bk')));
     if (want === 'cleanup') jobs.push(api('history').then(function (j) { S.hist = j.rows || []; }));
     if (want === 'activity') { jobs.push(api('history').then(function (j) { S.hist = j.rows || []; })); jobs.push(api('log').then(function (j) { S.log = j.log || ''; })); }
     return Promise.all(jobs).then(render);
@@ -64,11 +72,19 @@
   function startPoll() {
     if (S.poll) return;
     S.poll = setInterval(function () {
-      api('status').then(function (j) {
+      if (document.hidden || S.pollBusy) return;      // nobody is looking, or the last answer has not come back yet
+      S.pollBusy = true;
+      api('status', S.runLog ? { log: '1' } : {}).then(function (j) {
+        S.pollBusy = false;
         if (!j.run) return;
         var was = S.ov && S.ov.run.running; S.ov.run = j.run;
-        if (!j.run.running && was) { clearInterval(S.poll); S.poll = null; toast('Finished.'); if (S.reloadAfter) { setTimeout(function () { location.reload(); }, 1500); return; } load(); }
-        else renderRunBar();
+        if (j.log !== undefined) S.runLogText = j.log;
+        if (j.run.running) { renderRunBar(); return; }
+        clearInterval(S.poll); S.poll = null;      // also when a page reload saw the end first: the timer must not outlive the job
+        if (!was) return;
+        toast('Finished.');
+        if (S.reloadAfter) { setTimeout(function () { location.reload(); }, 1500); return; }
+        load();
       });
     }, 2000);
   }
@@ -80,9 +96,21 @@
   }
 
   /* ---------- appearance: theme, accent colour, custom CSS ---------- */
+  function pageIsLight() {
+    var t = String(window.DAU_THEME || '').toLowerCase();
+    if (t === 'white' || t === 'azure') return true;
+    if (t === 'black' || t === 'gray') return false;
+    var m = /(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(getComputedStyle(document.body).backgroundColor || '');      // a theme this version does not know
+    return m ? 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3] > 140 : false;
+  }
   function applyTheme(ui) {
     ui = ui || {};
-    root.setAttribute('data-theme', ui.theme || 'dark');
+    var theme = ui.theme || 'auto', light = pageIsLight();
+    [root, layer].forEach(function (e) {
+      e.setAttribute('data-theme', theme === 'auto' ? (light ? 'light' : 'dark') : theme);
+      if (theme === 'auto') e.setAttribute('data-native', ''); else e.removeAttribute('data-native');      // follows Unraid: the page keeps Unraid's own background
+      if (theme === 'dark' && light) e.setAttribute('data-paint', ''); else e.removeAttribute('data-paint');      // chosen on a light Unraid theme: it needs its own background to stay readable
+    });
     var st = document.getElementById('dau-user-css');
     if (!st) { st = document.createElement('style'); st.id = 'dau-user-css'; document.head.appendChild(st); }
     var acc = /^#[0-9a-f]{6}$/i.test(ui.accent || '') ? ui.accent : '#f15a2c';
@@ -132,7 +160,7 @@
       S.tab = 'docker';
       return load('docker').then(function () {
         if (a === 'update') previewUpdate([name]);
-        else if (a === 'approve') act('approve', { name: name }, 'Approved this image for ' + name).then(function () { load('docker'); });
+        else if (a === 'approve') { var ma = modal('Approve this image of ' + name + '?'); ma.body.appendChild(h('p', null, 'The container is marked critical. Approving lets the next scheduled run update it to this image.')); ma.foot.appendChild(h('button', { class: 'btn', onclick: ma.close }, 'Cancel')); ma.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { ma.close(); act('approve', { name: name }, 'Approved this image for ' + name).then(function () { load('docker'); }); } }, 'Approve')); }
         else if (a === 'skip') { var m = modal('Skip this version of ' + name + '?'); m.body.appendChild(h('p', null, 'This image is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('docker', name, name); } }, 'Skip')); }
       });
     }
@@ -152,29 +180,51 @@
   function renderRunBar() {
     clear(runBar);
     var r = S.ov && S.ov.run; if (!r || !r.running) return;
-    var p = r.progress || {};
-    runBar.appendChild(h('div', { class: 'banner' }, h('div', { class: 'inl' }, h('b', null, 'Working: '), h('span', { class: 'grow' }, (p.phase || 'Running') + (p.total ? ' (' + (p.done || 0) + '/' + p.total + ')' : '')),
-      h('button', { class: 'btn sm danger', onclick: function () { act('stop', {}, 'Stop requested: the job ends after the current step.'); } }, 'Stop after current step')), h('div', { class: 'progress' }, h('i'))));
+    var p = r.progress || {}, pct = p.total ? Math.round((p.done || 0) / p.total * 100) : null, spent = p.started && p.ts ? p.ts - p.started : 0;
+    var box = h('div', { class: 'banner' }, h('div', { class: 'inl' }, h('b', null, 'Working: '), h('span', { class: 'grow' }, (p.phase || 'Running') + (p.total ? ' (' + (p.done || 0) + '/' + p.total + ')' : '') + (spent > 4 ? ' · ' + dur(spent) : '')),
+      h('button', { class: 'btn sm', 'aria-expanded': S.runLog ? 'true' : 'false', onclick: function () { S.runLog = !S.runLog; renderRunBar(); if (S.runLog) api('status', { log: '1' }).then(function (j) { if (j.log !== undefined) { S.runLogText = j.log; renderRunBar(); } }); } }, S.runLog ? 'Hide log' : 'Show log'),
+      h('button', { class: 'btn sm danger', onclick: function () { act('stop', {}, 'Stop requested: the job ends after the current step.'); } }, 'Stop after current step')));
+    var st = stepper(p); if (st) box.appendChild(st);
+    box.appendChild(h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': pct }, h('i', pct === null ? null : { class: 'det', style: 'width:' + pct + '%' })));
+    if (S.runLog) box.appendChild(h('pre', { class: 'log runlog' }, S.runLogText || 'Nothing logged yet.'));
+    runBar.appendChild(box);
+    var lg = box.querySelector('.runlog'); if (lg) lg.scrollTop = lg.scrollHeight;
+  }
+  /* the steps of what is running, as the server names them: done, current, still to come */
+  function stepper(p) {
+    if (!p.steps || !p.steps.length) return null;
+    var at = -1; p.steps.forEach(function (s, i) { if (s[0] === p.stage) at = i; });
+    var w = h('div', { class: 'steps', 'aria-label': 'Progress' });
+    p.steps.forEach(function (s, i) { w.appendChild(h('span', { class: 'step' + (i === at ? ' on' : i < at ? ' done' : ''), 'aria-current': i === at ? 'step' : null }, s[1])); });
+    return w;
   }
   function render() {
     clear(root);
     if (!S.ov) { root.appendChild(h('div', { class: 'dau-loading' }, S.err || 'Loading')); return; }
     var c = S.ov.cards, busy = S.ov.run.running;
+    if (busy) startPoll();      // also a job this page did not start: a scheduled run, or another browser tab
     root.appendChild(h('div', { class: 'head' }, h('div', { class: 'brand' }, h('img', { class: 'logo', src: '/plugins/unraid-swiss-manager/images/unraid-swiss-manager.png' + (window.DAU_IMGV || ''), alt: '', onerror: function () { this.style.display = 'none'; } }), h('div', null, h('div', { class: 'dau-name' }, S.ov.name || 'Unraid Swiss Manager'), h('div', { class: 'ver' }, 'Plugin version ' + S.ov.version, S.ov.tick_installed ? null : h('span', { class: 'muted' }, ' · no schedule is active')))),
       h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('check', [], 'Checking for updates'); } }, 'Check now'))));
     if (S.ov.config_status === 'corrupt') root.appendChild(h('div', { class: 'banner bad' }, 'The saved settings file could not be read, so safe defaults are shown. The damaged file was kept next to it as config.corrupt-*.json.'));
+    if (S.loadErr) root.appendChild(h('div', { class: 'banner bad' }, h('div', { class: 'inl' }, h('span', { class: 'grow' }, 'This tab could not be refreshed: ' + S.loadErr), h('button', { class: 'btn sm', onclick: function () { load(); } }, 'Try again'))));
     if (!S.ov.docker_up && S.tab !== 'settings') root.appendChild(h('div', { class: 'banner' }, 'The Docker service is not running. Docker features are unavailable until it is started.'));
     root.appendChild(runBar); renderRunBar();
     var tabs = h('div', { class: 'tabs' });
     TABS.forEach(function (t) {
       var n = t[0] === 'docker' ? c.docker_updates : t[0] === 'plugins' ? c.plugin_updates : t[0] === 'os' && c.os_available ? 1 : t[0] === 'cleanup' ? cleanCount(c.cleanup) : 0;
-      tabs.appendChild(h('button', { class: 'tab' + (S.tab === t[0] ? ' on' : ''), onclick: function () { S.tab = t[0]; if (t[0] === 'cleanup') { S.qr = null; S.tp = null; } load(t[0]); } }, t[1], n ? h('span', { class: 'n' }, n) : null));
+      tabs.appendChild(h('button', { class: 'tab' + (S.tab === t[0] ? ' on' : ''), onclick: function () { S.tab = t[0]; if (t[0] === 'cleanup') { S.qr = null; S.tp = null; } load(t[0]); } }, t[1], n ? h('span', { class: 'n' }, n) : null, t[0] === 'settings' && isDirty() ? h('span', { class: 'dirty', title: 'Unsaved changes' }, ' •') : null));
     });
     root.appendChild(tabs);
     applyTheme(S.tab === 'settings' && S.draft ? S.draft.ui : S.ov.config.ui);
-    var body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, backups: vBackups, settings: vSettings, activity: vActivity }[S.tab]();
+    var body;
+    try { body = { overview: vOverview, docker: vDocker, plugins: vPlugins, os: vOS, cleanup: vCleanup, backups: vBackups, settings: vSettings, activity: vActivity }[S.tab](); }
+    catch (e) { if (window.console) console.error(e); body = h('div', { class: 'banner bad' }, 'This tab could not be shown. Reload the page; if that does not help, the browser console has the details.'); }
     root.appendChild(body);
   }
+  /* settings the page edits, without what other tabs and actions change */
+  function editable(c) { var x = JSON.parse(JSON.stringify(c)); delete x.containers; delete x.plugins.items; delete x.appdata.ignore; delete x.discord.webhook_set; delete x.discord.icon_default; return JSON.stringify(x); }
+  function isDirty() { return !!(S.draft && S.ov && editable(S.draft) !== editable(S.ov.config)); }
+  window.addEventListener('beforeunload', function (e) { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
   /* ---------- overview ---------- */
   function card(k, v, s, cls) { return h('div', { class: 'card ' + (cls || '') }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), h('div', { class: 's' }, s || '')); }
@@ -270,12 +320,12 @@
         h('td', null, h('div', { class: 'inl' },
           r.update === true && r.managed ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { previewUpdate([r.name]); } }, 'Update') : null,
           r.major && r.managed ? h('button', { class: 'btn sm warn', disabled: S.ov.run.running, title: 'Install it although it changes the major version', onclick: function () { previewUpdate([r.name], { allow_major: true }); } }, 'Update anyway') : null,
-          r.state === 'approval' ? h('button', { class: 'btn sm', onclick: function () { act('approve', { name: r.name }, 'Approved this image for ' + r.name).then(function () { load('docker'); }); } }, 'Approve') : null,
+          r.state === 'approval' ? h('button', { class: 'btn sm', disabled: S.ov.run.running, onclick: function () { act('approve', { name: r.name }, 'Approved this image for ' + r.name).then(function () { load('docker'); }); } }, 'Approve') : null,
           r.update === true && r.managed ? h('button', { class: 'btn sm', onclick: function () { notesModal('docker', r.name, r.name); } }, 'Notes') : null,
-          r.update === true && r.managed && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('docker', r.name, r.name); } }, 'Skip') : null,
-          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
+          r.update === true && r.managed && !r.skipped ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('docker', r.name, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', disabled: S.ov.run.running, onclick: function () { skipAct('docker', r.name, r.name, true); } }, 'Un-skip') : null,
           r.rollback && !r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Go back to the image before the last update', onclick: function () { rollbackConfirm(r); } }, 'Roll back') : null,
-          r.pinned ? h('button', { class: 'btn sm', title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
+          r.pinned ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Follow updates again', onclick: function () { act('unpin', { name: r.name }, 'Unpinned ' + r.name).then(function () { load('docker'); }); } }, 'Unpin') : null,
           h('button', { class: 'btn sm', onclick: function () { S.open[r.name] = !open; render(); } }, open ? 'Close' : 'Settings'),
           h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Stop and remove this container', onclick: function () { removeContainers([r.name]); } }, 'Remove')))));
       if (open) tb.appendChild(h('tr', { class: 'drawer' }, h('td', { colspan: 8 }, containerDrawer(r))));
@@ -314,7 +364,21 @@
     var wr = h('span', null, wd), mr = h('span', null, md), hr = h('span', { class: 'muted sm' }, 'starting at the time on the left');
     function sync() { wr.style.display = (fr.value === 'weekly' || fr.value === 'biweekly') ? '' : 'none'; mr.style.display = fr.value === 'monthly' ? '' : 'none'; }
     fr.addEventListener('change', sync); sync();
-    return { el: h('div', { class: 'inl' }, fr, wr, mr, tm), get: function () { return { frequency: fr.value, time: tm.value || '04:00', weekday: +wd.value, monthday: +md.value }; } };
+    var get = function () { return { frequency: fr.value, time: tm.value || '04:00', weekday: +wd.value, monthday: +md.value }; };
+    return { el: h('div', null, h('div', { class: 'inl' }, fr, wr, mr, tm), schedPreview(get, [fr, wd, md, tm])), get: get };
+  }
+  /* the schedule in words, with its next runs: asked from the server, because its clock and time zone decide */
+  function schedPreview(get, inputs) {
+    var el = h('div', { class: 'hint muted sm schedtext' }), t = null;
+    function upd() {
+      clearTimeout(t);
+      t = setTimeout(function () {
+        var v = get(); if (!v) { el.textContent = ''; return; }
+        api('sched_preview', v).then(function (j) { el.textContent = j.error ? '' : j.text + ' · next: ' + j.next.slice(0, 2).map(when).join(', then '); });
+      }, 250);
+    }
+    inputs.forEach(function (i) { i.addEventListener('change', upd); }); upd();
+    return el;
   }
 
   /* ---------- update preview ---------- */
@@ -341,7 +405,7 @@
     function close() { if (bg.parentNode) bg.parentNode.removeChild(bg); }
     bg.appendChild(h('div', { class: 'modal', role: 'dialog' }, h('h3', null, title), body, foot));
     bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
-    root.appendChild(bg); return { body: body, foot: foot, close: close };
+    layer.appendChild(bg); return { body: body, foot: foot, close: close };
   }
 
   /* ---------- Plugins ---------- */
@@ -373,8 +437,8 @@
         h('td', { 'data-l': 'Last update' }, r.last ? h('span', null, h('span', { class: 'badge ' + (r.last.result === 'updated' ? 'ok' : 'bad') }, r.last.result), h('div', { class: 'muted sm' }, ago(r.last.ts))) : '-'),
         h('td', null, h('div', { class: 'inl' }, r.latest && !r.self ? h('button', { class: 'btn sm pri', disabled: S.ov.run.running, onclick: function () { confirmPlugins([r.file]); } }, 'Update') : null,
           r.latest ? h('button', { class: 'btn sm', onclick: function () { notesModal('plugin', r.file, r.name); } }, 'Notes') : null,
-          r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
-          r.skipped ? h('button', { class: 'btn sm', onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null,
+          r.latest && !r.self && !r.skipped ? h('button', { class: 'btn sm', disabled: S.ov.run.running, title: 'Ignore this version; a newer one is announced again', onclick: function () { skipAct('plugin', r.file, r.name); } }, 'Skip') : null,
+          r.skipped ? h('button', { class: 'btn sm', disabled: S.ov.run.running, onclick: function () { skipAct('plugin', r.file, r.name, true); } }, 'Un-skip') : null,
           r.self ? null : h('button', { class: 'btn sm danger', disabled: S.ov.run.running, title: 'Uninstall this plugin', onclick: function () { removePlugins([r.file]); } }, 'Remove')))));
     });
     w.appendChild(t);
@@ -477,7 +541,7 @@
         h('p', { class: 'muted sm' }, 'Back up your flash drive first and read the full release notes.')));
     }
     var busy = S.ov.run.running, acts = h('div', { class: 'actions' }, h('button', { class: 'btn', disabled: busy, onclick: function () { runJob('os', [], 'Checking'); } }, 'Check for OS update'));
-    if (o.available && !o.pending) acts.appendChild(S.os.skipped ? h('button', { class: 'btn', onclick: function () { skipAct('os', '', 'Unraid OS', true); } }, 'Un-skip this release') : h('button', { class: 'btn', title: 'No automatic action for this release; a newer one is announced again', onclick: function () { skipAct('os', '', 'Unraid OS'); } }, 'Skip this release'));
+    if (o.available && !o.pending) acts.appendChild(S.os.skipped ? h('button', { class: 'btn', disabled: busy, onclick: function () { skipAct('os', '', 'Unraid OS', true); } }, 'Un-skip this release') : h('button', { class: 'btn', disabled: busy, title: 'No automatic action for this release; a newer one is announced again', onclick: function () { skipAct('os', '', 'Unraid OS'); } }, 'Skip this release'));
     if (o.available && !o.pending) {
       acts.appendChild(h('button', { class: 'btn', disabled: busy, onclick: function () { confirmOsInstall(false); } }, 'Install update…'));
       acts.appendChild(h('button', { class: 'btn danger', disabled: busy, onclick: function () { confirmOsInstall(true); } }, 'Install and reboot…'));
@@ -842,7 +906,7 @@
     if (last && last.at && !last.ok && last.error) p.appendChild(h('div', { class: 'banner bad' }, h('b', null, 'What went wrong: '), last.error));
     p.appendChild(h('p', { class: 'muted sm' }, k === 'flash'
       ? 'Copies everything on the boot drive (/boot): your licence key, array and share settings, plugins and Docker templates. Keep this off the boot drive itself.'
-      : 'Archives your appdata folder' + (info && info.sources.length > 1 ? 's' : '') + (info && info.sources.length ? ' (' + info.sources.join(', ') + ')' : '') + '. Containers keep running while it is read, so a database may be captured mid-write. For databases use a plugin that stops containers first.'));
+      : 'Archives your appdata folder' + (info && info.sources.length > 1 ? 's' : '') + (info && info.sources.length ? ' (' + info.sources.join(', ') + ')' : '') + '. ' + (b.stop_containers ? 'The containers that use them are stopped while it is read.' : 'Containers keep running while it is read, so a database may be captured mid-write. Turn on "Stop the containers" below for a consistent copy.')));
     /* when */
     var sc = h('select', { 'aria-label': 'When to back up' }, h('option', { value: 'off' }, 'Not on a schedule'), h('option', { value: 'weekly' }, 'Every week'), h('option', { value: 'monthly' }, 'Every month'));
     sc.value = b.schedule;
@@ -852,7 +916,7 @@
     var wr = h('span', null, wd), mr = h('span', null, md), tr = h('span', null, 'at ', tm);
     function sync() { b.schedule = sc.value; wr.style.display = sc.value === 'weekly' ? '' : 'none'; mr.style.display = sc.value === 'monthly' ? '' : 'none'; tr.style.display = sc.value === 'off' ? 'none' : ''; }
     sc.addEventListener('change', sync); sync();
-    p.appendChild(h('div', { class: 'fld' }, h('label', null, 'When'), h('div', { class: 'inl' }, sc, wr, mr, tr)));
+    p.appendChild(h('div', { class: 'fld' }, h('label', null, 'When'), h('div', { class: 'inl' }, sc, wr, mr, tr), schedPreview(function () { return sc.value === 'off' ? null : { frequency: sc.value, time: b.time, weekday: +b.weekday, monthday: +b.monthday }; }, [sc, wd, md, tm])));
     if (k === 'appdata') {
       p.appendChild(fSwitch('Also back up right before updates are installed', 'backups.appdata.before_update', 'Runs once before a run that installs Docker or plugin updates, and only when there really is something to install. Nothing is backed up when there is nothing to update.'));
       p.appendChild(fSwitch('Do not install the updates if this backup fails', 'backups.appdata.required', 'Off: a failed backup is reported and the updates go on. On: the updates wait until a backup works.'));
@@ -891,8 +955,8 @@
     return p;
   }
   function saveBackups() {
-    var cfg = JSON.parse(JSON.stringify(S.draft)); delete cfg.containers;
-    act('save_config', { config: cfg }, 'Backup settings saved').then(function (j) { if (j.ok) { S.draft = null; load('backups'); } });
+    /* only this tab's settings: unfinished edits on the Settings tab stay unfinished */
+    act('save_config', { config: { backups: S.draft.backups } }, 'Backup settings saved').then(function (j) { if (j.ok) { S.draft.backups = JSON.parse(JSON.stringify(j.config.backups)); load('backups'); } });
   }
   function vBackups() {
     var w = h('div');
@@ -911,7 +975,7 @@
       h('div', null, fNum('Retry failed pulls up to', 'global.retry.max', 0, 5, 'Only network/registry errors that left the container untouched are retried. Never retries once the container was changed.', 'times'), fNum('Retry interval', 'global.retry.interval_min', 5, 1440, null, 'minutes'), fSwitch('Remove the old image after a verified update', 'global.cleanup', 'Only that one image, and only if nothing else uses it. Never a broad prune.')))));
     w.appendChild(section('Docker: backups before update (optional)', h('div', null,
       h('p', { class: 'muted sm' }, 'Turn on per container in its Settings. "Config" saves the template and container definition (small). "Image" saves the current image as a tar file (large). "Appdata" archives the container\'s host folders while it is still running, so databases may not be consistent: use a dedicated backup plugin for those.'),
-      h('div', { class: 'grid2' }, h('div', null, fSwitch('Enable backups', 'global.backup.enabled'), fText('Destination folder (under /mnt)', 'global.backup.dest', 'Example: /mnt/user/backups/unraid-swiss-manager', '/mnt/user/backups'), fNum('Keep newest', 'global.backup.retention', 1, 30, null, 'backups per container')),
+      h('div', { class: 'grid2' }, h('div', null, fSwitch('Enable backups', 'global.backup.enabled'), fText('Destination folder (under /mnt)', 'global.backup.dest', 'Example: /mnt/user/backups/unraid-swiss-manager', '/mnt/user/backups'), fNum('Keep newest', 'global.backup.retention', 1, 20, null, 'backups per container')),
         h('div', null, fSwitch('Config (template + settings)', 'global.backup.config'), fSwitch('Image (docker save)', 'global.backup.image'), fSwitch('Appdata folders (not application-consistent)', 'global.backup.appdata'), fSwitch('Backup is required: do not update if it fails', 'global.backup.required'))))));
     w.appendChild(section('Plugins', h('div', { class: 'grid2' },
       h('div', null, fSwitch('Check for plugin updates on a schedule', 'plugins.check_enabled'), fSched('Schedule', 'plugins'), fSwitch('Install updates automatically (plugins set to Auto update)', 'plugins.auto_update', 'OFF by default. Plugins run as root: only enable this for plugins you trust.'),
@@ -951,7 +1015,7 @@
       fSwitch('Weekly report of what could be freed', 'appdata.report', 'A Discord / Unraid notification (it follows your Docker notification settings) when there is something to clean up. It only looks; nothing is removed.'),
       fSwitch('Safe mode', 'appdata.safe_mode', 'On: unused folders are moved to a hidden quarantine folder and can be restored. Off: the Cleanup tab can delete them for good (it still asks for confirmation).'))));
     w.appendChild(section('Appearance', h('div', { class: 'grid2' },
-      h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
+      h('div', null, (function () { var s = h('select', { onchange: function () { d.ui.theme = s.value; applyTheme(d.ui); } }, h('option', { value: 'auto' }, 'Automatic (follows the Unraid theme)'), h('option', { value: 'dark' }, 'Dark (Unraid grey)'), h('option', { value: 'midnight' }, 'Midnight (blue-grey)'), h('option', { value: 'light' }, 'Light')); s.value = d.ui.theme; return h('div', { class: 'fld' }, h('label', null, 'Theme'), s); })(),
         (function () { var c = h('input', { type: 'color', value: d.ui.accent || '#f15a2c', 'aria-label': 'Accent colour', onchange: function () { d.ui.accent = c.value; applyTheme(d.ui); } }); return h('div', { class: 'fld' }, h('label', null, 'Accent colour'), h('div', { class: 'inl' }, c, h('button', { class: 'btn sm', onclick: function () { d.ui.accent = '#f15a2c'; render(); } }, 'Reset'))); })(),
         fSwitch('Show the tile on the Unraid Dashboard', 'ui.widget', 'Takes effect the next time the Dashboard is opened.')),
       h('div', null, (function () { var t = h('textarea', { rows: 8, spellcheck: 'false', placeholder: '.dau .card { border-radius: 12px; }\n.dau .btn { text-transform: uppercase; }', style: 'width:100%;font-family:ui-monospace,Menlo,Consolas,monospace', oninput: function () { d.ui.css = t.value; applyTheme(d.ui); } }); t.value = d.ui.css || ''; return h('div', { class: 'fld' }, h('label', null, 'Custom CSS (optional)'), t, h('span', { class: 'hint' }, 'Applied to this plugin\'s pages only, for every browser. Start rules with .dau so nothing else changes. Colours are variables: --bg, --panel, --text, --muted, --accent, --ok, --bad. Up to 8000 characters; @import and markup are refused when saving.')); })()))));
@@ -959,11 +1023,14 @@
       h('div', { class: 'inl' }, h('button', { class: 'btn', onclick: saveSettingsFile }, 'Save settings to a file…'),
         h('button', { class: 'btn', onclick: importSettings }, 'Load settings from a file…'), h('button', { class: 'btn danger', onclick: function () { if (confirm('Delete the update history?')) act('clear_history', {}, 'History cleared'); } }, 'Clear history')),
       h('p', { class: 'muted sm' }, 'The file holds every setting, including per-container ones, but never the Discord webhook.'))));
-    w.appendChild(h('div', { class: 'actions' }, h('button', { class: 'btn pri', onclick: function () {
+    w.appendChild(vChannel());
+    var mark = h('span');
+    function markUp() { var on = isDirty(); mark.className = on ? 'badge warn' : 'muted sm'; mark.textContent = on ? 'Unsaved changes' : 'All changes saved'; }
+    markUp(); w.addEventListener('change', markUp); w.addEventListener('input', markUp);
+    w.appendChild(h('div', { class: 'cbar' }, h('div', { class: 'grow' }, mark), h('button', { class: 'btn pri', onclick: function () {
       var cfg = JSON.parse(JSON.stringify(d)); delete cfg.containers; if (url.value) cfg.discord.webhook_url = url.value;
       act('save_config', { config: cfg }, 'Settings saved').then(function (j) { if (j.ok) { S.draft = null; load('settings'); } });
     } }, 'Save settings'), h('button', { class: 'btn', onclick: function () { S.draft = JSON.parse(JSON.stringify(S.ov.config)); render(); } }, 'Discard changes')));
-    w.appendChild(vChannel());
     return w;
   }
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
