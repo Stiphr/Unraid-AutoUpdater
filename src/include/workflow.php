@@ -64,6 +64,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
 
   $inst = $J['st']['os']['installed'] ?? dau_os_version();
   $os =& $J['st']['os'];
+  dau_sticky(['steps' => array_merge($wantP ? [['plugins', 'Plugins']] : [], $wantD ? [['docker', 'Containers']] : [], [['check', 'System check'], ['install', 'Install']])]);
   $os['workflow'] = ['state' => 'running', 'version' => $latest, 'started' => $started, 'reboot' => !empty($opt['reboot']), 'manual' => $manual];
   dau_state_save($J['st']);
   if ($pre['notify'] && empty($opt['skip_pre'])) {
@@ -85,7 +86,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
   };
 
   if ($wantP) {
-    dau_phase('Before the OS update: updating plugins');
+    dau_sticky(['stage' => 'plugins']); dau_phase('Before the OS update: updating plugins');
     $b = $J['sum']['plugins'];
     dau_job_plugins($J, ['update' => true, 'pre' => $pre['scope']]);
     $a = $J['sum']['plugins'];
@@ -94,7 +95,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
     if ($rep['plugins']['failed'] > 0 && !empty($pre['require_plugins'])) return $fail('failed', $rep['plugins']['failed'] . ' plugin update(s) failed and successful plugin updates are required.');
   }
   if ($wantD) {
-    dau_phase('Before the OS update: updating Docker containers');
+    dau_sticky(['stage' => 'docker']); dau_phase('Before the OS update: updating Docker containers');
     $names = dau_os_pre_containers($cfg);
     $rep['docker'] = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'selected' => count($names)];
     if ($names) {
@@ -106,7 +107,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
     if (dau_stop_requested()) return $fail('aborted', 'Aborted by the user during the Docker updates.');
     if ($rep['docker']['failed'] > 0 && !empty($pre['require_docker'])) return $fail('failed', $rep['docker']['failed'] . ' container update(s) failed and successful Docker updates are required.');
   }
-  dau_phase('Before the OS update: checking the system');
+  dau_sticky(['stage' => 'check']); dau_phase('Before the OS update: checking the system');
   $h = dau_os_health($cfg, $wantD);
   $rep['health'] = $h['ok'] ? 'ok' : 'failed'; $rep['issues'] = $h['issues'];
   if (!$h['ok']) {

@@ -11,6 +11,9 @@ src = root / 'src'
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
 BETA = '--beta' in sys.argv          # a beta build updates itself from the beta branch and does not touch the migration stub
 version = args[0] if args else datetime.date.today().strftime('%Y.%m.%d')
+unknown = [a for a in sys.argv[1:] if a.startswith('-') and a != '--beta']
+if unknown or len(args) > 1 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?(b\d+)?', version) or BETA != bool(re.search(r'b\d+$', version)):
+    sys.exit(__doc__ + '\nNothing was built. A beta version (2026.10.30b1) needs --beta, and --beta needs a beta version.')
 BRANCH = 'beta' if BETA else 'stable'
 files = [
     ('UnraidSwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),

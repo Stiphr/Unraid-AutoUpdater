@@ -35,7 +35,7 @@ function dau_state_defaults() {
 
 function dau_state_load() {
   $d = dau_state_defaults();
-  $s = dau_read_json(DAU_STATE, []);
+  $s = dau_read_json_kept(DAU_STATE, [], 'state');
   foreach (['docker', 'plugins', 'os', 'stats', 'discord'] as $k) {
     if (isset($s[$k]) && is_array($s[$k])) $d[$k] = array_replace_recursive($d[$k], $s[$k]);
   }
@@ -86,7 +86,7 @@ function dau_history_normalize(array $e) {
 }
 
 function dau_history_load() {
-  return array_map('dau_history_normalize', array_values(array_filter(dau_read_json(DAU_HIST, []), 'is_array')));
+  return array_map('dau_history_normalize', array_values(array_filter(dau_read_json_kept(DAU_HIST, [], 'history'), 'is_array')));
 }
 
 /**
@@ -166,8 +166,8 @@ function dau_stats_summary(array $st) {
 
 /* ---------- interrupted jobs ---------- */
 
-function dau_mark_current(array &$st, $type, $name, $started) {
-  $st['current'] = ['type' => $type, 'name' => $name, 'started' => $started];
+function dau_mark_current(array &$st, $type, $name, $started, array $x = []) {
+  $st['current'] = ['type' => $type, 'name' => $name, 'started' => $started] + $x;
   dau_state_save($st);
 }
 
