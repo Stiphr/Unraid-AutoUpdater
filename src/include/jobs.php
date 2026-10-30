@@ -216,6 +216,13 @@ function dau_job_os(array &$J, array $opts = []) {
   $latest = (string)$J['st']['os']['available'];
   if (!empty($opts['skip_pre']) && $e['state'] === 'awaiting_confirmation') $e['state'] = 'ready';
   if ($e['state'] === 'ready') {
+    $why = dau_os_feed_block($latest);       // before the pre-OS maintenance, which would otherwise update plugins for an install that cannot happen
+    if ($why !== '') {
+      $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'blocked', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
+      $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', ['installed' => dau_os_version(), 'available' => $latest, 'stage' => 'check', 'error' => $why, 'next' => 'Install it from Tools > Update OS.']);
+      dau_log('warn', 'os', 'Unraid OS', 'install', 'blocked', $why);
+      return;
+    }
     $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
     if ($w !== 'proceed') return;
     dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS', 'stage' => 'install']);

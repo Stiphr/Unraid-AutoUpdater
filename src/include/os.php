@@ -3,14 +3,28 @@
  * Unraid Swiss Manager - Unraid OS.
  * DEFAULT: check and notify only. Installing an OS update (mode "install") and rebooting afterwards (mode "install_reboot")
  * are opt-in, need an explicit confirmation in the UI, a maintenance window and a waiting period, and use only Unraid's own
- * `plugin update unRAIDServer.plg` (the same thing Tools > Update OS runs) and the stock reboot command. Nothing is rolled back
- * automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
+ * `plugin update unRAIDServer.plg` and the stock reboot command, and only when Unraid's plugin feed offers that exact release (see
+ * dau_os_feed_block). Nothing is rolled back automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
  */
 
 /** Unraid releases are compared as versions, so 7.3.10 is newer than 7.3.9. Plugins keep Unraid's text comparison (dau_version_newer). */
 function dau_os_newer($latest, $installed) { return (string)$latest !== '' && version_compare((string)$latest, (string)$installed, '>'); }
 
+/**
+ * Current Unraid keeps its releases at releases.unraid.net; the update address inside unRAIDServer.plg stopped moving (it still offers 7.0.1).
+ * So ask Unraid's own checker. json=true makes it print the answer and skip its own notification. Older Unraid has no such script and uses the plg.
+ */
 function dau_os_check() {
+  $script = $GLOBALS['DAU_OSCHECK'] ?? DAU_OSCHECK;
+  if (is_file($script)) {
+    $r = dau_run(['/usr/bin/env', 'QUERY_STRING=json=true', $script], 120);
+    if ($r['timeout']) return ['ok' => false, 'error' => 'check timed out'];
+    $j = json_decode(trim($r['out']), true);
+    $v = is_array($j) ? (string)($j['version'] ?? '') : '';
+    if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $v)) return ['ok' => false, 'error' => dau_clip(dau_redact((string)($j['error'] ?? 'The OS update check returned an unexpected version.')), 200)];
+    $notes = is_string($j['changelogPretty'] ?? null) ? 'Release notes: ' . dau_clip($j['changelogPretty'], 300) : '';
+    return ['ok' => true, 'latest' => $v, 'notes' => $notes];
+  }
   $res = dau_plugin_check('unRAIDServer.plg');
   if (!$res['ok']) return $res;
   if (!preg_match('/^[0-9][A-Za-z0-9._+-]{0,30}$/', $res['latest'])) return ['ok' => false, 'error' => 'The OS update check returned an unexpected version.'];
@@ -44,7 +58,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
   if (dau_os_newer($latest, $installed)) {
-    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
+    if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = $check['notes'] ?? dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
       $os['notified'] = $latest;
@@ -125,6 +139,16 @@ function dau_os_eval(array $cfg, array $st, $now, $manual = false) {
 /* ---------------- install + reboot ---------------- */
 
 /**
+ * The installer here is `plugin update unRAIDServer.plg`, which installs whatever the plg's feed offers. That may be an old release or nothing, so it is
+ * only used when the feed offers exactly $latest. Returns why not, or ''.
+ */
+function dau_os_feed_block($latest) {
+  $p = dau_plugin_check('unRAIDServer.plg');
+  if ($p['ok'] && $p['latest'] === (string)$latest) return '';
+  return 'Unraid ' . $latest . ' can only be installed from Tools > Update OS here: Unraid\'s plugin feed ' . ($p['ok'] ? 'offers ' . $p['latest'] : 'did not answer') . '. Nothing was changed.';
+}
+
+/**
  * Install the OS update through `plugin update unRAIDServer.plg` after a fresh check and the standard plugin validation.
  * The new release only becomes active after a reboot. Result: staged | failed | blocked.
  */
@@ -136,6 +160,8 @@ function dau_os_install(array $cfg, $latest) {
   $chk = dau_os_check();
   if (!$chk['ok']) { $res['error'] = 'Fresh update check failed: ' . $chk['error']; return $done(); }
   if ($chk['latest'] !== $latest) { $res['result'] = 'blocked'; $res['error'] = 'The offered version changed from ' . $latest . ' to ' . $chk['latest'] . ' during the check.'; return $done(); }
+  $why = dau_os_feed_block($latest);
+  if ($why !== '') { $res['result'] = 'blocked'; $res['error'] = $why; $res['next'] = 'Install it yourself from Tools > Update OS after reading the release notes.'; return $done(); }
   $res['stage'] = 'validate';
   $p = dau_os_plugin_entry();
   $v = dau_plugin_validate($p, $latest);

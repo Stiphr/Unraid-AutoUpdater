@@ -89,6 +89,18 @@ function dau_history_load() {
   return array_map('dau_history_normalize', array_values(array_filter(dau_read_json_kept(DAU_HIST, [], 'history'), 'is_array')));
 }
 
+/** Failed actions that still matter: the newest entry of that item failed, within the last 3 days. A later success or an old failure does not count. */
+function dau_recent_failures() {
+  $n = 0; $seen = [];
+  foreach (dau_history_load() as $e) {
+    $k = $e['type'] . '|' . $e['name'];
+    if (isset($seen[$k])) continue;
+    $seen[$k] = true;
+    if ($e['result'] === 'failed' && dau_now() - (int)($e['ts'] ?? $e['finished']) <= 3 * 86400) $n++;
+  }
+  return $n;
+}
+
 /**
  * $e: type, name, action, result, started, finished, prev{version,id,digest}, new{...}, verification{result,detail},
  *     attempts, error, trigger, message. Newest first; capped to history.max_entries.

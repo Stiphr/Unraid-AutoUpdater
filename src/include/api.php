@@ -90,7 +90,7 @@ switch ($action) {
         'plugins' => count($prow), 'plugin_updates' => $cnt($prow, function ($r) { return !empty($r['latest']); }),
         'os_installed' => dau_os_version(), 'os_available' => $st['os']['available'], 'os_error' => $st['os']['last_error'],
         'last_run' => $st['last_run'], 'last_result' => $st['last_result'], 'next' => api_next_runs($cfg, $st), 'queued' => count($st['queue']), 'quiet_now' => dau_quiet_now($cfg),
-        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
+        'cleanup' => array_merge($st['cleanup'], ['quarantine' => count(dau_quarantine_load())]), 'failures' => dau_recent_failures(),
       ],
       'stats' => dau_stats_summary($st), 'discord' => ['last_ok' => $st['discord']['last_ok'], 'last_error' => $st['discord']['last_error'], 'invalid' => $st['discord']['invalid']],
       'checked' => ['docker' => is_file(DAU_UPDSTATUS) ? filemtime(DAU_UPDSTATUS) : 0, 'plugins' => $st['plugins']['last_check'], 'os' => $st['os']['last_check']],
@@ -120,13 +120,16 @@ switch ($action) {
     fail('Unknown type');
   }
   case 'widget': {       // light: state files only, no Docker call (used by the Dashboard tile)
-    $st = dau_state_load(); $cfg = dau_load_config();
+    $st = dau_state_load(); $cfg = dau_load_config(); $ri = dau_run_info(); $pr = (array)$ri['progress'];
+    $nx = null; foreach (api_next_runs($cfg, $st) as $r) if ($r['next'] && (!$nx || $r['next'] < $nx['next'])) $nx = $r;
+    $bk = null; foreach ($st['backups'] as $b) if (is_array($b) && !empty($b['at']) && (!$bk || $b['at'] > $bk['at'])) $bk = $b;
     out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
          'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
-         'failures' => count(array_filter(array_slice(dau_history_load(), 0, 20), function ($e) { return $e['result'] === 'failed'; })),
-         'next' => (function () use ($cfg, $st) { $t = array_filter(array_column(api_next_runs($cfg, $st), 'next')); return $t ? min($t) : null; })(),
+         'failures' => dau_recent_failures(),
+         'next' => $nx['next'] ?? null, 'next_label' => $nx['label'] ?? '',
+         'backup_at' => $bk['at'] ?? 0, 'backup_ok' => $bk['ok'] ?? null,
          'last_run' => $st['last_run'], 'last_status' => $st['last_result']['status'] ?? '',
-         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => dau_run_info()['running'], 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
+         'queued' => count($st['queue']), 'pinned' => count($st['docker']['pinned']), 'running' => $ri['running'], 'phase' => (string)($pr['phase'] ?? ''), 'done' => (int)($pr['done'] ?? 0), 'total' => (int)($pr['total'] ?? 0), 'now' => dau_now(), 'name' => DAU_NAME, 'version' => DAU_VERSION]);
   }
   case 'cleanup_scan': { out(dau_cleanup_scan()); }
   case 'appdata_scan': { out(dau_appdata_scan()); }
