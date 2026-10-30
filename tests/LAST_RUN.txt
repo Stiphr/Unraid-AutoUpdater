@@ -1,7 +1,4 @@
-== config ==
-== schedule ==
-== run helper / redaction / log ==
-== discord ==
-== php 7.4 compatibility (static) ==
-
-826 assertions passed, 0 failed
+== 7.4-cli
+2014 assertions passed, 0 failed
+== 8.3-cli
+2014 assertions passed, 0 failed

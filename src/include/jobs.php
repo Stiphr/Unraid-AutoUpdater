@@ -11,7 +11,11 @@ function dau_job_new($trigger, array $cfg, array $st) {
   return ['cfg' => $cfg, 'st' => $st, 'trigger' => $trigger, 'events' => [], 'sum' => ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]], 'ran' => [], 'reboot' => false];
 }
 
-function dau_phase($txt, array $x = []) { dau_progress(['running' => true, 'phase' => $txt, 'ts' => dau_now()] + $x); }
+/* progress for the web UI. "Sticky" fields (job, started, the steps of a longer flow) stay on every phase until they are replaced. */
+function dau_sticky(array $x) { $GLOBALS['DAU_STICKY'] = $x + ($GLOBALS['DAU_STICKY'] ?? []); }
+function dau_phase($txt, array $x = []) { $GLOBALS['DAU_PROG'] = ['running' => true, 'phase' => $txt, 'ts' => dau_now()] + $x + ($GLOBALS['DAU_STICKY'] ?? []); dau_progress($GLOBALS['DAU_PROG']); }
+/** Move to the next step of what the current phase is doing. */
+function dau_stage($stage) { if (empty($GLOBALS['DAU_PROG'])) return; $GLOBALS['DAU_PROG']['stage'] = $stage; $GLOBALS['DAU_PROG']['ts'] = dau_now(); dau_progress($GLOBALS['DAU_PROG']); }
 
 function dau_hist(array &$J, $type, $name, $action, $res, $msgTrigger = '') {
   $h = $J['cfg']['history']['max_entries'];
@@ -77,8 +81,8 @@ function dau_job_docker(array &$J, array $opts) {
     }
     if ($i++ > 0 && (int)$g['delay'] > 0) dau_sleep((int)$g['delay']);
     $c['allow_major'] = in_array($n, (array)($opts['allow_major'] ?? []), true);
-    dau_phase("Updating $n", ['done' => $i - 1, 'total' => $total, 'current' => $n]);
-    dau_mark_current($J['st'], 'docker', $n, dau_now());
+    dau_phase("Updating $n", ['done' => $i - 1, 'total' => $total, 'current' => $n, 'steps' => dau_docker_steps($cfg, $n), 'stage' => '']);
+    dau_mark_current($J['st'], 'docker', $n, dau_now(), ['was_running' => $c['state'] === 'running']);
     $res = dau_docker_update($cfg, $n, $c);
     dau_clear_current($J['st']);
     unset($J['st']['docker']['deferred'][$n]);
@@ -91,6 +95,7 @@ function dau_job_docker(array &$J, array $opts) {
       if (!empty($res['versions']['from']) || !empty($res['versions']['to'])) $x['versions'] = ($res['versions']['from'] ?: '?') . ' -> ' . ($res['versions']['to'] ?: '?');
       unset($J['st']['docker']['skipped'][$n]);
       $J['sum']['docker']['updated']++; $J['events'][] = dau_ev('docker', $n, 'updated', $x);
+      $J['st']['summary']['docker_updates'] = max(0, (int)$J['st']['summary']['docker_updates'] - 1);
       dau_hist($J, 'docker', $n, 'update', $res); dau_log('info', 'docker', $n, 'update', 'ok', ($res['verification']['result'] ?? '') . ' ' . implode(' | ', $res['warnings']));
     } elseif ($res['result'] === 'unchanged') {
       unset($J['st']['docker']['retry'][$n]); dau_log('info', 'docker', $n, 'update', 'skip', 'Already running the newest image.');
@@ -181,7 +186,7 @@ function dau_job_plugins(array &$J, array $opts) {
     $res = dau_plugin_update($cfg, $p, $latest);
     dau_clear_current($J['st']);
     $x = ['installed' => $p['version'], 'available' => $latest, 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification'], 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
-    if ($res['result'] === 'updated') { dau_stats_record($J['st'], 'plugin', true, $x['duration'], $p['name']); $J['sum']['plugins']['updated']++; $J['events'][] = dau_ev('plugin', $p['name'], 'updated', $x); unset($J['st']['plugins']['notified'][$p['file']]); }
+    if ($res['result'] === 'updated') { dau_stats_record($J['st'], 'plugin', true, $x['duration'], $p['name']); $J['sum']['plugins']['updated']++; $J['events'][] = dau_ev('plugin', $p['name'], 'updated', $x); unset($J['st']['plugins']['notified'][$p['file']], $J['st']['plugins']['available'][$p['file']]); $J['st']['summary']['plugin_updates'] = count($J['st']['plugins']['available']); }
     elseif ($res['result'] === 'blocked') {
       $J['sum']['plugins']['skipped']++; $J['st']['plugins']['blocked'][$p['file']] = ['version' => $latest, 'reason' => $res['error']];
       $J['events'][] = dau_ev('plugin', $p['name'], 'blocked', ['reason' => $res['error']] + $x);
@@ -213,7 +218,7 @@ function dau_job_os(array &$J, array $opts = []) {
   if ($e['state'] === 'ready') {
     $w = dau_os_workflow($J, $latest, ['manual' => $manual, 'reboot' => $reboot, 'plugins' => $opts['pre_plugins'] ?? null, 'docker' => $opts['pre_docker'] ?? null, 'skip_pre' => !empty($opts['skip_pre'])]);
     if ($w !== 'proceed') return;
-    dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS']);
+    dau_phase('Installing Unraid ' . $latest, ['current' => 'Unraid OS', 'stage' => 'install']);
     dau_mark_current($J['st'], 'os', 'Unraid OS', dau_now());
     $res = dau_os_install($cfg, $latest);
     dau_clear_current($J['st']);
@@ -290,7 +295,7 @@ function dau_job_finish(array &$J) {
             'os_withdrawn' => ['update withdrawn', 'normal'], 'os_check_failed' => ['update check failed', 'warning'], 'os_installed' => ['now installed', 'normal'],
             'os_staged' => ['update installed, reboot needed', 'warning'], 'os_rebooting' => ['rebooting to finish the update', 'warning'], 'os_reboot_blocked' => ['reboot postponed', 'warning'],
             'os_install_failed' => ['update FAILED, nothing was rebooted', 'alert'], 'os_workflow_started' => ['pre-update maintenance started', 'normal'], 'os_workflow_done' => ['pre-update checks passed', 'normal'],
-            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'removed' => ['removed', 'normal'], 'remove_failed' => ['removal FAILED', 'alert'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
+            'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'removed' => ['removed', 'normal'], 'remove_failed' => ['removal FAILED', 'alert'], 'recovered' => ['interrupted job recovered', 'alert'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
     $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
@@ -334,14 +339,27 @@ function dau_job_cleanup(array &$J) {
 
 /* ---------------- entry points ---------------- */
 
+/** After a job that died: containers it had stopped come back. The update itself is never repeated. Returns true when there is something to announce. */
+function dau_recover_containers(array &$J, $rec) {
+  $any = dau_bk_recover($J);
+  if (!is_array($rec) || ($rec['type'] ?? '') !== 'docker' || empty($rec['was_running']) || !dau_valid_name($rec['name'])) return $any;
+  $s = dau_docker_restore($rec['name']);
+  if ($s !== 'started' && $s !== 'failed') return $any;
+  $msg = $s === 'started' ? 'It stopped during an update that was interrupted and was started again.' : 'It stopped during an update that was interrupted and did not start again. Check it on the Docker tab.';
+  $J['events'][] = dau_ev('docker', $rec['name'], 'recovered', ['error' => $s === 'failed' ? $msg : '', 'reason' => $s === 'started' ? $msg : '']);
+  dau_log($s === 'started' ? 'warn' : 'error', 'docker', $rec['name'], 'recover', $s, $msg);
+  return true;
+}
+
 /**
  * action: tick | check | docker | plugins | os
  * Returns exit code: 0 ok, 3 another job is running.
  */
 function dau_job_main($action, array $o = []) {
-  $lock = dau_lock_try();
+  $lock = $action === 'tick' ? dau_lock_try() : dau_lock_wait();
   if (!$lock) { if ($action !== 'tick') dau_log('info', 'job', '-', $action, 'skip', 'Another job is running.'); return 3; }
   try {
+    $GLOBALS['DAU_STICKY'] = ['job' => $action, 'started' => dau_now()]; unset($GLOBALS['DAU_PROG']);
     $status = 'ok';
     $cfg = dau_load_config($status);
     $st = dau_state_load();
@@ -357,7 +375,7 @@ function dau_job_main($action, array $o = []) {
     }
     $J = dau_job_new($action === 'tick' ? 'scheduled' : 'manual', $cfg, $st);
     /* result of an OS update that was waiting for a reboot (verified at boot, announced here once the network is up) */
-    $announced = false;
+    $announced = dau_recover_containers($J, $rec);
     $br = $J['st']['os']['boot_result'] ?? null;
     if (is_array($br)) {
       $J['events'][] = dau_ev('os', 'Unraid OS', $br['kind'], ['installed' => $br['installed'], 'available' => $br['available'], 'silent_native' => true,

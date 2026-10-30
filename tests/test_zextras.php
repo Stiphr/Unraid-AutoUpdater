@@ -87,7 +87,7 @@ t('extras: new settings are validated', function () {
   $c = dau_sanitize_config(['quiet' => ['enabled' => true, 'start' => '25:00', 'end' => '06:30', 'urgent' => false], 'ui' => ['theme' => 'neon', 'accent' => 'red', 'css' => '@import url(x);'],
     'discord' => ['ui_url' => 'javascript:alert(1)', 'action_links' => false], 'containers' => ['a' => ['after' => ['b', '../x', 'a b', 'c'], 'watch_major' => true]]], dau_defaults());
   eq($c['quiet']['start'], '23:00', 'bad time ignored'); eq($c['quiet']['end'], '06:30'); eq($c['quiet']['urgent'], false);
-  eq($c['ui']['theme'], 'dark'); eq($c['ui']['accent'], '#f15a2c'); eq($c['ui']['css'], '', 'dangerous css refused');
+  eq($c['ui']['theme'], 'auto'); eq($c['ui']['accent'], '#f15a2c'); eq($c['ui']['css'], '', 'dangerous css refused');
   eq($c['discord']['ui_url'], ''); eq($c['discord']['action_links'], false);
   eq($c['containers']['a']['after'], ['b', 'c']); eq($c['containers']['a']['watch_major'], true);
   $c = dau_sanitize_config(['ui' => ['theme' => 'light', 'accent' => '#AABBCC', 'css' => '.dau .btn{border-radius:12px}'], 'discord' => ['ui_url' => 'http://192.168.1.5:8080/']], dau_defaults());

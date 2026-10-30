@@ -194,3 +194,14 @@ The **Backups** tab makes archives of your appdata folders and of the boot drive
 - **Appdata is not application-consistent by default.** Containers keep running while their folders are read, so a database can be captured mid-write. Turn on *Stop the containers while the backup runs* (Backups tab) to stop the running containers that use the appdata folders for the backup and start them again afterwards, in their *update after* order, also when the backup fails. Individual folders can be left out, and the Cleanup quarantine is never included.
 - **Safety:** archives are created private (0600), written under a temporary name and renamed when complete; the boot drive archive is read back to check it. Free space is checked first.
 - **Restore:** each file is a normal `.tar.gz`. Appdata: stop the container, then `tar -xzf appdata-DATE.tar.gz -C /`. Boot drive: unpack onto a freshly prepared USB drive.
+
+## When a job is interrupted
+
+- **While a job runs** the Working bar shows its steps, how long it has taken, and a live log (Show log). Skip, Approve and Unpin wait until the job has finished, so a job cannot overwrite them.
+- **Containers stopped for a backup** are written to `backup-stopped.json` on the flash drive first. If the backup is killed (power loss, reboot), the next job starts them again and adds a line to Activity. After more than a day it only reports them, because they may have been stopped on purpose by then.
+- **A container interrupted during an update** is started again the same way; the update is not repeated.
+- **A damaged `state.json`, `history.json` or `config.json`** is kept next to it as `*.corrupt-*.json` and noted in the log, and safe defaults are used.
+
+## Themes
+
+Settings > Appearance > Automatic follows the Unraid theme (White and Azure use the light colours, Black and Gray the dark ones). A theme you chose yourself stays as it is.

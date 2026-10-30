@@ -6,7 +6,7 @@
  *   image   = `docker save` of the image currently in use (lets you go back to the exact old version offline). Large.
  *   appdata = tar of the container's bind-mounted host paths under /mnt. NOT application-consistent: the container
  *             is not stopped for it, so databases may be captured mid-write. Use a proper backup plugin for those.
- * The flash drive is FAT: file permissions cannot be enforced there, which is why no secrets are ever put in a backup.
+ * The config copy holds the template as it was saved, which can contain passwords, so it is private (0600); the destination is always under /mnt.
  */
 
 function dau_backup_dir_for($dest, $name) { return rtrim($dest, '/') . '/' . $name; }
@@ -21,6 +21,7 @@ function dau_backup_run(array $cfg, $name, array $inspect) {
   if (!dau_valid_dest($b['dest'] ?? '')) { $res['error'] = 'backup destination is not set to a valid path under /mnt'; return $res; }
   $dir = dau_backup_dir_for($b['dest'], $name);
   if (!is_dir($dir) && !@mkdir($dir, 0700, true)) { $res['error'] = "cannot create $dir"; return $res; }
+  foreach (glob($dir . '/.*.partial') ?: [] as $p) if (@filemtime($p) < dau_now() - 86400) @unlink($p);      // left by a run that was killed
   $stamp = date('Ymd-His', dau_now());
   $free = dau_backup_free($dir);
 

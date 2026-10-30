@@ -11,6 +11,7 @@
  */
 
 const DAU_BK_KINDS = ['appdata', 'flash'];
+const DAU_BK_RECOVER_TTL = 86400;     // after this long a stopped container may be stopped on purpose: it is reported, not started
 
 function dau_bk_label($kind) { return $kind === 'flash' ? 'Boot drive (flash)' : 'Appdata'; }
 
@@ -25,17 +26,32 @@ function dau_bk_defaults() {
   return ['appdata' => $one + ['time' => '03:00', 'before_update' => false, 'required' => false, 'stop_containers' => false, 'exclude' => []], 'flash' => $one + ['time' => '03:30']];
 }
 
-/** Running containers that map something inside the appdata folders, in the order they should be started again ("update after" first). */
+/**
+ * Running containers that map something inside the appdata folders, in the order they should be started again ("update after" first).
+ * A container that uses another one's network ("--net=container:vpn") starts after it, and stops with it: it would lose its network otherwise.
+ * null = Docker could not be asked. [] = nothing needs stopping.
+ */
 function dau_bk_users(array $cfg, array $srcs) {
-  $m = dau_appdata_mounts(); if (!$m) return [];
-  $todo = [];
+  $m = dau_appdata_mounts(); if ($m === null) return null;
+  $ids = []; foreach ($m as $c) $ids[$c['id']] = $c['name'];
+  $hit = [];
   foreach ($m as $c) {
     if ($c['state'] !== 'running' || !dau_valid_name($c['name'])) continue;
     foreach ($c['sources'] as $s) {
-      $sr = @realpath($s) ?: $s; $hit = false;
-      foreach ($srcs as $root) { $rr = @realpath($root) ?: $root; if (dau_path_in($sr, $rr) || dau_path_in(dau_path_tail($sr), dau_path_tail($rr))) { $hit = true; break; } }
-      if ($hit) { $todo[] = [['name' => $c['name']]]; break; }
+      $sr = @realpath($s) ?: $s;
+      foreach ($srcs as $root) { $rr = @realpath($root) ?: $root; if (dau_path_in($sr, $rr) || dau_path_in(dau_path_tail($sr), dau_path_tail($rr))) { $hit[$c['name']] = true; break 2; } }
     }
+  }
+  $prov = [];
+  foreach ($m as $c) { $p = dau_net_provider($c['net'], $ids); if ($p !== '') $prov[$c['name']] = $p; }
+  do {
+    $more = false;
+    foreach ($m as $c) if (!isset($hit[$c['name']]) && $c['state'] === 'running' && dau_valid_name($c['name']) && isset($hit[$prov[$c['name']] ?? ''])) { $hit[$c['name']] = true; $more = true; }
+  } while ($more);
+  $todo = [];
+  foreach ($m as $c) if (isset($hit[$c['name']])) {
+    $todo[] = [['name' => $c['name']]];
+    if (isset($prov[$c['name']])) $cfg['containers'][$c['name']]['after'] = array_merge((array)($cfg['containers'][$c['name']]['after'] ?? []), [$prov[$c['name']]]);
   }
   return array_map(function ($t) { return $t[0]['name']; }, dau_docker_order($todo, $cfg));
 }
@@ -44,7 +60,7 @@ function dau_bk_users(array $cfg, array $srcs) {
 function dau_bk_stop(array $names, array &$res) {
   $stopped = [];
   foreach (array_reverse($names) as $n) {
-    dau_phase('Stopping ' . $n . ' for the backup', ['current' => $n]);
+    dau_phase('Stopping ' . $n . ' for the backup', ['current' => $n, 'stage' => 'stop']);
     $r = dau_docker(['stop', '-t', '60', $n], 120);
     if ($r['code'] !== 0 || $r['timeout']) { $res['error'] = $n . ' could not be stopped, so the backup was not made.'; break; }
     $stopped[] = $n;
@@ -56,7 +72,7 @@ function dau_bk_stop(array $names, array &$res) {
 function dau_bk_start(array $stopped, array &$res) {
   $failed = [];
   foreach (array_reverse($stopped) as $n) {
-    dau_phase('Starting ' . $n . ' again', ['current' => $n]);
+    dau_phase('Starting ' . $n . ' again', ['current' => $n, 'stage' => 'start']);
     $r = dau_docker(['start', $n], 120);
     if ($r['code'] !== 0 || $r['timeout']) $failed[] = $n;
   }
@@ -65,6 +81,29 @@ function dau_bk_start(array $stopped, array &$res) {
     $msg = 'These containers did not start again after the backup: ' . implode(', ', $failed) . '. Start them on the Docker tab.';
     $res['error'] = $res['error'] !== '' ? $res['error'] . ' ' . $msg : $msg;
   }
+}
+
+/**
+ * A backup that was killed (power loss, reboot, out of memory) cannot run its "start them again" step, so it leaves a list on the flash drive.
+ * The next job finds it here. Docker not answering yet (for example right after a boot) keeps the list for the run after that.
+ * Returns true when there is something to announce.
+ */
+function dau_bk_recover(array &$J) {
+  if (!is_file(DAU_STOPPED)) return false;
+  $j = dau_read_json(DAU_STOPPED, []);
+  if (dau_inspect_all() === null) return false;
+  @unlink(DAU_STOPPED);
+  $names = array_values(array_filter((array)($j['names'] ?? []), 'dau_valid_name'));
+  if (!$names) return false;
+  $late = dau_now() - (int)($j['at'] ?? 0) > DAU_BK_RECOVER_TTL;
+  $started = []; $failed = [];
+  if (!$late) foreach (array_reverse($names) as $n) { $s = dau_docker_restore($n); if ($s === 'started') $started[] = $n; elseif ($s === 'failed') $failed[] = $n; }
+  if (!$late && !$started && !$failed) return false;
+  $msg = 'A backup was interrupted while containers were stopped. ' . ($late ? 'Check that these run: ' . implode(', ', $names) . '.' : ($started ? 'Started again: ' . implode(', ', $started) . '. ' : '') . ($failed ? 'Did not start: ' . implode(', ', $failed) . '. Start them on the Docker tab.' : ''));
+  dau_history_add(['type' => 'backup', 'name' => dau_bk_label('appdata'), 'action' => 'backup', 'result' => 'interrupted', 'started' => (int)($j['at'] ?? dau_now()), 'finished' => dau_now(), 'trigger' => 'recovery', 'error' => $msg], (int)$J['cfg']['history']['max_entries']);
+  dau_log($failed || $late ? 'error' : 'warn', 'backup', 'appdata', 'recover', $failed || $late ? 'fail' : 'ok', $msg);
+  $J['events'][] = dau_ev('backup', dau_bk_label('appdata'), 'recovered', ['error' => $failed || $late ? $msg : '', 'reason' => $failed || $late ? '' : $msg]);
+  return true;
 }
 
 /** Folders that will be archived: the appdata roots that exist (flash is always /boot). */
@@ -87,7 +126,8 @@ function dau_bk_check_dest($kind, array $cfg) {
   $real = is_dir($d) ? (realpath($d) ?: $d) : $d;
   foreach (dau_bk_sources($kind, $cfg) as $s) {
     $rs = realpath($s) ?: $s;
-    if ($real === $rs || strpos($real . '/', rtrim($rs, '/') . '/') === 0) return 'The destination is inside the folder that is backed up (' . $s . '). Choose a folder outside it.';
+    /* the tails also catch one share seen through two names: /mnt/cache/appdata/x is inside /mnt/user/appdata */
+    if (dau_path_in($real, $rs) || dau_path_in(dau_path_tail($real), dau_path_tail($rs))) return 'The destination is inside the folder that is backed up (' . $s . '). Choose a folder outside it.';
   }
   if (!dau_bk_sources($kind, $cfg)) return $kind === 'flash' ? 'The boot drive (/boot) was not found.' : 'No appdata folder was found. Check Settings > Cleanup > appdata folders.';
   return '';
@@ -127,7 +167,11 @@ function dau_bk_run($kind, array $cfg) {
   if (!is_dir($dir) && !@mkdir($dir, 0700, true)) { $res['error'] = 'Cannot create ' . $dir . '.'; return $res; }
   /* enough room? (the archive is compressed, so this is a safe upper bound; old archives are only removed afterwards) */
   $size = 0.0;
-  foreach ($srcs as $s) { $r = dau_run([dau_bin('du'), '-sb', $s], 900); $size += (float)preg_replace('/\s.*/s', '', trim($r['out'])); }
+  foreach ($srcs as $s) {
+    $r = dau_run([dau_bin('du'), '-sb', $s], 900);
+    if ($r['timeout'] || trim($r['out']) === '') $res['notes'][] = 'The size of ' . $s . ' could not be measured, so free space was not checked for it.';
+    $size += (float)preg_replace('/\s.*/s', '', trim($r['out']));
+  }
   $free = dau_backup_free($dir);
   if ($free !== null && $size > 0 && $size > $free) { $res['error'] = 'Not enough free space at the destination: about ' . dau_bytes_text($size) . ' to back up, ' . dau_bytes_text($free) . ' free. Nothing was changed.'; return $res; }
   $stamp = date('Ymd-His', $t0);
@@ -141,15 +185,19 @@ function dau_bk_run($kind, array $cfg) {
   foreach ($srcs as $s) $argv[] = ltrim($s, '/');
   $stopped = [];
   if ($kind === 'appdata' && !empty($b['stop_containers'])) {
-    $stopped = dau_bk_stop(dau_bk_users($cfg, $srcs), $res);
-    if ($res['error'] !== '') { dau_bk_start($stopped, $res); return $res; }
+    $users = dau_bk_users($cfg, $srcs);
+    if ($users === null) { $res['error'] = 'Docker did not say which containers use the appdata folders, so they could not be stopped and the backup was not made.'; return $res; }
+    if ($users) dau_write_json(DAU_STOPPED, ['at' => dau_now(), 'names' => array_reverse($users)]);      // written first: a kill can come at any moment from here on
+    $stopped = dau_bk_stop($users, $res);
+    if ($res['error'] !== '') { dau_bk_start($stopped, $res); @unlink(DAU_STOPPED); return $res; }
     if ($stopped) $res['notes'][] = 'Stopped during the backup: ' . implode(', ', $stopped) . '.';
   }
+  dau_phase('Writing the archive', ['stage' => 'archive']);
   $old = umask(0077);
   try { $r = dau_run($argv, 6 * 3600, null, 4096); }
-  finally { umask($old); dau_bk_start($stopped, $res); }      // containers come back even when tar fails
+  finally { umask($old); dau_bk_start($stopped, $res); @unlink(DAU_STOPPED); }      // containers come back even when tar fails
   if (!empty($res['restart_failed'])) { $err = $res['error']; $res['error'] = ''; }
-  $okCode = $r['code'] === 0 || ($r['code'] === 1 && $kind === 'appdata');       // 1 = a file changed while it was read (the containers run)
+  $okCode = $r['code'] === 0 || $r['code'] === 1;       // 1 = a file changed while it was read (containers running; a syslog mirrored to the flash drive)
   if (!$okCode || $r['timeout'] || !is_file($tmp) || (int)@filesize($tmp) < 1) {
     @unlink($tmp);
     $res['error'] = trim(($r['timeout'] ? 'The backup took longer than 6 hours and was stopped.' : 'The archive could not be written' . (trim($r['err']) !== '' ? ': ' . dau_clip(dau_redact(trim($r['err'])), 160) : '.')) . ' ' . ($err ?? ''));
@@ -162,7 +210,7 @@ function dau_bk_run($kind, array $cfg) {
   if (!@rename($tmp, $final)) { @unlink($tmp); $res['error'] = 'The finished archive could not be moved into place.'; return $res; }
   @chmod($final, 0600);
   $res['ok'] = true; $res['file'] = $final; $res['size'] = (int)@filesize($final); $res['seconds'] = max(0, dau_now() - $t0);
-  if ($r['code'] === 1) $res['notes'][] = 'Some files changed while they were read (normal while containers run).';
+  if ($r['code'] === 1) $res['notes'][] = 'Some files changed while they were read (normal while anything writes to them).';
   $res['pruned'] = dau_bk_prune($kind, $b['dest'], $b['keep']);
   $res['kept'] = count(dau_bk_list($kind, $b['dest']));
   if (isset($err)) { $res['ok'] = false; $res['error'] = $err; }    // the archive is good, but a container is down: that must not look like success
@@ -191,12 +239,17 @@ function dau_bk_slots(array $cfg) {
 /** Run one backup as part of a job: history entry, state, notification event. Returns the result. */
 function dau_job_backup(array &$J, $kind, $reason) {
   $cfg = $J['cfg'];
-  dau_phase('Backing up ' . strtolower(dau_bk_label($kind)));
+  $stop = $kind === 'appdata' && !empty($cfg['backups']['appdata']['stop_containers']);
+  $prev = $GLOBALS['DAU_STICKY'] ?? [];
+  dau_sticky(['steps' => array_merge($stop ? [['stop', 'Stop containers']] : [], [['archive', 'Write archive']], $stop ? [['start', 'Start containers']] : [])]);
+  dau_phase('Backing up ' . strtolower(dau_bk_label($kind)), ['stage' => $stop ? 'stop' : 'archive']);
   $t0 = dau_now();
   try { $r = dau_bk_run($kind, $cfg); }
   catch (Throwable $e) { $r = ['ok' => false, 'error' => 'Unexpected error: ' . $e->getMessage(), 'file' => '', 'size' => 0, 'pruned' => 0, 'kept' => 0, 'seconds' => 0, 'notes' => []]; }
+  $GLOBALS['DAU_STICKY'] = $prev;
   $J['st']['backups'][$kind] = ['at' => dau_now(), 'ok' => $r['ok'], 'file' => $r['ok'] ? basename($r['file']) : '', 'size' => $r['size'], 'error' => $r['error'], 'reason' => $reason, 'kept' => $r['kept']];
   $msg = $r['ok'] ? basename($r['file']) . ', ' . dau_bytes_text($r['size']) . ', ' . $r['kept'] . ' kept' . ($r['pruned'] ? ', ' . $r['pruned'] . ' older removed' : '') : '';
+  if (!empty($r['notes'])) $msg = trim($msg . ' ' . implode(' ', $r['notes']));
   dau_history_add(['type' => 'backup', 'name' => dau_bk_label($kind), 'action' => 'backup', 'result' => $r['ok'] ? 'completed' : 'failed', 'started' => $t0, 'finished' => dau_now(),
     'trigger' => $J['trigger'], 'error' => $r['error'], 'message' => $msg . ($reason ? ' (' . $reason . ')' : '')], (int)$cfg['history']['max_entries']);
   dau_log($r['ok'] ? 'info' : 'error', 'backup', $kind, 'backup', $r['ok'] ? 'ok' : 'fail', $r['ok'] ? $msg : $r['error']);

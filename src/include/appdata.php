@@ -34,19 +34,14 @@ function dau_path_in($child, $parent) { return $child === $parent || strpos($chi
 
 /** Every container (running or not) with the host folders it maps. null = Docker not available. */
 function dau_appdata_mounts() {
-  $r = dau_docker(['ps', '-aq', '--no-trunc'], 30);
-  if ($r['code'] !== 0) return null;
-  $ids = array_values(array_filter(preg_split('/\s+/', trim($r['out']))));
-  if (!$ids) return [];
-  $r = dau_docker(array_merge(['inspect'], $ids), 90);
-  $data = json_decode($r['out'], true);
-  if (!is_array($data)) return null;
+  $data = dau_inspect_all();
+  if ($data === null) return null;
   $out = [];
   foreach ($data as $c) {
     $src = [];
     foreach ($c['Mounts'] ?? [] as $m) if (($m['Type'] ?? 'bind') === 'bind' && !empty($m['Source'])) $src[] = (string)$m['Source'];
     foreach ($c['HostConfig']['Binds'] ?? [] as $b) { $p = explode(':', (string)$b); if (isset($p[0]) && $p[0] !== '' && $p[0][0] === '/') $src[] = $p[0]; }
-    $out[] = ['name' => ltrim((string)($c['Name'] ?? ''), '/'), 'state' => (string)($c['State']['Status'] ?? ''), 'sources' => array_values(array_unique($src))];
+    $out[] = ['name' => ltrim((string)($c['Name'] ?? ''), '/'), 'id' => (string)($c['Id'] ?? ''), 'net' => (string)($c['HostConfig']['NetworkMode'] ?? ''), 'state' => (string)($c['State']['Status'] ?? ''), 'sources' => array_values(array_unique($src))];
   }
   return $out;
 }

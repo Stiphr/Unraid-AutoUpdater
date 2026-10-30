@@ -7,6 +7,9 @@
  * automatically: Unraid keeps the previous release on the flash drive (Tools > Update OS > Restore).
  */
 
+/** Unraid releases are compared as versions, so 7.3.10 is newer than 7.3.9. Plugins keep Unraid's text comparison (dau_version_newer). */
+function dau_os_newer($latest, $installed) { return (string)$latest !== '' && version_compare((string)$latest, (string)$installed, '>'); }
+
 function dau_os_check() {
   $res = dau_plugin_check('unRAIDServer.plg');
   if (!$res['ok']) return $res;
@@ -40,7 +43,7 @@ function dau_os_process(array &$st, array $check, $now) {
   }
   $os['error_notified'] = false; $os['last_error'] = ''; $os['last_check_ok'] = $now;
   $latest = $check['latest'];
-  if (dau_version_newer($latest, $installed)) {
+  if (dau_os_newer($latest, $installed)) {
     if ($os['available'] !== $latest) { $os['available'] = $latest; if (($os['skipped'] ?? '') !== $latest) $os['skipped'] = ''; $os['first_seen'] = $now; $os['withdrawn_notified'] = false; $os['notes'] = dau_os_notes(); }
     if ($os['notified'] !== $latest) {
       $events[] = ['kind' => 'available', 'installed' => $installed, 'available' => $latest, 'reason' => $os['notes']];
