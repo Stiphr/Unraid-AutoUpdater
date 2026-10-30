@@ -276,3 +276,18 @@ t('top menu: a tab that shares the page with Settings and can be hidden', functi
   $cond = ''; preg_match('/^Cond="(.*)"$/m', $tab, $m); $f = function ($j) use ($m) { return eval('return ' . str_replace('/boot/config/plugins/unraid-swiss-manager/config.json', $j, $m[1]) . ';'); };
   $x = DAU_PLUGTMP . '/c.json'; ok($f($x . '.missing')); file_put_contents($x, '{"ui":{"menu_tab":false}}'); ok(!$f($x)); file_put_contents($x, '{"ui":{"menu_tab":true}}'); ok($f($x)); file_put_contents($x, '{'); ok($f($x)); @unlink($x);
 });
+
+t('tile: Update asks first, then runs the same job as the tabs, and says what is running', function () {
+  $p = file_get_contents(__DIR__ . '/../src/UnraidSwissManagerDash.page');
+  has($p, "post('run',{what:what,names:JSON.stringify(names)})"); has($p, 'Update now'); has($p, 'r.managed'); has($p, '!r.self&&!r.skipped'); has($p, "'dau-w-prog'"); has($p, '.dau-body{width:0;min-width:100%}');
+  $a = strpos($p, 'function ask(what)'); $b = strpos($p, "'Update now'"); $c = strpos($p, "post('run',{what:what"); ok($a < $b && $b < $c, 'the job is only started from the confirmation');
+  lacks(substr($p, 0, $a), "post('run',{what:what", 'no update starts outside the confirmation');
+  $st = dau_state_defaults(); $st['backups']['flash'] = ['at' => 500, 'ok' => false] + $st['backups']['flash']; $st['backups']['appdata'] = ['at' => 400, 'ok' => true] + $st['backups']['appdata']; dau_state_save($st);
+  $j = api_call('widget'); eq($j['backup_at'], 500); ok($j['backup_ok'] === false); ok(array_key_exists('next_label', $j)); eq($j['total'], 0); ok(is_string($j['phase']));
+});
+
+t('logo: one SVG, white on orange, and the PNG that Unraid needs is built from it', function () {
+  $s = file_get_contents(__DIR__ . '/../src/images/unraid-swiss-manager.svg');
+  has($s, 'fill="#ff5e2a"'); has($s, '<g fill="#fff">'); lacks($s, '#3a3a3a'); ok(simplexml_load_string($s) !== false);
+  $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg'); has($plg, 'Name="&emhttp;/images/unraid-swiss-manager.svg"');
+});
