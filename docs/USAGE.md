@@ -111,6 +111,8 @@ Any failed required step, failed system check or abort stops the workflow before
 
 The workflow only ever runs as part of an OS install, which itself is opt-in; in the default *notify only* mode nothing changes.
 
+Updates are found through Unraid's own checker. Automatic and one-click installs only run when Unraid's plugin feed offers that exact release; current Unraid releases are often missing there, and then the plugin stops, changes nothing and tells you to install from **Tools → Update OS**.
+
 There is no automatic rollback. Unraid keeps the previous release on the flash drive: **Tools → Update OS → Restore**. The Unraid OS tab also has manual *Install update*, *Install and reboot* and *Reboot now* buttons (each with a confirmation).
 
 ## Discord

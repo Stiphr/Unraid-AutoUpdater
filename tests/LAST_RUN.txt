@@ -1,4 +1,4 @@
 == 7.4-cli
-2004 assertions passed, 0 failed
+2096 assertions passed, 0 failed
 == 8.3-cli
-2004 assertions passed, 0 failed
+2096 assertions passed, 0 failed

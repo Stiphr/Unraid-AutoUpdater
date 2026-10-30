@@ -9,7 +9,7 @@ The repository contained only `unraid-autoupdater.plg` (self-contained, files in
 
 | Area | What existed |
 |---|---|
-| Layout | `.page` (Settings > User Utilities), `include/lib.php`, `include/api.php`, `scripts/run.php`, `assets/app.{css,js}` |
+| Layout | `.page` files (Settings > User Utilities, the top menu tab, the Dashboard tile), `include/page.php`, `include/lib.php`, `include/api.php`, `scripts/run.php`, `assets/app.{css,js}` |
 | Config | `/boot/config/plugins/unraid-autoupdater/config.json` (`global` + `containers{auto,notify,schedule}`) |
 | Scheduling | One cron line per distinct schedule slot (`run.php --scheduled --slot=KEY`) in `unraid-autoupdater.cron` |
 | Docker | Containers listed from `docker inspect`; update flag from Unraid's `unraid-update-status.json`; update via `update_container` |

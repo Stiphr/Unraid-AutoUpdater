@@ -16,11 +16,11 @@ if unknown or len(args) > 1 or not re.fullmatch(r'\d{4}\.\d{2}\.\d{2}[a-z]?(b\d+
     sys.exit(__doc__ + '\nNothing was built. A beta version (2026.10.30b1) needs --beta, and --beta needs a beta version.')
 BRANCH = 'beta' if BETA else 'stable'
 files = [
-    ('UnraidSwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),
-    ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
+    ('UnraidSwissManager.page', '0644'), ('SwissManager.page', '0644'), ('UnraidSwissManagerDash.page', '0644'),
+    ('include/page.php', '0644'), ('include/lib.php', '0644'), ('include/config.php', '0644'), ('include/schedule.php', '0644'), ('include/state.php', '0644'),
     ('include/discord.php', '0644'), ('include/backup.php', '0644'), ('include/backups.php', '0644'), ('include/docker.php', '0644'), ('include/plugins.php', '0644'),
     ('include/os.php', '0644'), ('include/workflow.php', '0644'), ('include/extras.php', '0644'), ('include/appdata.php', '0644'), ('include/remove.php', '0644'), ('include/jobs.php', '0644'), ('include/api.php', '0644'),
-    ('scripts/run.php', '0755'), ('assets/app.css', '0644'), ('assets/app.js', '0644'),
+    ('images/unraid-swiss-manager.svg', '0644'), ('scripts/run.php', '0755'), ('assets/app.css', '0644'), ('assets/app.js', '0644'),
 ]
 changes = (root / 'CHANGES.txt').read_text().strip()
 
@@ -82,7 +82,7 @@ done
 """
 out.append('<FILE Run="/bin/bash">\n<INLINE><![CDATA[' + MIGRATE + ']]></INLINE>\n</FILE>\n')
 
-# The icon is a binary file, so it is carried as base64 and unpacked by a script (no download needed). It is shown on the Plugins page
+# The SVG is the logo; the PNG is rendered from it because Unraid only accepts .png for plugin and page icons. The PNG is a binary file, so it is carried as base64 and unpacked by a script (no download needed). It is shown on the Plugins page
 # (the plg "icon" attribute) and in the dashboard header. The plg is re-run at every boot, so the icon is always restored.
 icon = (root / 'assets' / 'icon.png').read_bytes()
 icon_b64 = '\n'.join(textwrap.wrap(base64.b64encode(icon).decode(), 76))
@@ -106,7 +106,7 @@ chmod 755 &emhttp;/scripts/run.php
 echo ""
 echo "----------------------------------------------------"
 echo " Unraid Swiss Manager &version; installed"
-echo " Open it from Settings > User Utilities > Unraid Swiss Manager"
+echo " Open it from Swiss Manager in the top menu, or Settings > User Utilities > Unraid Swiss Manager"
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

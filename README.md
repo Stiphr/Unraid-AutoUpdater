@@ -38,7 +38,7 @@ In Unraid open **Plugins → Install Plugin**, paste the address of the branch y
 | **Stable** | Every server | `https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/stable/unraid-swiss-manager.plg` |
 | **Beta** | Test servers only: new features first, less tested | `https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-swiss-manager.plg` |
 
-- Open it from **Settings → User Utilities → Unraid Swiss Manager**, or click its icon on the Plugins page.
+- Open it from **Swiss Manager** in the Unraid top menu, **Settings → User Utilities → Unraid Swiss Manager**, or its icon on the Plugins page.
 - **Updates** appear on the Plugins page like for any other plugin, from the branch you installed.
 - **Switch branch** at any time in the plugin under **Settings → Plugin branch**. Your settings, history and webhook are kept.
 
