@@ -8,7 +8,7 @@
  */
 
 /* Default avatar: an original icon (orange glyph on grey) published in this repository. Replace it in Settings with any https image. */
-const DAU_DEFAULT_ICON = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/main/assets/icon.png';
+const DAU_DEFAULT_ICON = 'https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/stable/assets/icon.png';
 const DAU_DISCORD_EMBEDS_PER_MSG = 10;
 const DAU_DISCORD_CHARS_PER_MSG  = 5600;   // hard limit is 6000 characters across all embeds of a message
 
@@ -157,6 +157,9 @@ function dau_discord_event_embed(array $ev, $server) {
     'major_jump'      => ['🛑', 'Major version update held back', 0xE67E22],
     'rolled_back'     => ['⏪', 'Rolled back to the earlier image', 0xE67E22],
     'rollback_failed' => ['❌', 'Rollback failed', 0xE74C3C],
+    'removed'         => ['🗑️', 'Removed', 0x3498DB],
+    'remove_failed'   => ['❌', 'Removal failed', 0xE74C3C],
+    'recovered'       => ['⚠️', 'Interrupted job recovered', 0xE67E22],
   ][$kind] ?? ['ℹ️', $kind, 0x95A5A6];
   $name = dau_clean_text($ev['name'] ?? '', 120);
   $f = [dau_field('Server', $server), dau_field('Component', dau_type_label($ev['type']))];
@@ -212,7 +215,7 @@ function dau_discord_summary_embed(array $sum, $server) {
   $color = ['ok' => 0x2ECC71, 'warnings' => 0xF1C40F, 'failed' => 0xE74C3C][$status] ?? 0x3498DB;
   $lines[] = '**Status:** ' . $text;
   return dau_discord_brand([
-    'title' => 'UNRAID AUTOUPDATER — UPDATE SUMMARY',
+    'title' => 'UNRAID SWISS MANAGER — UPDATE SUMMARY',
     'description' => dau_clip("**Server:** " . dau_clean_text($server, 64) . "\n\n" . implode("\n\n", $lines), 4000),
     'color' => $color,
     'timestamp' => dau_ts_iso(dau_now()),
@@ -236,7 +239,7 @@ function dau_discord_chunk(array $embeds, $separate = false) {
 function dau_event_toggle($kind) {
   switch ($kind) {
     case 'updated': case 'os_installed': case 'os_verified': case 'rolled_back': return 'success';
-    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': case 'rollback_failed': return 'failed';
+    case 'failed': case 'os_prereq_failed': case 'retry_exhausted': case 'os_check_failed': case 'retrying': case 'os_install_failed': case 'os_unverified': case 'rollback_failed': case 'backup_failed': case 'remove_failed': case 'recovered': return 'failed';
     default: return 'available';          // available, blocked, skipped, os_withdrawn
   }
 }
@@ -272,7 +275,7 @@ function dau_discord_dispatch(array $cfg, array &$st, array $events, array $summ
 
   $embeds = [];
   if (!empty($dc['types']['summary']) && dau_summary_has_activity($summary)) $embeds[] = dau_discord_summary_embed($summary, $server);
-  $prio = ['rollback_failed' => 0, 'major_jump' => 2, 'failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
+  $prio = ['backup_failed' => 0, 'remove_failed' => 0, 'recovered' => 0, 'rollback_failed' => 0, 'major_jump' => 2, 'failed' => 0, 'os_prereq_failed' => 0, 'retry_exhausted' => 0, 'os_install_failed' => 0, 'os_unverified' => 0, 'os_check_failed' => 1, 'retrying' => 1, 'blocked' => 2, 'skipped' => 2, 'available' => 3];
   $wanted = array_values(array_filter($events, function ($e) use ($dc) { return dau_discord_wants($dc, $e); }));
   /* failures first; array_multisort with the original index keeps the order stable on PHP 7.4 */
   $keys = []; $idx = [];

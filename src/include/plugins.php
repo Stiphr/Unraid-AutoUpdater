@@ -23,12 +23,13 @@ function dau_plugins_installed() {
     if (!dau_valid_plg($f) || $f === 'unRAIDServer.plg' || strpos($f, 'unRAIDServer-') === 0) continue;
     $path = DAU_PLUGBOOT . '/' . $f;
     if (!is_file($path)) continue;
+    /* read from the file: asking the plugin tool starts four processes per plugin, on every page load. It stays the fallback. */
+    $x = dau_plg_parse((string)@file_get_contents($path));
+    $attr = function ($k) use ($x, $path) { return $x ? trim((string)$x[$k]) : dau_plg_attr($path, $k); };
     $out[$f] = [
       'file' => $f, 'path' => $path, 'self' => $f === DAU_SELF_PLG,
       'name' => preg_replace('/\.plg$/', '', $f),
-      'version' => dau_plg_attr($path, 'version'),
-      'url' => dau_plg_attr($path, 'pluginURL'),
-      'min' => dau_plg_attr($path, 'min'), 'max' => dau_plg_attr($path, 'max'),
+      'version' => $attr('version'), 'url' => $attr('pluginURL'), 'min' => $attr('min'), 'max' => $attr('max'),
     ];
   }
   ksort($out);
@@ -63,7 +64,7 @@ function dau_url_hosts($text) {
 
 /** Parse a plg safely: refuse external entities, no network. Returns SimpleXMLElement|null. */
 function dau_plg_parse($text) {
-  if (preg_match('/<!ENTITY\s+\S+\s+(SYSTEM|PUBLIC)\b/i', $text)) return null;
+  if (preg_match('/<!ENTITY\s+(%\s+)?\S+\s+(SYSTEM|PUBLIC)\b/i', $text)) return null;
   $prev = libxml_use_internal_errors(true);
   $loader = PHP_VERSION_ID < 80000 ? libxml_disable_entity_loader(true) : null;     // process-wide on PHP 7: put it back, or later simplexml_load_file() calls fail
   $x = @simplexml_load_string($text, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOENT);

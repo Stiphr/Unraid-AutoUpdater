@@ -11,9 +11,10 @@
 const DAU_PULL_TIMEOUT   = 1800;
 const DAU_APPLY_TIMEOUT  = 900;
 const DAU_MIN_FREE_BYTES = 536870912;   // below 512 MB free we do not even try to pull
+const DAU_INSPECT_MAX    = 33554432;    // `docker inspect` of everything: 12 KB per container is common, so the usual 1 MiB limit is too small
 
-function dau_docker(array $args, $timeout = 60) {
-  return dau_run(array_merge([dau_bin('docker')], $args), $timeout);
+function dau_docker(array $args, $timeout = 60, $maxBytes = 1048576) {
+  return dau_run(array_merge([dau_bin('docker')], $args), $timeout, null, $maxBytes);
 }
 
 /* ---------- update status (Unraid's own data) ---------- */
@@ -52,15 +53,33 @@ function dau_docker_refresh() {
 
 /* ---------- containers ---------- */
 
-/** Returns the list of containers, or null when the Docker service is not running. */
-function dau_containers() {
+/**
+ * `docker inspect` of every container, in any state. [] = there are none; null = Docker could not be asked or its answer could not be read.
+ * Callers must treat null as "unknown", never as "no containers": state, safety checks and cleanup all depend on that difference.
+ */
+function dau_inspect_all() {
   $r = dau_docker(['ps', '-aq', '--no-trunc'], 30);
   if ($r['code'] !== 0) return null;
   $ids = array_values(array_filter(preg_split('/\s+/', trim($r['out']))));
   if (!$ids) return [];
-  $r = dau_docker(array_merge(['inspect'], $ids), 90);
-  $data = json_decode($r['out'], true);
-  if (!is_array($data)) return [];
+  $r = dau_docker(array_merge(['inspect'], $ids), 90, DAU_INSPECT_MAX);
+  $d = json_decode($r['out'], true);
+  return is_array($d) ? $d : null;
+}
+
+/** Name of the container whose network this one uses ("container:<name or id>"), '' when it has its own. $ids: full id => name. */
+function dau_net_provider($mode, array $ids) {
+  if (strpos((string)$mode, 'container:') !== 0) return '';
+  $t = substr((string)$mode, 10);
+  foreach ($ids as $id => $n) if ($t === $n || $t === (string)$id || (strlen($t) >= 12 && strpos((string)$id, $t) === 0)) return $n;
+  return $t;
+}
+
+/** Returns the list of containers, or null when Docker could not be asked. */
+function dau_containers() {
+  $data = dau_inspect_all();
+  if ($data === null) return null;
+  if (!$data) return [];
   $map = dau_read_json(DAU_UPDSTATUS, []);
   $out = [];
   foreach ($data as $c) {
@@ -90,6 +109,15 @@ function dau_inspect_one($name) {
   if ($r['code'] !== 0) return null;
   $d = json_decode($r['out'], true);
   return is_array($d) && isset($d[0]) ? $d[0] : null;
+}
+
+/** Start a container again if it exists and is stopped. Returns started | running | missing | failed. */
+function dau_docker_restore($name) {
+  $i = dau_inspect_one($name);
+  if ($i === null) return 'missing';
+  if (!empty($i['State']['Running'])) return 'running';
+  $r = dau_docker(['start', $name], 120);
+  return $r['code'] === 0 && !$r['timeout'] ? 'started' : 'failed';
 }
 
 function dau_short_id($id) { return substr(preg_replace('/^sha256:/', '', (string)$id), 0, 12); }
@@ -303,6 +331,7 @@ function dau_docker_update(array $cfg, $name, array $c) {
   /* backups (optional) */
   $cc = dau_container_cfg($cfg, $name);
   if (!empty($g['backup']['enabled']) && !empty($cc['backup'])) {
+    dau_stage('backup');
     $b = dau_backup_run($cfg, $name, $before);
     $out['backup'] = $b;
     if (!$b['ok']) {
@@ -312,7 +341,7 @@ function dau_docker_update(array $cfg, $name, array $c) {
   }
 
   /* pull. A failure here leaves the container untouched. */
-  $out['stage'] = 'pull';
+  $out['stage'] = 'pull'; dau_stage('pull');
   $p = dau_docker(['pull', $image], DAU_PULL_TIMEOUT);
   if ($p['timeout'] || $p['code'] !== 0) {
     $text = $p['timeout'] ? 'pull timed out' : trim($p['err'] . "\n" . $p['out']);
@@ -338,12 +367,12 @@ function dau_docker_update(array $cfg, $name, array $c) {
   }
 
   /* apply with Unraid's own routine (keeps the template, network and extra settings). From here on, never auto-retry. */
-  $out['stage'] = 'apply';
+  $out['stage'] = 'apply'; dau_stage('apply');
   $a = dau_run([DAU_PHP, $script, rawurlencode($name)], DAU_APPLY_TIMEOUT);
   if ($a['timeout']) { $out['error'] = 'Unraid\'s update routine did not finish in ' . DAU_APPLY_TIMEOUT . ' s.'; $out['next'] = 'Check the container in the Docker tab before doing anything else.'; }
 
   /* verify, independent of the exit code */
-  $out['stage'] = 'verify';
+  $out['stage'] = 'verify'; dau_stage('verify');
   $vt = !empty($g['verify']['enabled']) ? (int)$g['verify']['timeout'] : 10;
   $v = dau_docker_verify($name, $newId, $wasRunning, $vt);
   $out['verification'] = $v;
@@ -365,7 +394,15 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $out['result'] = 'failed';
   $out['error'] = $v['detail'];
   $out['next'] = 'The previous image was kept. Check the container\'s logs. To go back: edit the container, set Repository to "' . $prevRef . '" and apply. See the README section on recovery.';
+  /* Unraid's routine gave up before the new container was running: a container that was running must not stay down because of that */
+  if ($wasRunning && ($v['result'] === 'image_mismatch' || ($v['result'] === 'failed_to_start' && ($a['timeout'] || $a['code'] !== 0))) && dau_docker_restore($name) === 'started') $out['next'] = 'It was started again. ' . $out['next'];
   return $done();
+}
+
+/** The steps of one container update, for the progress display. */
+function dau_docker_steps(array $cfg, $name) {
+  $s = !empty($cfg['global']['backup']['enabled']) && !empty(dau_container_cfg($cfg, $name)['backup']) ? [['backup', 'Back up']] : [];
+  return array_merge($s, [['pull', 'Download'], ['apply', 'Recreate'], ['verify', 'Verify']]);
 }
 
 /** Remove the retry record for a container that has finished (or whose image changed). */

@@ -82,7 +82,7 @@ function dau_defaults() {
     'appdata' => ['roots' => ['/mnt/user/appdata'], 'safe_mode' => true, 'ignore' => [], 'purge_days' => 0, 'report' => false],
     /* scheduled backups of appdata and of the boot drive: see backups.php */
     'backups' => dau_bk_defaults(),
-    'ui' => ['theme' => 'dark', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
+    'ui' => ['theme' => 'auto', 'accent' => '#f15a2c', 'css' => '', 'widget' => true],
     'notify_unraid' => ['docker' => true, 'plugins' => false, 'os' => false],
     'history' => ['max_entries' => 200],
     'log'     => ['max_kb' => 1024],
@@ -239,7 +239,7 @@ function dau_sanitize_config(array $in, array $cur) {
   if (isset($in['quiet']) && is_array($in['quiet'])) $cur['quiet'] = dau_apply_spec($cur['quiet'], $in['quiet'], dau_window_spec() + ['urgent' => ['bool']]);
   if (isset($in['appdata']) && is_array($in['appdata'])) $cur['appdata'] = dau_apply_spec($cur['appdata'], $in['appdata'], ['roots' => ['paths'], 'safe_mode' => ['bool'], 'ignore' => ['folders'], 'purge_days' => ['int', 0, 365], 'report' => ['bool']]);
   if (isset($in['backups']) && is_array($in['backups'])) $cur['backups'] = dau_apply_spec($cur['backups'], $in['backups'], dau_bk_spec());
-  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
+  if (isset($in['ui']) && is_array($in['ui'])) $cur['ui'] = dau_apply_spec($cur['ui'], $in['ui'], ['theme' => ['enum', ['auto', 'dark', 'light', 'midnight']], 'accent' => ['color'], 'css' => ['css'], 'widget' => ['bool']]);
   if (isset($in['history']) && is_array($in['history'])) $cur['history'] = dau_apply_spec($cur['history'], $in['history'], ['max_entries' => ['int', 20, 1000]]);
   if (isset($in['log']) && is_array($in['log'])) $cur['log'] = dau_apply_spec($cur['log'], $in['log'], ['max_kb' => ['int', 64, 8192]]);
   if (isset($in['containers']) && is_array($in['containers'])) {
@@ -257,6 +257,12 @@ function dau_sanitize_config(array $in, array $cur) {
     }
   }
   return $cur;
+}
+
+/** A settings file made by Export: per-plugin policies are stored under plugins.items there. */
+function dau_import_config(array $in) {
+  if (is_array($in['plugins']['items'] ?? null)) $in['plugin_items'] = $in['plugins']['items'];
+  return dau_sanitize_config($in, dau_defaults());
 }
 
 /* ---------- v1 -> v2 migration ---------- */
@@ -294,9 +300,8 @@ function dau_load_config(&$status = null) {
   $raw = @file_get_contents(DAU_CFG);
   $c = json_decode((string)$raw, true);
   if (!is_array($c)) {
-    @copy(DAU_CFG, DAU_DIR . '/config.corrupt-' . date('Ymd-His', dau_now()) . '.json');
+    dau_keep_damaged(DAU_CFG, (string)$raw, 'config');
     $status = 'corrupt';
-    dau_log('error', 'config', '-', 'load', 'fail', 'config.json is not valid JSON; using safe defaults (nothing automatic). The damaged file was kept.');
     return $def;
   }
   if ((int)($c['version'] ?? 1) < DAU_CFG_VERSION) {
