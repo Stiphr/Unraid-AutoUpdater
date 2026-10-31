@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name    "unraid-swiss-manager">
 <!ENTITY author  "Stiphr">
-<!ENTITY version "2026.11.01b1">
+<!ENTITY version "2026.11.02b1">
 <!ENTITY emhttp  "/usr/local/emhttp/plugins/&name;">
 <!ENTITY flash   "/boot/config/plugins/&name;">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Stiphr/Unraid-Swiss-Manager/refs/heads/beta/unraid-swiss-manager.plg">
@@ -10,7 +10,23 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" launch="Settings/UnraidSwissManager" min="6.9.0" icon="unraid-swiss-manager.png">
 
 <CHANGES>
-###2026.11.01b1
+###2026.11.02b1
+- Fix: official Docker Hub images (mysql, postgres, mariadb, adminer and the like) always showed "Status unknown" and never updated, because Unraid files them under library/.
+- Fix: a daemon started by a plugin update could hold the job lock for as long as it ran. Every later job, scheduled ones included, was then skipped and the page said a job was running.
+- Fix: a container that was recreated but never started (a port already in use, for example) counted as updated. It now counts as failed and is started again if possible.
+- Fix: Discord showed "Array" as the verification text of every update, and Unraid notifications lost the reason of an interrupted job and the cleanup report's numbers.
+- Fix: the pre-OS maintenance and the Update buttons (Dashboard tile, Update all pending) installed versions you chose to skip and updated pinned containers. The tile no longer counts them as waiting.
+- Fix: the major version guard saw nothing for mysql images, and read mariadb package versions as version 1.
+- Fix: the Unraid OS install refused 7.3.10 over 7.3.9, because it compared the two as text.
+- Fix: an unused image with two names could not be removed, and only one of the names was shown.
+- Fix: the log size setting was ignored; the log always rotated at 1 MB.
+- Fix: the cleanup report and the quarantine expiry never ran when nothing else was scheduled.
+- Fix: a command that left something running in the background stalled its job until the timeout (15 minutes for a plugin update).
+- Fix: "Checked" on the tile also moved after a backup or a notification, and the Backups tab could say a job was running after one was killed.
+- Fix: a manual OS install that Unraid's feed cannot offer no longer blocks the automatic attempt, and text that is not valid UTF-8 no longer empties a saved message.
+- Faster: updating chosen plugins checks only those, and updating containers reuses a check from the last hour instead of asking every registry again.
+- Tidied: unused code removed and duplicated code merged.
+###2026.11.01
 - New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
 - Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
 - Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.
@@ -274,7 +290,7 @@ try {
     var al=byId('dau-w-alert'); while(al.firstChild) al.removeChild(al.firstChild);
     if(j.failures){ var a=el('a','dau-alert'); a.href=P+'?tab=activity'; a.appendChild(el('span',null,pl(j.failures,'recent failure'))); a.appendChild(el('span',null,'View')); al.appendChild(a); }
     var l=byId('dau-w-last'), n=byId('dau-w-next'), b=byId('dau-w-bk');
-    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.last_run);
+    l.textContent='Checked '+ago(j.checked,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.checked);
     n.textContent='Next '+(j.next_label? j.next_label+' ':'')+inn(j.next,j.now); n.title=full(j.next);
     b.textContent=j.backup_at? 'Backup '+ago(j.backup_at,j.now)+(j.backup_ok===false?' (failed)':'') : ''; b.title=full(j.backup_at);
     byId('dau-w-go').disabled=busy;
@@ -300,7 +316,7 @@ try {
     (docker? post('preview') : post('plugins')).then(function(j){
       if(!j||j.error) throw 0;
       var rows=(docker? j.rows : j.rows.filter(function(r){return r.latest&&!r.self&&!r.skipped;}));
-      if(docker) rows=rows.filter(function(r){return r.managed;});
+      if(docker) rows=rows.filter(function(r){return r.managed&&r.state!=='pinned'&&r.state!=='skipped';});
       show(rows.map(function(r){return docker? r.name : r.file;}),rows.map(function(r){return r.name;}));
     }).catch(function(){ while(box.firstChild) box.removeChild(box.firstChild); box.appendChild(el('p',null,'That did not work. Try again from the tab.')); box.appendChild(btn('Close','',closeAsk)); });
   }
@@ -311,7 +327,7 @@ try {
       if(!j||j.error) throw 0;
       draw(j);
       if(j.running) timer=setTimeout(load,3000);      /* only while something runs */
-          }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
+    }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
   }
   byId('dau-w-go').addEventListener('click',function(){
     var b=this; b.disabled=true;
@@ -326,7 +342,7 @@ EOT;
 } catch (Throwable $e) { /* never break the Dashboard */ }
 ?>
 ]]></INLINE>
-<SHA256>935e961f22dd01478195fdb15b581ae4ad7cb3444f0a505e0dd48912f67fd3f7</SHA256>
+<SHA256>0667b4502bb2980e97dfc4f6f18b2eea0bbed1e7c50e9807110fcac230cb0dbb</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/page.php" Mode="0644">
@@ -356,7 +372,7 @@ $dau_v = '?v=' . (int)@filemtime('/usr/local/emhttp/plugins/unraid-swiss-manager
 if (!defined('DAU_LIB_LOADED')) {
 define('DAU_LIB_LOADED', 1);
 
-define('DAU_VERSION',   '2026.11.01b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
+define('DAU_VERSION',   '2026.11.02b1');   // the one version shown everywhere (date based, e.g. 2026.10.30a; Unraid compares it as a string)
 define('DAU_NAME',      'Unraid Swiss Manager');
 define('DAU_ROOT',      '/usr/local/emhttp/plugins/unraid-swiss-manager');
 define('DAU_DIR',       '/boot/config/plugins/unraid-swiss-manager');
@@ -442,7 +458,7 @@ function dau_read_json_kept($file, $default, $base) {
 
 /** Atomic write. Skips the write when the content is unchanged (the flash drive has limited write cycles). */
 function dau_write_json($file, $data, $private = false) {
-  $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+  $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
   if ($json === false) return false;
   if (is_file($file) && @file_get_contents($file) === $json) return true;
   @mkdir(dirname($file), 0755, true);
@@ -457,7 +473,8 @@ function dau_write_json($file, $data, $private = false) {
 
 /**
  * Run a command without a shell. Returns ['code'=>int,'out'=>string,'err'=>string,'timeout'=>bool,'ran'=>bool].
- * Output is capped. The command is killed when the timeout expires.
+ * Output is capped. The command is killed when the timeout expires. A command that has ended is not waited for because something it left running
+ * in the background (a daemon started by a plugin, for example) still holds its output open.
  */
 function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576) {
   if (isset($GLOBALS['DAU_EXEC_MOCK']) && is_callable($GLOBALS['DAU_EXEC_MOCK'])) {
@@ -475,6 +492,7 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
   stream_set_blocking($pipes[2], false);
   $deadline = microtime(true) + max(1, $timeout);
   $open = [1 => $pipes[1], 2 => $pipes[2]];
+  $exit = null; $grace = 0;
   while ($open) {
     $left = $deadline - microtime(true);
     if ($left <= 0) { $res['timeout'] = true; break; }
@@ -488,6 +506,10 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
       }
       if (feof($h)) { @fclose($h); unset($open[$k]); }
     }
+    if ($open && $exit === null) {
+      $st = @proc_get_status($p);
+      if (is_array($st) && empty($st['running'])) { $exit = (int)$st['exitcode']; $grace = microtime(true) + 1; }
+    } elseif ($open && microtime(true) >= $grace) break;
   }
   if ($res['timeout']) {
     @proc_terminate($p, 15);
@@ -497,7 +519,7 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
   }
   foreach ($open as $h) @fclose($h);
   $code = @proc_close($p);
-  $res['code'] = $res['timeout'] ? 124 : $code;
+  $res['code'] = $res['timeout'] ? 124 : ($exit ?? $code);      // proc_close() cannot report it after proc_get_status() has seen the end
   return $res;
 }
 
@@ -532,7 +554,7 @@ function dau_clip($s, $max) {
 
 /* ---------- structured log ---------- */
 
-function dau_log_max_bytes() { return (int)($GLOBALS['DAU_LOG_MAX'] ?? 1048576); }
+function dau_log_max_bytes() { return (int)($GLOBALS['DAU_LOG_MAX'] ?? $GLOBALS['DAU_LOG_CFG'] ?? 1048576); }      // DAU_LOG_CFG: Settings > Data, set when the configuration is loaded
 
 /**
  * One line per event: "2026-10-28 08:48:22 level=info type=docker name=plex action=update result=ok retry=0 msg=..."
@@ -553,29 +575,35 @@ function dau_log($level, $type, $name, $action, $result, $msg = '', $retry = nul
   @file_put_contents(DAU_LOG, $line, FILE_APPEND);
 }
 
-function dau_log_tail($n = 200) {
-  $out = [];
-  foreach ([DAU_LOG . '.1', DAU_LOG] as $f) if (is_file($f)) { $l = @file($f, FILE_IGNORE_NEW_LINES); if ($l) $out = array_merge($out, $l); }
-  return implode("\n", array_slice($out, -$n)) . ($out ? "\n" : '');
+/** The last complete lines of a file: only its end is read, however big the file is. */
+function dau_file_tail($file, $bytes) {
+  clearstatcache(true, $file);
+  $size = is_file($file) ? (int)@filesize($file) : 0;
+  if ($size < 1) return [];
+  $f = @fopen($file, 'r'); if (!$f) return [];
+  fseek($f, max(0, $size - $bytes)); $t = (string)fread($f, $bytes); fclose($f);
+  $l = explode("\n", rtrim($t, "\n"));
+  if ($size > $bytes) array_shift($l);      // the first line is cut off
+  return $l;
 }
 
-/** The newest lines only (reads the end of the file): cheap enough for the live log, which asks every few seconds. */
-function dau_log_recent($n = 80) {
-  clearstatcache(true, DAU_LOG);
-  $size = is_file(DAU_LOG) ? (int)@filesize(DAU_LOG) : 0;
-  if ($size < 1) return '';
-  $f = @fopen(DAU_LOG, 'r'); if (!$f) return '';
-  fseek($f, max(0, $size - 32768)); $t = (string)fread($f, 32768); fclose($f);
-  $l = explode("\n", rtrim($t, "\n"));
-  if ($size > 32768) array_shift($l);      // the first line is cut off
-  return implode("\n", array_slice($l, -$n));
+function dau_log_tail($n = 200) {
+  $l = dau_file_tail(DAU_LOG, 65536);
+  if (count($l) < $n) $l = array_merge(dau_file_tail(DAU_LOG . '.1', 65536), $l);
+  return $l ? implode("\n", array_slice($l, -$n)) . "\n" : '';
 }
+
+/** Cheap enough for the live log, which asks every few seconds. */
+function dau_log_recent($n = 80) { return implode("\n", array_slice(dau_file_tail(DAU_LOG, 32768), -$n)); }
 
 /* ---------- lock, progress, stop flag ---------- */
 
-/** Non-blocking exclusive lock shared by every job type. Returns a handle or false. */
+/**
+ * Non-blocking exclusive lock shared by every job type. Returns a handle or false.
+ * 'e' = close on exec: a process a job starts must not inherit the lock, or a daemon started by a plugin update would hold it for as long as it lives.
+ */
 function dau_lock_try() {
-  $fp = @fopen(DAU_LOCK, 'c');
+  $fp = @fopen(DAU_LOCK, 'ce');
   if (!$fp) return false;
   if (flock($fp, LOCK_EX | LOCK_NB)) return $fp;
   fclose($fp);
@@ -588,10 +616,13 @@ function dau_lock_wait() {
 }
 function dau_lock_release($fp) { if (is_resource($fp)) { @flock($fp, LOCK_UN); @fclose($fp); } }
 
+/** Shared, so that two pages asking at the same moment do not see each other as a running job. */
 function dau_is_locked() {
-  $fp = dau_lock_try();
-  if ($fp) { dau_lock_release($fp); return false; }
-  return true;
+  $fp = @fopen(DAU_LOCK, 'ce');
+  if (!$fp) return true;
+  $free = flock($fp, LOCK_SH | LOCK_NB);
+  dau_lock_release($fp);
+  return !$free;
 }
 
 function dau_progress($p) {      // through a temporary name: the status poll never reads half a file
@@ -658,7 +689,7 @@ foreach (['config', 'schedule', 'state', 'discord', 'backup', 'backups', 'docker
 }
 unset($__m, $__f);
 ]]></INLINE>
-<SHA256>c44224555a00aff760e23e941a9330d03ba382ff5e3f0f8555db8120510e7bd2</SHA256>
+<SHA256>2bdbfa424bdc4ead6bf9ab34b99a43ee71d6c7cfb558641c61fcf315b62d14aa</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/config.php" Mode="0644">
@@ -728,7 +759,7 @@ function dau_defaults() {
       'delay_days'    => 7,             // wait this long after a release is first seen
       'stable_only'   => true,          // never auto-install -rc / beta / next releases
       'window'        => ['enabled' => true, 'days' => [0], 'start' => '03:00', 'end' => '05:00'],
-      'pre'           => ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto'],   // pre-OS workflow, see workflow.php
+      'pre'           => dau_os_pre_defaults(),   // pre-OS workflow, see workflow.php
     ],
     'discord' => [
       'enabled'    => false,
@@ -866,7 +897,7 @@ function dau_os_spec() {
   return dau_sched_spec() + [
     'check_enabled' => ['bool'], 'mode' => ['enum', ['notify', 'install', 'install_reboot']], 'confirmed' => ['enum', ['', 'install', 'install_reboot']],
     'delay_days' => ['int', 0, 90], 'stable_only' => ['bool'], 'window' => ['obj', dau_window_spec()],
-    'pre' => ['obj', ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]]],
+    'pre' => ['obj', dau_os_pre_spec()],
   ];
 }
 
@@ -982,6 +1013,7 @@ function dau_load_config(&$status = null) {
       if (dau_valid_plg((string)$f) && $f !== DAU_SELF_PLG && is_array($v)) $cfg['plugins']['items'][$f] = dau_apply_spec([], $v, ['policy' => ['enum', DAU_POLICIES]]);
     }
   }
+  $GLOBALS['DAU_LOG_CFG'] = (int)$cfg['log']['max_kb'] * 1024;
   return $cfg;
 }
 
@@ -1041,7 +1073,7 @@ function dau_export_config() {
   return ['exported_at' => dau_ts_iso(dau_now()), 'plugin_version' => DAU_VERSION, 'secrets_included' => false, 'config' => $cfg];
 }
 ]]></INLINE>
-<SHA256>5245767132d8edcd77ab66ceb428a48b5e403cd0b1bd92e93f92c09da5fda40b</SHA256>
+<SHA256>3068e7d7e9d41b15aea23575b1b7b533f86a50e7a5aa6b66921ad9d418e9aff5</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/schedule.php" Mode="0644">
@@ -1235,8 +1267,8 @@ function dau_state_defaults() {
     'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => [],
                   'skipped' => [],      // name => remote digest the person chose to skip
                   'rollback' => [],     // name => how to go back to the image before the last update
-                  'pinned' => [],
-                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump      // name => template Repository that was replaced by a rollback (restored by "unpin")
+                  'pinned' => [],       // name => template Repository that was replaced by a rollback (restored by "unpin")
+                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump
     'plugins' => ['skipped' => [], 'notes' => [], 'deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
     'os'      => ['installed' => null, 'available' => null, 'first_seen' => 0, 'notified' => null, 'withdrawn_notified' => false,
                   'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false,
@@ -1425,7 +1457,7 @@ function dau_recover_interrupted(array &$st, $max) {
   return $c;
 }
 ]]></INLINE>
-<SHA256>0a34239b1100a0cdf5458951097e3cbd00c47155b66ef35950e2ab8bcc6b53c9</SHA256>
+<SHA256>044e3a79175cc4cc0ce1b3ef7e069ebef9fecc59e0e76a4f2a12c281c5081125</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/discord.php" Mode="0644">
@@ -2160,7 +2192,9 @@ function dau_image_key($img) {
 function dau_update_info($img, array $map) {
   $k = dau_image_key($img);
   $nodocker = preg_replace('#^docker\.io/#', '', $k);
-  foreach (array_unique([$k, $nodocker, preg_replace('#^library/#', '', $nodocker)]) as $cand) {
+  $cands = [$k, $nodocker, preg_replace('#^library/#', '', $nodocker)];
+  if (strpos($nodocker, '/') === false) $cands[] = 'library/' . $nodocker;      // Unraid files official images (mysql, postgres) under library/
+  foreach (array_unique($cands) as $cand) {
     if (!isset($map[$cand]) || !is_array($map[$cand])) continue;
     $e = $map[$cand];
     $local = !empty($e['local']) ? (string)$e['local'] : null;
@@ -2172,6 +2206,9 @@ function dau_update_info($img, array $map) {
   }
   return ['flag' => null, 'local' => null, 'remote' => null];
 }
+
+/** A check from the last hour is good enough to start an update someone just asked for: asking every registry again takes minutes, and the pull finds the newest image anyway. */
+function dau_docker_status_fresh() { clearstatcache(true, DAU_UPDSTATUS); return is_file(DAU_UPDSTATUS) && dau_now() - (int)@filemtime(DAU_UPDSTATUS) < 3600; }
 
 /** Ask Unraid to re-check every image against its registry. nonotify: our own notifications replace the native ones. */
 function dau_docker_refresh() {
@@ -2366,7 +2403,7 @@ function dau_classify_pull_error($text) {
 /**
  * Verify a container after the update. Distinguishes: healthy, running_no_healthcheck (no health check configured -
  * NOT a failure), not_running_expected (it was stopped before), timeout (still starting), and the failures
- * image_mismatch, not_found, failed_to_start, restart_loop, unhealthy.
+ * image_mismatch, not_found, failed_to_start, not_started, restart_loop, unhealthy.
  * @return array ['result'=>string,'ok'=>bool,'detail'=>string]
  */
 function dau_docker_verify($name, $expectedImageId, $expectRunning, $timeout) {
@@ -2408,6 +2445,7 @@ function dau_docker_verify($name, $expectedImageId, $expectRunning, $timeout) {
       }
     }
     if ($now >= $deadline) {
+      if ($expectRunning && $status === 'created') return ['result' => 'not_started', 'ok' => false, 'detail' => 'The container was created but never started (a port or path that is already in use is the usual reason).'];
       $d = $health === 'starting' ? 'The health check is still "starting" after ' . (int)$timeout . ' s.' : "Status \"$lastStatus\" after " . (int)$timeout . ' s.';
       return ['result' => 'timeout', 'ok' => false, 'detail' => $d . ' The update was applied; verification could not finish in time.'];
     }
@@ -2525,7 +2563,7 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $out['error'] = $v['detail'];
   $out['next'] = 'The previous image was kept. Check the container\'s logs. To go back: edit the container, set Repository to "' . $prevRef . '" and apply. See the README section on recovery.';
   /* Unraid's routine gave up before the new container was running: a container that was running must not stay down because of that */
-  if ($wasRunning && ($v['result'] === 'image_mismatch' || ($v['result'] === 'failed_to_start' && ($a['timeout'] || $a['code'] !== 0))) && dau_docker_restore($name) === 'started') $out['next'] = 'It was started again. ' . $out['next'];
+  if ($wasRunning && ($v['result'] === 'image_mismatch' || $v['result'] === 'not_started' || ($v['result'] === 'failed_to_start' && ($a['timeout'] || $a['code'] !== 0))) && dau_docker_restore($name) === 'started') $out['next'] = 'It was started again. ' . $out['next'];
   return $done();
 }
 
@@ -2534,9 +2572,6 @@ function dau_docker_steps(array $cfg, $name) {
   $s = !empty($cfg['global']['backup']['enabled']) && !empty(dau_container_cfg($cfg, $name)['backup']) ? [['backup', 'Back up']] : [];
   return array_merge($s, [['pull', 'Download'], ['apply', 'Recreate'], ['verify', 'Verify']]);
 }
-
-/** Remove the retry record for a container that has finished (or whose image changed). */
-function dau_docker_retry_clear(array &$st, $name) { unset($st['docker']['retry'][$name]); }
 
 /**
  * Decide retry behaviour after a failure. Only a failure that left the container untouched (transient pull error)
@@ -2555,7 +2590,7 @@ function dau_docker_retry_after_failure(array $cfg, array &$st, $name, array $c,
   return 'scheduled';
 }
 ]]></INLINE>
-<SHA256>155a060a4684ccae1956c66f95c966d7bc6c95269804a56a9e33e4dc9a3abf7d</SHA256>
+<SHA256>bba9083ee6d289c97180d1c876d01edb13ce5cc2ddca5c492777abda246b2b5e</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/plugins.php" Mode="0644">
@@ -2636,7 +2671,7 @@ function dau_plg_parse($text) {
 
 function dau_unraid_version_ok($min, $max) {
   $cur = dau_os_version();
-  if ($cur === '') return true;
+  if (!$cur) return true;
   if ($min !== '' && version_compare($cur, $min, '<')) return false;
   if ($max !== '' && version_compare($cur, $max, '>')) return false;
   return true;
@@ -2664,7 +2699,7 @@ function dau_plugin_validate(array $p, $latest) {
   if ((string)$x['name'] !== '' && (string)$x['name'] !== $p['name']) return $no('The update changes the plugin name.');
   $ver = (string)$x['version'];
   if ($ver !== $latest) return $no("Downloaded version ($ver) differs from the announced version ($latest).");
-  if (!dau_version_newer($ver, $p['version'])) return $no('Not newer than the installed version.');
+  if (!($p['file'] === 'unRAIDServer.plg' ? dau_os_newer($ver, $p['version']) : dau_version_newer($ver, $p['version']))) return $no('Not newer than the installed version.');
   if (!dau_unraid_version_ok((string)$x['min'], (string)$x['max'])) return $no('Not compatible with this Unraid version (min ' . (string)$x['min'] . ', max ' . (string)$x['max'] . ').');
   $oldText = (string)@file_get_contents($p['path']);
   $allowed = array_merge(dau_url_hosts($oldText), dau_url_hosts($url));
@@ -2765,7 +2800,7 @@ function dau_plugin_slots(array $cfg) {
   return $s ? ['plugins' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>447d09c751447618a77514041240a49c65880eed0e1a45d3590516f385884423</SHA256>
+<SHA256>b6896cca9e4698aba3002a78b34a8aa902703b88a29f8c30fa9013f5ae56da99</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/os.php" Mode="0644">
@@ -2817,7 +2852,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $installed = dau_os_version();
   $os['last_check'] = $now;
   $prev = $os['installed'];
-  if ($prev !== null && $installed !== '' && $prev !== $installed && ($os['notified'] === $installed || $os['available'] === $installed)) {
+  if ($prev !== null && $installed && $prev !== $installed && ($os['notified'] === $installed || $os['available'] === $installed)) {
     $events[] = ['kind' => 'os_installed', 'installed' => $prev, 'available' => $installed];
   }
   $os['installed'] = $installed;
@@ -2839,8 +2874,7 @@ function dau_os_process(array &$st, array $check, $now) {
       $events[] = ['kind' => 'os_withdrawn', 'installed' => $installed, 'available' => $os['available']];
       $os['withdrawn_notified'] = true;
     }
-    if ($os['available'] === $installed || $os['available'] === null) { $os['available'] = null; }
-    else $os['available'] = null;
+    $os['available'] = null;
     $os['notes'] = '';
   }
   return $events;
@@ -2988,7 +3022,7 @@ function dau_os_slots(array $cfg) {
   return $s ? ['os' => ['sched' => $s, 'names' => ['*']]] : [];
 }
 ]]></INLINE>
-<SHA256>50c2ec311ea57ad265de76ba47d934a28b1536fca6446aa8bef35166f3fde05f</SHA256>
+<SHA256>cdb7ff343195d63672949244ccb3bccb7adcfe2f32147725ec252233d28b5c76</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/workflow.php" Mode="0644">
@@ -3013,13 +3047,14 @@ function dau_os_pre_spec() {
   return ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]];
 }
 
-/** Containers the workflow may update: policy "auto", has an update, not "critical" (those always need an explicit approval). */
-function dau_os_pre_containers(array $cfg) {
+/** Containers the workflow may update: policy "auto", has an update, not "critical" (those always need an explicit approval), not pinned, and not a version the person chose to skip. */
+function dau_os_pre_containers(array $cfg, array $st) {
   $out = [];
   foreach ((dau_containers() ?? []) as $c) {
     $cc = dau_container_cfg($cfg, $c['name']);
     if ($c['update'] !== true || !$c['managed'] || $cc['policy'] !== 'auto' || !empty($cc['critical'])) continue;
     if (!empty($cfg['global']['skip_stopped']) && $c['state'] !== 'running') continue;
+    if (isset($st['docker']['pinned'][$c['name']]) || ($c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote'])) continue;
     $out[] = $c['name'];
   }
   return $out;
@@ -3090,7 +3125,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
   }
   if ($wantD) {
     dau_sticky(['stage' => 'docker']); dau_phase('Before the OS update: updating Docker containers');
-    $names = dau_os_pre_containers($cfg);
+    $names = dau_os_pre_containers($cfg, $J['st']);
     $rep['docker'] = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'selected' => count($names)];
     if ($names) {
       $b = $J['sum']['docker'];
@@ -3136,7 +3171,7 @@ function dau_os_report_text(array $r) {
   return $t;
 }
 ]]></INLINE>
-<SHA256>90b007ed26a29739b5d3a0ec02ae81a2f84fec60b8157b0329b5bd9340d02543</SHA256>
+<SHA256>6b480ca6c058127d75217fec7029d69b3a6ab55756fff5855c9451c318852a47</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/extras.php" Mode="0644">
@@ -3213,10 +3248,10 @@ function dau_image_version($imageId) {
     $env = [];
     foreach ((array)($c['Env'] ?? []) as $e) if (is_string($e) && strpos($e, '=') !== false) { list($ek, $ev) = explode('=', $e, 2); $env[$ek] = $ev; }
     foreach (['PG_MAJOR', 'PG_VERSION', 'MYSQL_MAJOR', 'MYSQL_VERSION', 'MARIADB_VERSION', 'MONGO_MAJOR', 'MONGO_VERSION', 'REDIS_VERSION', 'APP_VERSION', 'VERSION'] as $k) {
-      if (!empty($env[$k])) { $v = $env[$k]; break; }
+      if (!empty($env[$k]) && preg_match('/^\d/', $env[$k])) { $v = $env[$k]; break; }      // MYSQL_MAJOR can be a word ("innovation")
     }
   }
-  $v = dau_clip(trim((string)$v), 60);
+  $v = dau_clip(preg_replace('/^\d+:/', '', trim((string)$v)), 60);      // a Debian package version can start with an epoch: 1:11.4.2
   $src = (string)($lab['org.opencontainers.image.source'] ?? $lab['org.opencontainers.image.url'] ?? '');
   $major = preg_match('/^v?(\d+)/i', $v, $m) ? (int)$m[1] : null;
   return ['version' => $v, 'major' => $major, 'source' => preg_match('#^https://[A-Za-z0-9./_-]{3,150}$#', $src) ? $src : ''];
@@ -3382,7 +3417,7 @@ function dau_cleanup_scan() {
   foreach (preg_split('/\R/', trim($r['out'])) as $line) {
     $f = explode('|', $line, 4); if (count($f) < 4 || !preg_match('/^sha256:[0-9a-f]{64}$/', $f[0])) continue;
     if (isset($used[$f[0]])) continue;
-    $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0, 'status' => 'eligible', 'reason' => 'It has no name or tag and no container uses it. This is usually a leftover from an update.'];
+    if (!isset($imgs[$f[0]])) $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0, 'status' => 'eligible', 'reason' => 'It has no name or tag and no container uses it. This is usually a leftover from an update.'];
     if ($f[1] !== '<none>') { $imgs[$f[0]]['tags'][] = $f[1] . ($f[2] !== '<none>' ? ':' . $f[2] : ''); $imgs[$f[0]]['dangling'] = false; $imgs[$f[0]]['status'] = 'review'; $imgs[$f[0]]['reason'] = 'It was downloaded earlier and no container uses it now. Check that you do not need it; it can be downloaded again.'; }
   }
   if ($imgs) {
@@ -3452,7 +3487,8 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
   foreach ($imageIds as $id) {
     if (!isset($okImg[$id])) { $out['skipped'][] = ['what' => dau_short_id($id), 'why' => 'now in use or already removed']; continue; }
     $label = $okImg[$id]['tags'] ? implode(', ', $okImg[$id]['tags']) : $okImg[$id]['short'];
-    $do('image ' . $label, $okImg[$id]['size'], function () use ($id) { return dau_docker(['image', 'rm', $id], 120); });
+    $refs = count($okImg[$id]['tags']) > 1 ? $okImg[$id]['tags'] : [$id];      // Docker refuses an id that has several names, unless forced: each name goes, and the last one takes the image
+    $do('image ' . $label, $okImg[$id]['size'], function () use ($refs) { return dau_docker(array_merge(['image', 'rm'], $refs), 120); });
   }
   $out['freed'] = $out['size_removed'];           // kept for older callers; it is a measured-before size, not space read back from the disk
   $out['freed_text'] = dau_bytes_text($out['size_removed']);
@@ -3494,7 +3530,7 @@ function dau_channel_install($ch, $force = false) {
   if ($url === '') return ['ok' => false, 'error' => 'Unknown channel'];
   $cur = dau_channel_current();
   if ($cur === $ch && !$force) return ['ok' => false, 'error' => 'This server already follows that channel. Use Force update to reinstall it.'];
-  $lock = dau_lock_try(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
+  $lock = dau_lock_wait(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
   $t0 = dau_now(); $what = $cur === $ch ? 'force update (' . $ch . ')' : $cur . ' -> ' . $ch;
   try {
     dau_log('info', 'plugin', DAU_NAME, 'channel', 'start', $what);
@@ -3508,7 +3544,7 @@ function dau_channel_install($ch, $force = false) {
   } finally { dau_lock_release($lock); }
 }
 ]]></INLINE>
-<SHA256>1154f38c6474fa2717468b8ca754400bb496e4e2ff0150e15c7ad9aba36bdf27</SHA256>
+<SHA256>3ef2f1930f3f4ace4031a358c1c4ce1f6801e92d95bd48c1648d4b1f9a14bffc</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/appdata.php" Mode="0644">
@@ -3594,6 +3630,7 @@ function dau_appdata_scan(?array $cfg = null) {
   $now = dau_now(); $orph = []; $busy = []; $prot = []; $broad = []; $ignored = [];
   $ign = array_flip($cfg['appdata']['ignore'] ?? []);
   $qroots = [];
+  foreach ($mounts as $i => $c) foreach ($c['sources'] as $s) { $sr = @realpath($s) ?: $s; $mounts[$i]['paths'][] = [$s, $sr, dau_path_tail($sr)]; }      // once, not per folder
   foreach ($roots as $ri => $root) {
     $rreal = realpath($root); $rdev = @stat($rreal)['dev'] ?? 0; $rtail = dau_path_tail($rreal);
     $qroots[] = $root . '/' . DAU_QDIR_NAME;
@@ -3609,8 +3646,7 @@ function dau_appdata_scan(?array $cfg = null) {
       $st = @stat($path);
       if ($st && $rdev && $st['dev'] !== $rdev) { $row['why'] = 'separate mount point'; $row['status'] = 'protected'; $row['reason'] = 'It is a separate mount point (another disk or share).'; $prot[] = $row; continue; }
       $real = realpath($path); $tail = dau_path_tail($real ?: $path);
-      foreach ($mounts as $c) foreach ($c['sources'] as $s) {
-        $sreal = @realpath($s) ?: $s; $stail = dau_path_tail($sreal);
+      foreach ($mounts as $c) foreach ($c['paths'] ?? [] as list($s, $sreal, $stail)) {
         $covers = dau_path_in($sreal, $real) || dau_path_in($stail, $tail) || dau_path_in($s, $path);   // maps this folder or something in it
         if ($covers) { $row['by'][] = $c['name'] . ($c['state'] !== 'running' ? ' (' . $c['state'] . ')' : ''); break; }
         if (dau_path_in($real, $sreal) || dau_path_in($tail, $stail)) $broad[$c['name']] = true;     // maps a parent (like /mnt/user): shown, never ownership
@@ -3825,7 +3861,7 @@ function dau_cleanup_summary($a = null, $d = null) {
   return $sum;
 }
 ]]></INLINE>
-<SHA256>177f4c9f45013b175ce91e9a956b468696664a7bba73c36bd549475d52b8de84</SHA256>
+<SHA256>91b2a3f54116b869f5c0be69cfb74b5025610bc2af60726ba54ef25204d72fc6</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/remove.php" Mode="0644">
@@ -3964,9 +4000,13 @@ function dau_job_remove(array &$J, $what, array $names, array $o) {
 
 function dau_ev($type, $name, $kind, array $x = []) { return ['type' => $type, 'name' => $name, 'kind' => $kind, 'ts' => dau_now()] + $x; }
 
-function dau_job_new($trigger, array $cfg, array $st) {
+function dau_sum_empty() {
   $z = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'available' => 0];
-  return ['cfg' => $cfg, 'st' => $st, 'trigger' => $trigger, 'events' => [], 'sum' => ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]], 'ran' => [], 'reboot' => false];
+  return ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]];
+}
+
+function dau_job_new($trigger, array $cfg, array $st) {
+  return ['cfg' => $cfg, 'st' => $st, 'trigger' => $trigger, 'events' => [], 'sum' => dau_sum_empty(), 'ran' => [], 'reboot' => false];
 }
 
 /* progress for the web UI. "Sticky" fields (job, started, the steps of a longer flow) stay on every phase until they are replaced. */
@@ -4046,7 +4086,7 @@ function dau_job_docker(array &$J, array $opts) {
     unset($J['st']['docker']['deferred'][$n]);
     $J['ran'][] = $n;
     $x = ['installed' => dau_short_digest($res['prev']['digest']) ?: $res['prev']['id'], 'available' => dau_short_digest($res['new']['digest']) ?: $res['new']['id'],
-          'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification'], 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next'], 'silent' => $silent];
+          'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification']['detail'] ?? null, 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next'], 'silent' => $silent];
     if ($res['result'] === 'updated') {
       dau_stats_record($J['st'], 'docker', true, $x['duration'], $n); unset($J['st']['docker']['retry'][$n], $J['st']['docker']['notified'][$n], $J['st']['docker']['major'][$n]);
       if (!empty($res['rollback'])) $J['st']['docker']['rollback'][$n] = $res['rollback'];
@@ -4102,27 +4142,29 @@ function dau_job_plugins(array &$J, array $opts) {
   $manual = !empty($opts['manual']) || $pre !== null; $names = $opts['names'] ?? null;
   dau_phase('Checking plugins');
   $inst = dau_plugins_installed();
-  $chk = dau_plugins_check_all($cfg, $inst);
-  $J['st']['plugins']['last_check'] = $now;
-  if (count($chk['errors']) < count($inst) || !$inst) $J['st']['plugins']['last_check_ok'] = $now;
-  $J['st']['plugins']['last_error'] = $chk['errors'] ? count($chk['errors']) . ' plugin(s) could not be checked' : '';
+  $scope = $names === null ? $inst : array_intersect_key($inst, array_flip($names));      // updating chosen plugins asks only about those; what is known about the others stays
+  $chk = dau_plugins_check_all($cfg, $scope);
+  if ($names === null) {
+    $J['st']['plugins']['last_check'] = $now;
+    if (count($chk['errors']) < count($inst) || !$inst) $J['st']['plugins']['last_check_ok'] = $now;
+    $J['st']['plugins']['last_error'] = $chk['errors'] ? count($chk['errors']) . ' plugin(s) could not be checked' : '';
+  } else $chk['avail'] += array_intersect_key(array_diff_key($J['st']['plugins']['available'], $scope), $inst);
   foreach ($chk['errors'] as $f => $e) dau_log('warn', 'plugin', $f, 'check', 'fail', $e);
   dau_plugins_track($J['st'], $chk['avail'], $now);
   $J['st']['plugins']['available'] = $chk['avail'];
   $J['st']['summary']['plugin_updates'] = count($chk['avail']);
-  foreach ($chk['avail'] as $f => $latest) { if (isset($inst[$f])) { $nt = dau_plugin_notes($f, $inst[$f]['version']); if ($nt !== '') $J['st']['plugins']['notes'][$f] = $nt; } }
+  foreach ($chk['avail'] as $f => $latest) { if (isset($scope[$f])) { $nt = dau_plugin_notes($f, $inst[$f]['version']); if ($nt !== '') $J['st']['plugins']['notes'][$f] = $nt; } }
   $next = 0; $todo = [];
   foreach ($chk['avail'] as $f => $latest) {
     if ($names !== null && !in_array($f, $names, true)) continue;
     $p = $inst[$f]; $policy = dau_plugin_policy($cfg, $f);
-    if ($pre !== null && ($p['self'] || $policy === 'ignore' || ($pre === 'auto' && $policy !== 'auto'))) continue;
+    if ($pre !== null && ($p['self'] || $policy === 'ignore' || ($pre === 'auto' && $policy !== 'auto') || ($J['st']['plugins']['skipped'][$f] ?? '') === $latest)) continue;
     $ev = dau_plugin_eval($cfg, $J['st'], $p, $latest, $now, $manual);
-    if ($ev['state'] === 'self' && !$manual) { /* still announce */ }
     if ($policy !== 'ignore' || $manual) {
       $J['sum']['plugins']['available']++;
       if (($J['st']['plugins']['notified'][$f] ?? '') !== $latest) {
         $J['st']['plugins']['notified'][$f] = $latest;
-        $J['events'][] = dau_ev('plugin', $p['name'], 'available', ['installed' => $p['version'], 'available' => $latest, 'notes' => dau_clip(dau_plugin_notes($f, $p['version']), 600), 'reason' => in_array($ev['state'], ['ready', 'notify_only', 'self'], true) ? '' : $ev['reason']]);
+        $J['events'][] = dau_ev('plugin', $p['name'], 'available', ['installed' => $p['version'], 'available' => $latest, 'notes' => dau_clip($J['st']['plugins']['notes'][$f] ?? '', 600), 'reason' => in_array($ev['state'], ['ready', 'notify_only', 'self'], true) ? '' : $ev['reason']]);
       }
     }
     if (empty($opts['update'])) continue;
@@ -4143,7 +4185,7 @@ function dau_job_plugins(array &$J, array $opts) {
     dau_mark_current($J['st'], 'plugin', $p['name'], dau_now());
     $res = dau_plugin_update($cfg, $p, $latest);
     dau_clear_current($J['st']);
-    $x = ['installed' => $p['version'], 'available' => $latest, 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification'], 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
+    $x = ['installed' => $p['version'], 'available' => $latest, 'duration' => $res['finished'] - $res['started'], 'verification' => $res['verification']['detail'] ?? null, 'stage' => $res['stage'], 'error' => $res['error'], 'next' => $res['next']];
     if ($res['result'] === 'updated') { dau_stats_record($J['st'], 'plugin', true, $x['duration'], $p['name']); $J['sum']['plugins']['updated']++; $J['events'][] = dau_ev('plugin', $p['name'], 'updated', $x); unset($J['st']['plugins']['notified'][$p['file']], $J['st']['plugins']['available'][$p['file']]); $J['st']['summary']['plugin_updates'] = count($J['st']['plugins']['available']); }
     elseif ($res['result'] === 'blocked') {
       $J['sum']['plugins']['skipped']++; $J['st']['plugins']['blocked'][$p['file']] = ['version' => $latest, 'reason' => $res['error']];
@@ -4176,7 +4218,7 @@ function dau_job_os(array &$J, array $opts = []) {
   if ($e['state'] === 'ready') {
     $why = dau_os_feed_block($latest);       // before the pre-OS maintenance, which would otherwise update plugins for an install that cannot happen
     if ($why !== '') {
-      $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'blocked', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
+      if (!$manual) $J['st']['os']['attempted'] = ['version' => $latest, 'result' => 'blocked', 'reason' => dau_clip($why, 200), 'at' => dau_now()];
       $J['events'][] = dau_ev('os', 'Unraid OS', 'os_install_failed', ['installed' => dau_os_version(), 'available' => $latest, 'stage' => 'check', 'error' => $why, 'next' => 'Install it from Tools > Update OS.']);
       dau_log('warn', 'os', 'Unraid OS', 'install', 'blocked', $why);
       return;
@@ -4239,8 +4281,7 @@ function dau_job_finish(array &$J) {
   list($ev, $hold) = dau_quiet_split($cfg, $J['events'], dau_now());
   if ($hold) {
     foreach ($hold as $h) $J['st']['queue'][] = $h;
-    $z = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'available' => 0];
-    $sumSend = ['docker' => $z, 'plugins' => $z, 'os' => ['available' => null, 'version' => '', 'installed' => false]];
+    $sumSend = dau_sum_empty();
     dau_log('info', 'notify', '-', 'quiet', 'hold', count($hold) . ' notification(s) held until quiet hours end');
   } else $sumSend = $sum;
   $failed = $sum['docker']['failed'] + $sum['plugins']['failed'];
@@ -4263,7 +4304,7 @@ function dau_job_finish(array &$J) {
             'os_awaiting' => ['waiting for your confirmation', 'warning'], 'os_prereq_failed' => ['update STOPPED, a prerequisite failed', 'alert'], 'os_aborted' => ['update aborted', 'warning'], 'rolled_back' => ['rolled back to the earlier image', 'warning'], 'removed' => ['removed', 'normal'], 'remove_failed' => ['removal FAILED', 'alert'], 'recovered' => ['interrupted job recovered', 'alert'], 'backup_done' => ['backup completed', 'normal'], 'backup_failed' => ['backup FAILED', 'alert'], 'rollback_failed' => ['rollback FAILED', 'alert'], 'major_jump' => ['major version update held back', 'warning'], 'cleanup_report' => ['space you can free', 'normal'], 'os_verified' => ['update verified after reboot', 'normal'], 'os_unverified' => ['update is NOT active after reboot', 'alert']];
     list($t, $imp) = $map[$e['kind']] ?? [$e['kind'], 'normal'];
     $d = trim(($e['installed'] ?? '') && ($e['available'] ?? '') ? $e['installed'] . ' -> ' . $e['available'] : '');
-    $d .= ' ' . ($e['error'] ?? $e['reason'] ?? '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
+    $d .= ' ' . (($e['error'] ?? '') ?: ($e['reason'] ?? '')) . ($e['type'] === 'cleanup' ? ' ' . ($e['detail'] ?? '') : '') . (!empty($e['next']) && $e['type'] === 'os' ? ' ' . $e['next'] : '');
     dau_unraid_notify("$label: $t", trim($d), $imp, $e['type'] === 'os' ? '/Tools' : ($e['type'] === 'plugin' ? '/Plugins' : (in_array($e['type'], ['cleanup', 'backup'], true) ? '/Settings/UnraidSwissManager' : '/Docker')));
     $sent++;
   }
@@ -4380,7 +4421,7 @@ function dau_job_main($action, array $o = []) {
     } elseif ($action === 'check') {
       dau_job_docker($J, ['update' => false]); dau_job_plugins($J, ['update' => false]); dau_job_os($J, ['manual' => true]);
     } elseif ($action === 'docker') {
-      dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true, 'allow_major' => $o['allow_major'] ?? []]);
+      dau_job_docker($J, ['names' => $o['names'] ?? [], 'update' => true, 'manual' => true, 'allow_major' => $o['allow_major'] ?? [], 'refresh' => !dau_docker_status_fresh()]);
     } elseif ($action === 'backup') {
       foreach ((array)($o['kinds'] ?? []) as $bk) if (in_array($bk, DAU_BK_KINDS, true)) dau_job_backup($J, $bk, 'manual');
     } elseif ($action === 'remove_docker') {
@@ -4415,9 +4456,9 @@ function dau_job_main($action, array $o = []) {
 
 /* ---------------- cron / install ---------------- */
 
-/** One line, every 5 minutes, only when something is scheduled. */
+/** One line, every 5 minutes, only when something is scheduled (the cleanup report and the quarantine expiry run from it too). */
 function dau_cron_apply(array $cfg) {
-  $any = dau_docker_slots($cfg) || dau_plugin_slots($cfg) || dau_os_slots($cfg) || dau_bk_slots($cfg);
+  $any = dau_docker_slots($cfg) || dau_plugin_slots($cfg) || dau_os_slots($cfg) || dau_bk_slots($cfg) || !empty($cfg['appdata']['report']) || (int)($cfg['appdata']['purge_days'] ?? 0) > 0;
   if ($any) {
     $line = "# Unraid Swiss Manager dispatcher (generated; do not edit)\n*/" . DAU_TICK_MIN . ' * * * * ' . DAU_PHP . ' ' . DAU_ROOT . "/scripts/run.php --tick > /dev/null 2>&1\n";
     if (!is_dir(DAU_DIR)) @mkdir(DAU_DIR, 0755, true);
@@ -4456,7 +4497,7 @@ function dau_uninstall() {
   if (is_executable('/usr/local/sbin/update_cron')) dau_run(['/usr/local/sbin/update_cron'], 30);
 }
 ]]></INLINE>
-<SHA256>8ff95083fad56caad9644cec78c107aba3a6c7b9add8a7d36daf2b4a82a48c4b</SHA256>
+<SHA256>c000753db1846ddce7f8937358613ef5b66b6e0b917770e8940af58aeeaf5759</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/include/api.php" Mode="0644">
@@ -4468,7 +4509,7 @@ header('Content-Type: application/json');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 
-function out($d, $code = 200) { http_response_code($code); echo json_encode($d, JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR); exit; }
+function out($d, $code = 200) { http_response_code($code); echo json_encode($d, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR); exit; }
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
@@ -4521,12 +4562,9 @@ function api_plugin_rows($cfg, $st) {
 
 function api_next_runs($cfg, $st) {
   $now = dau_now(); $o = [];
-  $add = function ($label, $slots) use (&$o, $st, $now) { foreach ($slots as $k => $s) $o[] = ['label' => $label, 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, $k), $now), 'count' => count($s['names'])]; };
-  $d = []; foreach (dau_docker_slots($cfg) as $k => $s) $d['d:' . $k] = $s;
-  $add('Docker', $d);
-  $p = []; foreach (dau_plugin_slots($cfg) as $k => $s) $p['p:' . $k] = $s; $add('Plugins', $p);
-  $x = []; foreach (dau_os_slots($cfg) as $k => $s) $x['o:' . $k] = $s; $add('Unraid OS', $x);
-  foreach (dau_bk_slots($cfg) as $k => $s) $o[] = ['label' => $k === 'flash' ? 'Boot drive backup' : 'Appdata backup', 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, 'b:' . $k), $now), 'count' => 1];
+  $add = function ($label, $prefix, $slots) use (&$o, $st, $now) { foreach ($slots as $k => $s) $o[] = ['label' => $label, 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, $prefix . $k), $now), 'count' => count($s['names'] ?? [1])]; };
+  $add('Docker', 'd:', dau_docker_slots($cfg)); $add('Plugins', 'p:', dau_plugin_slots($cfg)); $add('Unraid OS', 'o:', dau_os_slots($cfg));
+  foreach (dau_bk_slots($cfg) as $k => $s) $add($k === 'flash' ? 'Boot drive backup' : 'Appdata backup', 'b:', [$k => $s]);
   return $o;
 }
 
@@ -4569,7 +4607,7 @@ switch ($action) {
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
          'skipped' => $av && ($st['os']['skipped'] ?? '') === $av, 'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
-         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
+         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg, $st)) : 0]);
   }
   case 'notes': {
     $type = (string)($_GET['type'] ?? $_POST['type'] ?? ''); $n = (string)($_GET['name'] ?? $_POST['name'] ?? ''); $st = dau_state_load();
@@ -4585,7 +4623,9 @@ switch ($action) {
     $st = dau_state_load(); $cfg = dau_load_config(); $ri = dau_run_info(); $pr = (array)$ri['progress'];
     $nx = null; foreach (api_next_runs($cfg, $st) as $r) if ($r['next'] && (!$nx || $r['next'] < $nx['next'])) $nx = $r;
     $bk = null; foreach ($st['backups'] as $b) if (is_array($b) && !empty($b['at']) && (!$bk || $b['at'] > $bk['at'])) $bk = $b;
-    out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
+    $held = 0; foreach ($st['docker']['seen'] as $n => $r) if (isset($st['docker']['pinned'][$n]) || ($st['docker']['skipped'][$n] ?? '') === ($r['remote'] ?? null)) $held++;      // what you chose to keep out is not "waiting"
+    out(['containers' => (int)$st['summary']['containers'], 'docker' => max(0, (int)$st['summary']['docker_updates'] - $held), 'plugins' => count(array_diff_assoc($st['plugins']['available'], $st['plugins']['skipped'])), 'at' => (int)$st['summary']['at'],
+         'checked' => max((int)$st['summary']['at'], (int)$st['plugins']['last_check'], (int)$st['os']['last_check']),
          'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
          'failures' => dau_recent_failures(),
          'next' => $nx['next'] ?? null, 'next_label' => $nx['label'] ?? '',
@@ -4695,7 +4735,7 @@ switch ($action) {
         'text' => $b['schedule'] === 'off' ? '' : dau_sched_text($sched), 'files' => $b['dest'] !== '' && dau_valid_dest($b['dest']) ? dau_bk_list($k, $b['dest']) : [],
         'folder' => $b['dest'] !== '' ? $dir : '', 'free' => $why === '' && is_dir($b['dest']) ? dau_backup_free($b['dest']) : null];
     }
-    out(['ok' => true, 'backups' => $o, 'running' => (bool)(dau_read_json(DAU_PROGRESS, [])['running'] ?? false), 'now' => $now]);
+    out(['ok' => true, 'backups' => $o, 'running' => dau_run_info()['running'], 'now' => $now]);
   }
 
   case 'run': {
@@ -4885,7 +4925,7 @@ switch ($action) {
   default: fail('Unknown action', 404);
 }
 ]]></INLINE>
-<SHA256>16e86d1e7346747d205fa5f90cad4786087bc6f76848e229627a3fc881f4f38a</SHA256>
+<SHA256>12de6fe44e6bdbd44d949543463db98a539bccec5a22e6b4948e918a6cae0802</SHA256>
 </FILE>
 
 <FILE Name="&emhttp;/images/unraid-swiss-manager.svg" Mode="0644">
@@ -5124,7 +5164,7 @@ exit(64);
   'use strict';
   var API = '/plugins/unraid-swiss-manager/include/api.php';
   var root = document.getElementById('dau');
-  var S = { copen: {}, hist: null, ad: null, cs: null, cresult: null, cerr: {}, qr: null, tp: null, clean: null, csel: { img: {}, con: {} }, tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
+  var S = { copen: {}, ad: null, cs: null, cresult: null, cerr: {}, qr: null, tp: null, clean: null, tab: 'overview', ov: null, docker: null, plugins: null, os: null, hist: null, log: null, draft: null, sel: {}, psel: {}, open: {}, q: '', filter: 'all', sort: 'name', pq: '', pfilter: 'all', busy: false, poll: null };
   /* toasts and dialogs live next to the page, not in it: render() rebuilds the page and must not take them along */
   var layer = h('div', { class: 'dau dau-layer' });
   root.parentNode.insertBefore(layer, root.nextSibling);
@@ -5162,18 +5202,18 @@ exit(64);
   function dur(s) { s = Math.round(s || 0); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'; }
   function toast(msg, bad) { var t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: bad ? 'alert' : 'status' }, msg); layer.appendChild(t); setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, bad ? 7000 : 3500); }
 
-  function api(action, data, post) {
+  function api(action, data) {
     var fd = new URLSearchParams(); fd.append('action', action);   // urlencoded, not multipart: multipart POSTs hang on Unraid's web server
     fd.append('csrf_token', window.DAU_CSRF || '');   // Unraid rejects any POST without it, reads included
     for (var k in (data || {})) fd.append(k, typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k]);
-    return fetch(API, { method: post ? 'POST' : 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
+    return fetch(API, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) {
       return r.json().catch(function () { return { error: 'Unexpected response (' + r.status + ')' }; }).then(function (j) { if (!r.ok && !j.error) j.error = 'Request failed (' + r.status + ')'; return j; });
     }).catch(function () { return { error: 'Could not reach the server.' }; });
   }
   /* while a change is on its way the buttons rest, so a double click cannot send it twice */
   var acting = 0;
   function wait(d) { acting += d; [root, layer].forEach(function (e) { e.classList.toggle('dau-wait', acting > 0); }); }
-  function act(action, data, okMsg) { wait(1); return api(action, data, true).then(function (j) { wait(-1); if (j.error) toast(j.error, true); else if (okMsg) toast(okMsg); return j; }); }
+  function act(action, data, okMsg) { wait(1); return api(action, data).then(function (j) { wait(-1); if (j.error) toast(j.error, true); else if (okMsg) toast(okMsg); return j; }); }
 
   /* ---------- loading ---------- */
   function load(which) {
@@ -5288,7 +5328,7 @@ exit(64);
     if (type === 'plugin') {
       S.tab = 'plugins';
       return load('plugins').then(function () {
-        var r = (S.plugins.rows || []).filter(function (x) { return x.name === name || x.file === name; })[0]; if (!r) return;
+        var r = (S.plugins ? S.plugins.rows : []).filter(function (x) { return x.name === name || x.file === name; })[0]; if (!r) return;
         if (a === 'update') confirmPlugins([r.file]);
         else if (a === 'skip') { var m = modal('Skip this version of ' + r.name + '?'); m.body.appendChild(h('p', null, 'This version is ignored; a newer one is announced again.')); m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Cancel')); m.foot.appendChild(h('button', { class: 'btn pri', onclick: function () { m.close(); skipAct('plugin', r.file, r.name); } }, 'Skip')); }
       });
@@ -5387,7 +5427,7 @@ exit(64);
   }
 
   /* ---------- Docker ---------- */
-  function polSel(val, cb, allowDefault) {
+  function polSel(val, cb) {
     var s = h('select', { onchange: function () { cb(s.value); } });
     POL.forEach(function (p) { s.appendChild(h('option', { value: p[0], selected: p[0] === val }, p[1])); });
     return s;
@@ -5420,7 +5460,7 @@ exit(64);
     var bulk = h('select', { disabled: !selNames.length, onchange: function () { if (!bulk.value) return; var v = bulk.value; act('set_container', { names: selNames, data: { policy: v } }, 'Policy set for ' + selNames.length + ' container(s)').then(function () { load('docker'); }); } },
       h('option', { value: '' }, 'Set policy for selected…'), POL.map(function (p) { return h('option', { value: p[0] }, p[1]); }));
     var upd = h('button', { class: 'btn pri', disabled: S.ov.run.running || !selNames.length, onclick: function () { previewUpdate(selNames); } }, 'Update selected…');
-    var all = h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { previewUpdate(S.docker.rows.filter(function (r) { return r.update === true && r.managed; }).map(function (r) { return r.name; })); } }, 'Update all pending…');
+    var all = h('button', { class: 'btn', disabled: S.ov.run.running, onclick: function () { previewUpdate(S.docker.rows.filter(function (r) { return r.update === true && r.managed && !r.pinned && !r.skipped; }).map(function (r) { return r.name; })); } }, 'Update all pending…');
     var rmSel = h('button', { class: 'btn danger', disabled: S.ov.run.running || !selNames.length, onclick: function () { removeContainers(selNames); } }, 'Remove selected…');
     w.appendChild(h('div', { class: 'tools' }, q, f, so, bulk, h('span', { class: 'grow' }), upd, all, rmSel));
     var t = h('table', { class: 'resp' });
@@ -5675,7 +5715,6 @@ exit(64);
   /* ---------- Cleanup ---------- */
   function bytes(b) { b = +b || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' kB'; }
   function ageText(sec) { sec = +sec || 0; return sec < 86400 ? 'today' : sec < 86400 * 60 ? Math.round(sec / 86400) + ' days ago' : sec < 86400 * 730 ? Math.round(sec / 86400 / 30) + ' months ago' : Math.round(sec / 86400 / 365) + ' years ago'; }
-  function cleanSum() { var c = S.ov.cards.cleanup || {}; return c; }
   function cleanCount(c) { return c ? ((c.appdata || {}).n || 0) + ((c.images || {}).n || 0) + ((c.volumes || {}).n || 0) + ((c.containers || {}).n || 0) : 0; }
   var CCAT = [
     ['app', 'Appdata folders', 'Folders in your appdata share that no container uses any more.'],
@@ -5708,7 +5747,7 @@ exit(64);
   function scanAll() {
     if (S.cscanning || S.cbusy) return Promise.resolve();
     S.cscanning = true; render();
-    return api('cleanup_all', {}, true).then(function (j) {
+    return api('cleanup_all').then(function (j) {
       S.cscanning = false;
       if (j.error) { S.cerr = { all: j.error }; toast(j.error, true); render(); return; }
       S.cerr = { app: j.appdata && j.appdata.ok === false ? j.appdata.error : '', docker: j.docker && j.docker.ok === false ? j.docker.error : '' };
@@ -5745,16 +5784,15 @@ exit(64);
     });
     return t;
   }
-  function catRows(cat) { return items(cat); }
   function catStat(cat) {   // count and size of what can be reviewed (not protected)
     if (cat === 'tpl') return S.tp && S.tp.templates ? { n: S.tp.templates.length, size: null } : null;
     if (cat === 'qua') return S.qr && S.qr.rows ? { n: S.qr.rows.length, size: S.qr.rows.reduce(function (a, e) { return a + (+e.size || 0); }, 0) } : null;
-    var l = catRows(cat).filter(pickable), has = cat === 'app' ? !!S.ad : !!S.clean;
+    var l = items(cat).filter(pickable), has = cat === 'app' ? !!S.ad : !!S.clean;
     return has ? { n: l.length, size: l.reduce(function (a, x) { return a + (x.size || 0); }, 0) } : null;
   }
   function stage() { return S.cscanning ? 1 : !S.cscan ? 1 : selected().count ? 3 : 2; }
   function vCleanup() {
-    var w = h('div'), busy = S.ov.run.running || S.cscanning || S.cbusy, sm = cleanSum();
+    var w = h('div'), busy = S.ov.run.running || S.cscanning || S.cbusy, sm = S.ov.cards.cleanup || {};
     /* result of the last cleanup, until dismissed */
     if (S.cresult) {
       var r = S.cresult;
@@ -5794,7 +5832,7 @@ exit(64);
     var secApp = h('div');
     secApp.appendChild(h('div', { class: 'banner' }, 'These folders are not used by any container, running or stopped. Safe mode is ' + (a ? (a.safe_mode ? 'on: selected folders are moved to a hidden quarantine folder and can be restored.' : 'off: selected folders are deleted for good.') : 'checked when you scan.')));
     if (a) {
-      var la = catRows('app');
+      var la = items('app');
       if (!la.length) secApp.appendChild(h('p', { class: 'muted' }, 'No unused appdata folders.')); else secApp.appendChild(ctable('app', la));
       if (a.in_use) {
         var iu = h('details', { class: 'more' }, h('summary', null, 'Currently in use (' + a.in_use + '): not listed above, cannot be cleaned'));
@@ -5809,10 +5847,10 @@ exit(64);
       }
     } else secApp.appendChild(h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
     var secImg = h('div'); secImg.appendChild(h('div', { class: 'banner' }, 'Dangling images have no name; unused images were downloaded once and no container uses them now. Images that a container uses (' + (d ? d.in_use_images : 'N') + ' right now) are never listed. Volumes and appdata are never touched by image cleanup.'));
-    secImg.appendChild(d ? (catRows('img').length ? ctable('img', catRows('img')) : h('p', { class: 'muted' }, 'No unused images.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
+    secImg.appendChild(d ? (items('img').length ? ctable('img', items('img')) : h('p', { class: 'muted' }, 'No unused images.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
     var secVol = h('div'); secVol.appendChild(h('div', { class: 'banner warn' }, h('b', null, 'Volumes hold data. '), 'Removing one deletes its data and cannot be undone. None is selected for you and Select all eligible never picks them. Docker refuses to remove a volume that is in use.'));
-    secVol.appendChild(d ? (catRows('vol').length ? ctable('vol', catRows('vol')) : h('p', { class: 'muted' }, 'No unused volumes.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
-    var secCon = h('div'); secCon.appendChild(d ? (catRows('con').length ? ctable('con', catRows('con')) : h('p', { class: 'muted' }, 'No leftover containers. A running container is never listed.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
+    secVol.appendChild(d ? (items('vol').length ? ctable('vol', items('vol')) : h('p', { class: 'muted' }, 'No unused volumes.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
+    var secCon = h('div'); secCon.appendChild(d ? (items('con').length ? ctable('con', items('con')) : h('p', { class: 'muted' }, 'No leftover containers. A running container is never listed.')) : h('p', { class: 'muted' }, scanned ? 'Not available (see the message above).' : 'Press "Scan for Cleanup Items" to look.'));
     var q = S.qr && S.qr.rows ? S.qr.rows : null;
     function stx(c) { var st = catStat(c); return st ? st.n + ' to review' + (st.size ? ' · ' + bytes(st.size) : '') : 'not scanned'; }
     w.appendChild(csec('app', 'Appdata folders', stx('app'), !!(a && a.orphans && a.orphans.length), secApp));
@@ -5829,7 +5867,7 @@ exit(64);
       w.appendChild(csec('hist', 'Cleanup history', hist.length + ' recent', false, h('div', { class: 'panel' }, t)));
     }
     /* action bar: the same place for the same actions */
-    var s = selected(), eligibleN = 0; ['app', 'img'].forEach(function (c) { catRows(c).forEach(function (it) { if (it.status === 'eligible') eligibleN++; }); });
+    var s = selected(), eligibleN = 0; ['app', 'img'].forEach(function (c) { items(c).forEach(function (it) { if (it.status === 'eligible') eligibleN++; }); });
     var why = busy ? 'Wait until the current job has finished' : !s.count ? 'Select items to review first' : '';
     w.appendChild(h('div', { class: 'cbar' }, h('div', { class: 'grow' }, h('b', null, s.count + ' selected'), h('span', { class: 'muted' }, s.count ? ' · estimated ' + bytes(s.size) : (scanned ? ' · nothing selected' : ' · scan first'))),
       h('button', { class: 'btn', disabled: busy || !eligibleN, title: !eligibleN ? 'There is no eligible item (items marked "Review first" are never picked for you)' : 'Selects only items marked Eligible', onclick: function () { selectEligible(); } }, 'Select all eligible'),
@@ -5839,7 +5877,7 @@ exit(64);
     return w;
   }
   /* only items the server marked Eligible; "Review first", protected and in-use items are never picked */
-  function selectEligible() { S.cs = { app: {}, img: {}, vol: {}, con: {} }; ['app', 'img'].forEach(function (c) { catRows(c).forEach(function (it) { if (it.status === 'eligible') S.cs[c][it.key] = true; }); }); render(); }
+  function selectEligible() { S.cs = { app: {}, img: {}, vol: {}, con: {} }; ['app', 'img'].forEach(function (c) { items(c).forEach(function (it) { if (it.status === 'eligible') S.cs[c][it.key] = true; }); }); render(); }
   function peekFolder(o) {
     api('appdata_peek', { id: o.id }).then(function (j) {
       var m = modal('Inside ' + o.name);
@@ -5872,8 +5910,8 @@ exit(64);
       var out = h('div', { class: 'muted sm' }, 'Checking…'); m.body.appendChild(out);
       m.foot.appendChild(h('button', { class: 'btn', onclick: m.close }, 'Close'));
       var calls = [];
-      if (s.app.length) calls.push(api('appdata_run', { dry: '1', mode: safe ? 'quarantine' : 'delete', ids: s.app.map(function (o) { return o.key; }) }, true));
-      if (s.img.length || s.con.length || s.vol.length) calls.push(api('cleanup_run', { dry: '1', images: s.img.map(function (o) { return o.key; }), containers: s.con.map(function (o) { return o.key; }), volumes: s.vol.map(function (o) { return o.key; }) }, true));
+      if (s.app.length) calls.push(api('appdata_run', { dry: '1', mode: safe ? 'quarantine' : 'delete', ids: s.app.map(function (o) { return o.key; }) }));
+      if (s.img.length || s.con.length || s.vol.length) calls.push(api('cleanup_run', { dry: '1', images: s.img.map(function (o) { return o.key; }), containers: s.con.map(function (o) { return o.key; }), volumes: s.vol.map(function (o) { return o.key; }) }));
       Promise.all(calls).then(function (rs) {
         clear(out); var n = 0, sk = 0;
         rs.forEach(function (r) { if (r.error || r.ok === false) { out.appendChild(h('div', { class: 'banner bad' }, r.error || 'The preview failed.')); return; } (r.would || []).forEach(function (x) { n++; out.appendChild(h('div', null, '✓ ', typeof x === 'string' ? x : x.name + (x.to ? ' → quarantine' : ''))); }); (r.skipped || []).forEach(function (x) { sk++; out.appendChild(h('div', { class: 'muted' }, '– ' + x.what + ': ' + x.why)); }); });
@@ -5890,14 +5928,14 @@ exit(64);
     S.cbusy = true; render();
     var res = { done: [], skipped: [], failed: [], size: 0, moved: false, fail: false }, jobs = Promise.resolve();
     if (s.app.length) jobs = jobs.then(function () {
-      return api('appdata_run', { confirm: '1', confirm_delete: del ? '1' : '', mode: del ? 'delete' : 'quarantine', ids: s.app.map(function (o) { return o.key; }) }, true).then(function (r) {
+      return api('appdata_run', { confirm: '1', confirm_delete: del ? '1' : '', mode: del ? 'delete' : 'quarantine', ids: s.app.map(function (o) { return o.key; }) }).then(function (r) {
         if (r.error || r.ok === false) { s.app.forEach(function (o) { res.failed.push({ what: o.name, why: r.error || 'failed' }); }); return; }
         (r.done || []).forEach(function (n) { res.done.push('appdata ' + n); s.app.forEach(function (o) { if (o.name === n) res.size += o.size; }); }); if (!del && (r.done || []).length) res.moved = true;
         (r.skipped || []).forEach(function (x) { res.skipped.push(x); }); (r.failed || []).forEach(function (x) { res.failed.push(x); });
       });
     });
     if (s.img.length || s.con.length || s.vol.length) jobs = jobs.then(function () {
-      return api('cleanup_run', { confirm: '1', images: s.img.map(function (o) { return o.key; }), containers: s.con.map(function (o) { return o.key; }), volumes: s.vol.map(function (o) { return o.key; }) }, true).then(function (r) {
+      return api('cleanup_run', { confirm: '1', images: s.img.map(function (o) { return o.key; }), containers: s.con.map(function (o) { return o.key; }), volumes: s.vol.map(function (o) { return o.key; }) }).then(function (r) {
         if (r.error || r.ok === false) { s.img.concat(s.con, s.vol).forEach(function (o) { res.failed.push({ what: o.name, why: r.error || 'failed' }); }); return; }
         (r.removed || []).forEach(function (n) { res.done.push(n); }); res.size += r.size_removed || 0; (r.skipped || []).forEach(function (x) { res.skipped.push(x); }); (r.failed || []).forEach(function (x) { res.failed.push(x); });
       });
@@ -5932,7 +5970,7 @@ exit(64);
     return w;
   }
   function restoreQ(e, suffix) {
-    api('quarantine_act', { act: 'restore', id: e.id, confirm: '1', suffix: suffix ? '1' : '' }, true).then(function (j) {
+    api('quarantine_act', { act: 'restore', id: e.id, confirm: '1', suffix: suffix ? '1' : '' }).then(function (j) {
       if (j.conflict) {
         var m = modal('The original place is taken');
         m.body.appendChild(h('p', null, 'There is already a folder or file named ' + e.name + '. Nothing was overwritten. You can restore the quarantined folder next to it with "-restored" added to its name.'));
@@ -6252,7 +6290,7 @@ exit(64);
   load('overview').then(function () { if (S.ov && S.ov.run.running) startPoll(); return deepLink(); });
 })();
 ]]></INLINE>
-<SHA256>4655e586874ec188d05a0d8bcacc85264a6668b351901b27b23be7de3ca4565a</SHA256>
+<SHA256>2a813bf4e6b841086cbd93c11ce0d39641b78bf63e008f3d56e2afff60a30c77</SHA256>
 </FILE>
 
 <FILE Run="/bin/bash">

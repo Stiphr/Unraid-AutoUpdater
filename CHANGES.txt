@@ -1,4 +1,20 @@
-###2026.11.01b1
+###2026.11.02b1
+- Fix: official Docker Hub images (mysql, postgres, mariadb, adminer and the like) always showed "Status unknown" and never updated, because Unraid files them under library/.
+- Fix: a daemon started by a plugin update could hold the job lock for as long as it ran. Every later job, scheduled ones included, was then skipped and the page said a job was running.
+- Fix: a container that was recreated but never started (a port already in use, for example) counted as updated. It now counts as failed and is started again if possible.
+- Fix: Discord showed "Array" as the verification text of every update, and Unraid notifications lost the reason of an interrupted job and the cleanup report's numbers.
+- Fix: the pre-OS maintenance and the Update buttons (Dashboard tile, Update all pending) installed versions you chose to skip and updated pinned containers. The tile no longer counts them as waiting.
+- Fix: the major version guard saw nothing for mysql images, and read mariadb package versions as version 1.
+- Fix: the Unraid OS install refused 7.3.10 over 7.3.9, because it compared the two as text.
+- Fix: an unused image with two names could not be removed, and only one of the names was shown.
+- Fix: the log size setting was ignored; the log always rotated at 1 MB.
+- Fix: the cleanup report and the quarantine expiry never ran when nothing else was scheduled.
+- Fix: a command that left something running in the background stalled its job until the timeout (15 minutes for a plugin update).
+- Fix: "Checked" on the tile also moved after a backup or a notification, and the Backups tab could say a job was running after one was killed.
+- Fix: a manual OS install that Unraid's feed cannot offer no longer blocks the automatic attempt, and text that is not valid UTF-8 no longer empties a saved message.
+- Faster: updating chosen plugins checks only those, and updating containers reuses a check from the last hour instead of asking every registry again.
+- Tidied: unused code removed and duplicated code merged.
+###2026.11.01
 - New: Swiss Manager tab in the Unraid top menu (can be hidden in Settings > Appearance). It stays under Settings > User Utilities too.
 - Fix: Unraid OS updates were checked against an old Unraid address that still says 7.0.1, so a new release was never reported. The check now uses Unraid's own update checker, and the release notes link comes with it.
 - Safety: an OS install now runs only if Unraid's plugin feed offers that exact release. Otherwise it stops before the pre-OS maintenance, changes nothing and points to Tools > Update OS.

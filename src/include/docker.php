@@ -30,7 +30,9 @@ function dau_image_key($img) {
 function dau_update_info($img, array $map) {
   $k = dau_image_key($img);
   $nodocker = preg_replace('#^docker\.io/#', '', $k);
-  foreach (array_unique([$k, $nodocker, preg_replace('#^library/#', '', $nodocker)]) as $cand) {
+  $cands = [$k, $nodocker, preg_replace('#^library/#', '', $nodocker)];
+  if (strpos($nodocker, '/') === false) $cands[] = 'library/' . $nodocker;      // Unraid files official images (mysql, postgres) under library/
+  foreach (array_unique($cands) as $cand) {
     if (!isset($map[$cand]) || !is_array($map[$cand])) continue;
     $e = $map[$cand];
     $local = !empty($e['local']) ? (string)$e['local'] : null;
@@ -42,6 +44,9 @@ function dau_update_info($img, array $map) {
   }
   return ['flag' => null, 'local' => null, 'remote' => null];
 }
+
+/** A check from the last hour is good enough to start an update someone just asked for: asking every registry again takes minutes, and the pull finds the newest image anyway. */
+function dau_docker_status_fresh() { clearstatcache(true, DAU_UPDSTATUS); return is_file(DAU_UPDSTATUS) && dau_now() - (int)@filemtime(DAU_UPDSTATUS) < 3600; }
 
 /** Ask Unraid to re-check every image against its registry. nonotify: our own notifications replace the native ones. */
 function dau_docker_refresh() {
@@ -236,7 +241,7 @@ function dau_classify_pull_error($text) {
 /**
  * Verify a container after the update. Distinguishes: healthy, running_no_healthcheck (no health check configured -
  * NOT a failure), not_running_expected (it was stopped before), timeout (still starting), and the failures
- * image_mismatch, not_found, failed_to_start, restart_loop, unhealthy.
+ * image_mismatch, not_found, failed_to_start, not_started, restart_loop, unhealthy.
  * @return array ['result'=>string,'ok'=>bool,'detail'=>string]
  */
 function dau_docker_verify($name, $expectedImageId, $expectRunning, $timeout) {
@@ -278,6 +283,7 @@ function dau_docker_verify($name, $expectedImageId, $expectRunning, $timeout) {
       }
     }
     if ($now >= $deadline) {
+      if ($expectRunning && $status === 'created') return ['result' => 'not_started', 'ok' => false, 'detail' => 'The container was created but never started (a port or path that is already in use is the usual reason).'];
       $d = $health === 'starting' ? 'The health check is still "starting" after ' . (int)$timeout . ' s.' : "Status \"$lastStatus\" after " . (int)$timeout . ' s.';
       return ['result' => 'timeout', 'ok' => false, 'detail' => $d . ' The update was applied; verification could not finish in time.'];
     }
@@ -395,7 +401,7 @@ function dau_docker_update(array $cfg, $name, array $c) {
   $out['error'] = $v['detail'];
   $out['next'] = 'The previous image was kept. Check the container\'s logs. To go back: edit the container, set Repository to "' . $prevRef . '" and apply. See the README section on recovery.';
   /* Unraid's routine gave up before the new container was running: a container that was running must not stay down because of that */
-  if ($wasRunning && ($v['result'] === 'image_mismatch' || ($v['result'] === 'failed_to_start' && ($a['timeout'] || $a['code'] !== 0))) && dau_docker_restore($name) === 'started') $out['next'] = 'It was started again. ' . $out['next'];
+  if ($wasRunning && ($v['result'] === 'image_mismatch' || $v['result'] === 'not_started' || ($v['result'] === 'failed_to_start' && ($a['timeout'] || $a['code'] !== 0))) && dau_docker_restore($name) === 'started') $out['next'] = 'It was started again. ' . $out['next'];
   return $done();
 }
 
@@ -404,9 +410,6 @@ function dau_docker_steps(array $cfg, $name) {
   $s = !empty($cfg['global']['backup']['enabled']) && !empty(dau_container_cfg($cfg, $name)['backup']) ? [['backup', 'Back up']] : [];
   return array_merge($s, [['pull', 'Download'], ['apply', 'Recreate'], ['verify', 'Verify']]);
 }
-
-/** Remove the retry record for a container that has finished (or whose image changed). */
-function dau_docker_retry_clear(array &$st, $name) { unset($st['docker']['retry'][$name]); }
 
 /**
  * Decide retry behaviour after a failure. Only a failure that left the container untouched (transient pull error)

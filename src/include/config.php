@@ -64,7 +64,7 @@ function dau_defaults() {
       'delay_days'    => 7,             // wait this long after a release is first seen
       'stable_only'   => true,          // never auto-install -rc / beta / next releases
       'window'        => ['enabled' => true, 'days' => [0], 'start' => '03:00', 'end' => '05:00'],
-      'pre'           => ['plugins' => true, 'docker' => false, 'require_plugins' => true, 'require_docker' => true, 'confirm' => false, 'notify' => true, 'scope' => 'auto'],   // pre-OS workflow, see workflow.php
+      'pre'           => dau_os_pre_defaults(),   // pre-OS workflow, see workflow.php
     ],
     'discord' => [
       'enabled'    => false,
@@ -202,7 +202,7 @@ function dau_os_spec() {
   return dau_sched_spec() + [
     'check_enabled' => ['bool'], 'mode' => ['enum', ['notify', 'install', 'install_reboot']], 'confirmed' => ['enum', ['', 'install', 'install_reboot']],
     'delay_days' => ['int', 0, 90], 'stable_only' => ['bool'], 'window' => ['obj', dau_window_spec()],
-    'pre' => ['obj', ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]]],
+    'pre' => ['obj', dau_os_pre_spec()],
   ];
 }
 
@@ -318,6 +318,7 @@ function dau_load_config(&$status = null) {
       if (dau_valid_plg((string)$f) && $f !== DAU_SELF_PLG && is_array($v)) $cfg['plugins']['items'][$f] = dau_apply_spec([], $v, ['policy' => ['enum', DAU_POLICIES]]);
     }
   }
+  $GLOBALS['DAU_LOG_CFG'] = (int)$cfg['log']['max_kb'] * 1024;
   return $cfg;
 }
 

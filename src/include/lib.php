@@ -98,7 +98,7 @@ function dau_read_json_kept($file, $default, $base) {
 
 /** Atomic write. Skips the write when the content is unchanged (the flash drive has limited write cycles). */
 function dau_write_json($file, $data, $private = false) {
-  $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+  $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
   if ($json === false) return false;
   if (is_file($file) && @file_get_contents($file) === $json) return true;
   @mkdir(dirname($file), 0755, true);
@@ -113,7 +113,8 @@ function dau_write_json($file, $data, $private = false) {
 
 /**
  * Run a command without a shell. Returns ['code'=>int,'out'=>string,'err'=>string,'timeout'=>bool,'ran'=>bool].
- * Output is capped. The command is killed when the timeout expires.
+ * Output is capped. The command is killed when the timeout expires. A command that has ended is not waited for because something it left running
+ * in the background (a daemon started by a plugin, for example) still holds its output open.
  */
 function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576) {
   if (isset($GLOBALS['DAU_EXEC_MOCK']) && is_callable($GLOBALS['DAU_EXEC_MOCK'])) {
@@ -131,6 +132,7 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
   stream_set_blocking($pipes[2], false);
   $deadline = microtime(true) + max(1, $timeout);
   $open = [1 => $pipes[1], 2 => $pipes[2]];
+  $exit = null; $grace = 0;
   while ($open) {
     $left = $deadline - microtime(true);
     if ($left <= 0) { $res['timeout'] = true; break; }
@@ -144,6 +146,10 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
       }
       if (feof($h)) { @fclose($h); unset($open[$k]); }
     }
+    if ($open && $exit === null) {
+      $st = @proc_get_status($p);
+      if (is_array($st) && empty($st['running'])) { $exit = (int)$st['exitcode']; $grace = microtime(true) + 1; }
+    } elseif ($open && microtime(true) >= $grace) break;
   }
   if ($res['timeout']) {
     @proc_terminate($p, 15);
@@ -153,7 +159,7 @@ function dau_run(array $argv, $timeout = 60, $stdin = null, $maxBytes = 1048576)
   }
   foreach ($open as $h) @fclose($h);
   $code = @proc_close($p);
-  $res['code'] = $res['timeout'] ? 124 : $code;
+  $res['code'] = $res['timeout'] ? 124 : ($exit ?? $code);      // proc_close() cannot report it after proc_get_status() has seen the end
   return $res;
 }
 
@@ -188,7 +194,7 @@ function dau_clip($s, $max) {
 
 /* ---------- structured log ---------- */
 
-function dau_log_max_bytes() { return (int)($GLOBALS['DAU_LOG_MAX'] ?? 1048576); }
+function dau_log_max_bytes() { return (int)($GLOBALS['DAU_LOG_MAX'] ?? $GLOBALS['DAU_LOG_CFG'] ?? 1048576); }      // DAU_LOG_CFG: Settings > Data, set when the configuration is loaded
 
 /**
  * One line per event: "2026-10-28 08:48:22 level=info type=docker name=plex action=update result=ok retry=0 msg=..."
@@ -209,29 +215,35 @@ function dau_log($level, $type, $name, $action, $result, $msg = '', $retry = nul
   @file_put_contents(DAU_LOG, $line, FILE_APPEND);
 }
 
-function dau_log_tail($n = 200) {
-  $out = [];
-  foreach ([DAU_LOG . '.1', DAU_LOG] as $f) if (is_file($f)) { $l = @file($f, FILE_IGNORE_NEW_LINES); if ($l) $out = array_merge($out, $l); }
-  return implode("\n", array_slice($out, -$n)) . ($out ? "\n" : '');
+/** The last complete lines of a file: only its end is read, however big the file is. */
+function dau_file_tail($file, $bytes) {
+  clearstatcache(true, $file);
+  $size = is_file($file) ? (int)@filesize($file) : 0;
+  if ($size < 1) return [];
+  $f = @fopen($file, 'r'); if (!$f) return [];
+  fseek($f, max(0, $size - $bytes)); $t = (string)fread($f, $bytes); fclose($f);
+  $l = explode("\n", rtrim($t, "\n"));
+  if ($size > $bytes) array_shift($l);      // the first line is cut off
+  return $l;
 }
 
-/** The newest lines only (reads the end of the file): cheap enough for the live log, which asks every few seconds. */
-function dau_log_recent($n = 80) {
-  clearstatcache(true, DAU_LOG);
-  $size = is_file(DAU_LOG) ? (int)@filesize(DAU_LOG) : 0;
-  if ($size < 1) return '';
-  $f = @fopen(DAU_LOG, 'r'); if (!$f) return '';
-  fseek($f, max(0, $size - 32768)); $t = (string)fread($f, 32768); fclose($f);
-  $l = explode("\n", rtrim($t, "\n"));
-  if ($size > 32768) array_shift($l);      // the first line is cut off
-  return implode("\n", array_slice($l, -$n));
+function dau_log_tail($n = 200) {
+  $l = dau_file_tail(DAU_LOG, 65536);
+  if (count($l) < $n) $l = array_merge(dau_file_tail(DAU_LOG . '.1', 65536), $l);
+  return $l ? implode("\n", array_slice($l, -$n)) . "\n" : '';
 }
+
+/** Cheap enough for the live log, which asks every few seconds. */
+function dau_log_recent($n = 80) { return implode("\n", array_slice(dau_file_tail(DAU_LOG, 32768), -$n)); }
 
 /* ---------- lock, progress, stop flag ---------- */
 
-/** Non-blocking exclusive lock shared by every job type. Returns a handle or false. */
+/**
+ * Non-blocking exclusive lock shared by every job type. Returns a handle or false.
+ * 'e' = close on exec: a process a job starts must not inherit the lock, or a daemon started by a plugin update would hold it for as long as it lives.
+ */
 function dau_lock_try() {
-  $fp = @fopen(DAU_LOCK, 'c');
+  $fp = @fopen(DAU_LOCK, 'ce');
   if (!$fp) return false;
   if (flock($fp, LOCK_EX | LOCK_NB)) return $fp;
   fclose($fp);
@@ -244,10 +256,13 @@ function dau_lock_wait() {
 }
 function dau_lock_release($fp) { if (is_resource($fp)) { @flock($fp, LOCK_UN); @fclose($fp); } }
 
+/** Shared, so that two pages asking at the same moment do not see each other as a running job. */
 function dau_is_locked() {
-  $fp = dau_lock_try();
-  if ($fp) { dau_lock_release($fp); return false; }
-  return true;
+  $fp = @fopen(DAU_LOCK, 'ce');
+  if (!$fp) return true;
+  $free = flock($fp, LOCK_SH | LOCK_NB);
+  dau_lock_release($fp);
+  return !$free;
 }
 
 function dau_progress($p) {      // through a temporary name: the status poll never reads half a file
