@@ -291,3 +291,122 @@ t('logo: one SVG, white on orange, and the PNG that Unraid needs is built from i
   has($s, 'fill="#ff5e2a"'); has($s, '<g fill="#fff">'); lacks($s, '#3a3a3a'); ok(simplexml_load_string($s) !== false);
   $plg = file_get_contents(__DIR__ . '/../unraid-swiss-manager.plg'); has($plg, 'Name="&emhttp;/images/unraid-swiss-manager.svg"');
 });
+
+t('docker: official images are found under library/, as Unraid files them', function () {
+  $m = ['library/mysql:latest' => ['local' => 'sha256:a', 'remote' => 'sha256:b', 'status' => 'false'], 'library/postgres:17' => ['local' => 'sha256:c', 'remote' => 'sha256:c', 'status' => 'true']];
+  ok(dau_update_info('mysql', $m)['flag'] === true); ok(dau_update_info('postgres:17', $m)['flag'] === false); ok(dau_update_info('docker.io/library/mysql:latest', $m)['flag'] === true);
+  ok(dau_update_info('someone/mysql', $m)['flag'] === null, 'an image with an author is never taken for the official one');
+});
+
+t('lock: a process a job starts does not inherit it, and probing it does not look like a running job', function () {
+  $fp = dau_lock_try(); ok(is_resource($fp));
+  $p = proc_open(['sleep', '3'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+  dau_lock_release($fp);
+  ok(!dau_is_locked(), 'the child must not keep the lock'); $l = dau_lock_try(); ok(is_resource($l)); ok(dau_is_locked()); dau_lock_release($l);
+  $sh = fopen(DAU_LOCK, 'c'); flock($sh, LOCK_SH); ok(!dau_is_locked(), 'another probe is not a job'); fclose($sh);
+  proc_terminate($p, 9); proc_close($p);
+});
+
+t('run: a command that ended is not waited for because of what it left in the background, and its exit code is kept', function () {
+  unset($GLOBALS['DAU_EXEC_MOCK']);
+  $t = microtime(true); $r = dau_run(['sh', '-c', 'sleep 4 & echo hello; exit 3'], 20);
+  ok(microtime(true) - $t < 3, 'returned soon after the command ended'); eq($r['code'], 3); has($r['out'], 'hello'); ok(!$r['timeout']);
+  $r = dau_run(['sh', '-c', 'echo done; exit 5'], 10); eq($r['code'], 5); eq(trim($r['out']), 'done');
+  $r = dau_run(['sh', '-c', 'sleep 5'], 1); ok($r['timeout']); eq($r['code'], 124);
+});
+
+t('verify: a container that was created but never started is a failure, not a slow start', function () {
+  mock_exec(function ($a) { if (in_array('inspect', $a, true)) return ['out' => json_encode([['Image' => 'sha256:new', 'RestartCount' => 0, 'State' => ['Status' => 'created', 'Running' => false]]])]; return null; });
+  $v = dau_docker_verify('app', 'sha256:new', true, 10); eq($v['result'], 'not_started'); ok(!$v['ok']);
+  eq(dau_docker_verify('app', 'sha256:new', false, 10)['result'], 'not_running_expected');
+});
+
+t('image version: words and epochs do not hide the major version', function () {
+  $v = function ($env, $lab = []) { mock_exec(function ($a) use ($env, $lab) { return ['out' => json_encode(['Env' => $env, 'Labels' => $lab])]; }); return dau_image_version('sha256:x'); };
+  $r = $v(['MYSQL_MAJOR=innovation', 'MYSQL_VERSION=9.4.0-1.el9']); eq($r['major'], 9); eq($r['version'], '9.4.0-1.el9');
+  $r = $v(['MARIADB_VERSION=1:11.4.2+maria~ubu2404']); eq($r['major'], 11); eq($r['version'], '11.4.2+maria~ubu2404');
+  eq($v([], ['org.opencontainers.image.version' => '13.0.2'])['major'], 13);
+});
+
+t('events: the verification is sent as text, and notifications keep their reason', function () {
+  $e = dau_discord_event_embed(dau_ev('docker', 'app', 'updated', ['verification' => 'Running and stable.']), 'Tower'); $x = json_encode($e); has($x, 'Running and stable.'); lacks($x, 'Array');
+  $j = file_get_contents(__DIR__ . '/../src/include/jobs.php'); lacks($j, "'verification' => \$res['verification'],"); has($j, "\$res['verification']['detail'] ?? null");
+  has($j, "((\$e['error'] ?? '') ?: (\$e['reason'] ?? ''))");
+});
+
+t('pre-OS: skipped versions and pinned containers stay out, as do skipped plugins', function () {
+  file_put_contents(DAU_TEMPLATES . '/my-a.xml', '<x/>'); file_put_contents(DAU_TEMPLATES . '/my-b.xml', '<x/>'); file_put_contents(DAU_TEMPLATES . '/my-c.xml', '<x/>');
+  file_put_contents(DAU_UPDSTATUS, json_encode(['img:latest' => ['local' => 'sha256:1', 'remote' => 'sha256:2', 'status' => 'false']]));
+  $c = function ($n) { return ['Id' => str_repeat($n, 64), 'Name' => "/$n", 'Image' => 'sha256:i', 'Config' => ['Image' => 'img:latest', 'Labels' => []], 'State' => ['Status' => 'running']]; };
+  mock_exec(function ($a) use ($c) { if (in_array('ps', $a, true)) return ['out' => "aaa\nbbb\nccc\n"]; if (in_array('inspect', $a, true)) return ['out' => json_encode([$c('a'), $c('b'), $c('c')])]; return null; });
+  $cfg = dau_sanitize_config(['containers' => ['a' => ['policy' => 'auto'], 'b' => ['policy' => 'auto'], 'c' => ['policy' => 'auto']]], dau_defaults());
+  $st = dau_state_defaults(); eq(dau_os_pre_containers($cfg, $st), ['a', 'b', 'c']);
+  $st['docker']['skipped']['a'] = 'sha256:2'; $st['docker']['pinned']['b'] = ['repository' => 'img']; eq(dau_os_pre_containers($cfg, $st), ['c']);
+  has(file_get_contents(__DIR__ . '/../src/include/jobs.php'), "(\$J['st']['plugins']['skipped'][\$f] ?? '') === \$latest)) continue;");
+});
+
+t('os: 7.3.10 is newer than 7.3.9 for the install check too', function () {
+  $x = '<?xml version="1.0"?><PLUGIN name="unRAIDServer" version="7.3.10" pluginURL="https://x.example/unRAIDServer.plg"/>';
+  $d = '<?xml version="1.0"?><PLUGIN name="unRAIDServer" version="7.3.9" pluginURL="https://x.example/unRAIDServer.plg"/>' . str_repeat(' ', 60);
+  file_put_contents(DAU_PLUGTMP . '/unRAIDServer.plg', $x . str_repeat(' ', 60)); $old = DAU_PLUGBOOT . '/unRAIDServer.plg'; file_put_contents($old, $d);
+  $p = ['file' => 'unRAIDServer.plg', 'path' => $old, 'self' => false, 'name' => 'unRAIDServer', 'version' => '7.3.9', 'url' => 'https://x.example/unRAIDServer.plg'];
+  ok(dau_plugin_validate($p, '7.3.10')['ok']);
+  ok(!dau_plugin_validate(['file' => 'a.plg', 'name' => 'unRAIDServer'] + $p, '7.3.10')['ok'], 'plugins keep Unraid\'s text comparison');
+  @unlink($old);
+});
+
+t('cleanup: an unused image with two names keeps both and is removed by name', function () {
+  $id = 'sha256:' . str_repeat('a', 64);
+  mock_exec(function ($a) use ($id) {
+    if ($a[1] === 'ps') return ['out' => ''];
+    if ($a[1] === 'image' && $a[2] === 'ls') return ['out' => "$id|one/app|1.0|2 days ago\n$id|two/app|latest|2 days ago\n"];
+    if ($a[1] === 'image' && $a[2] === 'inspect') return ['out' => "$id 100\n"];
+    return null;
+  });
+  $s = dau_cleanup_scan(); eq(count($s['images']), 1); eq($s['images'][0]['tags'], ['one/app:1.0', 'two/app:latest']);
+  $r = dau_cleanup_run([$id], []); eq(count($r['removed']), 1);
+  eq(count(calls_matching('image rm one/app:1.0 two/app:latest')), 1);
+});
+
+t('log: the size setting is used', function () {
+  unset($GLOBALS['DAU_LOG_CFG']); eq(dau_log_max_bytes(), 1048576);
+  dau_write_json(DAU_CFG, ['version' => 2, 'log' => ['max_kb' => 64]]); dau_load_config(); eq(dau_log_max_bytes(), 65536); unset($GLOBALS['DAU_LOG_CFG']); @unlink(DAU_CFG);
+});
+
+t('log: the tail reaches into the rotated file only when it has to', function () {
+  file_put_contents(DAU_LOG . '.1', "old1\nold2\n"); file_put_contents(DAU_LOG, "new1\nnew2\n");
+  eq(dau_log_tail(3), "old2\nnew1\nnew2\n"); eq(dau_log_tail(2), "new1\nnew2\n"); eq(dau_log_recent(1), 'new2');
+  file_put_contents(DAU_LOG, str_repeat("x\n", 40000)); eq(strlen(dau_log_recent(5)), 9); @unlink(DAU_LOG); @unlink(DAU_LOG . '.1'); eq(dau_log_tail(5), '');
+});
+
+t('json: text that is not UTF-8 is kept, not emptied', function () {
+  $f = DAU_DIR . '/u.json'; dau_write_json($f, ['a' => "bad \xE9 text", 'b' => 1]); $d = json_decode(file_get_contents($f), true); has($d['a'], 'bad'); eq($d['b'], 1); @unlink($f);
+});
+
+t('cron: the cleanup report and the quarantine expiry keep the dispatcher on', function () {
+  mock_exec(function ($a) { return null; }); $c = dau_defaults(); $c['plugins']['check_enabled'] = false; $c['os']['check_enabled'] = false;
+  dau_cron_apply($c); ok(!is_file(DAU_CRON)); $c['appdata']['report'] = true; dau_cron_apply($c); ok(is_file(DAU_CRON));
+  $c['appdata']['report'] = false; dau_cron_apply($c); ok(!is_file(DAU_CRON)); $c['appdata']['purge_days'] = 7; dau_cron_apply($c); ok(is_file(DAU_CRON)); @unlink(DAU_CRON);
+});
+
+t('plugins: updating chosen ones checks only those and keeps what is known about the rest', function () {
+  foreach (['a', 'b'] as $n) { $p = DAU_PLUGBOOT . "/$n.plg"; file_put_contents($p, "<?xml version=\"1.0\"?><PLUGIN name=\"$n\" version=\"1\" pluginURL=\"https://x.example/$n.plg\"/>"); symlink($p, DAU_PLUGLINKS . "/$n.plg"); }
+  mock_exec(function ($a) { if ($a[1] === 'check') { $f = $a[2]; file_put_contents(DAU_PLUGTMP . "/$f", '<?xml version="1.0"?><PLUGIN version="2"/>'); } if ($a[1] === 'version') return ['out' => "2\n"]; return null; });
+  $J = dau_job_new('manual', dau_defaults(), dau_state_defaults()); $J['st']['plugins']['available'] = ['b.plg' => '2'];
+  dau_job_plugins($J, ['names' => ['a.plg'], 'update' => false, 'manual' => true]);
+  eq(count(calls_matching('check a.plg')), 1); eq(count(calls_matching('check b.plg')), 0); eq($J['st']['plugins']['available']['b.plg'], '2'); eq($J['st']['plugins']['available']['a.plg'], '2'); eq($J['st']['plugins']['last_check'], 0);
+  foreach (['a', 'b'] as $n) { @unlink(DAU_PLUGLINKS . "/$n.plg"); @unlink(DAU_PLUGBOOT . "/$n.plg"); }
+});
+
+t('docker: a manual update reuses a fresh check, an old one is repeated', function () {
+  file_put_contents(DAU_UPDSTATUS, '{}'); touch(DAU_UPDSTATUS, dau_now() - 60); ok(dau_docker_status_fresh());
+  touch(DAU_UPDSTATUS, dau_now() - 4000); ok(!dau_docker_status_fresh()); @unlink(DAU_UPDSTATUS); ok(!dau_docker_status_fresh());
+});
+
+t('tile: skipped and pinned items are not waiting, and "Checked" means a check', function () {
+  $st = dau_state_defaults(); $st['summary'] = ['containers' => 5, 'docker_updates' => 3, 'plugin_updates' => 2, 'at' => 500];
+  $st['docker']['seen'] = ['a' => ['remote' => 'r1'], 'b' => ['remote' => 'r2'], 'c' => ['remote' => 'r3']]; $st['docker']['skipped']['a'] = 'r1'; $st['docker']['pinned']['b'] = ['repository' => 'x'];
+  $st['plugins']['available'] = ['p.plg' => '2', 'q.plg' => '3']; $st['plugins']['skipped'] = ['q.plg' => '3']; $st['os']['last_check'] = 900; $st['last_run'] = 5000; dau_state_save($st);
+  $j = api_call('widget'); eq($j['docker'], 1); eq($j['plugins'], 1); eq($j['checked'], 900);
+  $p = file_get_contents(__DIR__ . '/../src/UnraidSwissManagerDash.page'); has($p, "r.state!=='pinned'&&r.state!=='skipped'"); has(file_get_contents(__DIR__ . '/../src/assets/app.js'), 'r.managed && !r.pinned && !r.skipped');
+});

@@ -46,7 +46,7 @@ function dau_os_process(array &$st, array $check, $now) {
   $installed = dau_os_version();
   $os['last_check'] = $now;
   $prev = $os['installed'];
-  if ($prev !== null && $installed !== '' && $prev !== $installed && ($os['notified'] === $installed || $os['available'] === $installed)) {
+  if ($prev !== null && $installed && $prev !== $installed && ($os['notified'] === $installed || $os['available'] === $installed)) {
     $events[] = ['kind' => 'os_installed', 'installed' => $prev, 'available' => $installed];
   }
   $os['installed'] = $installed;
@@ -68,8 +68,7 @@ function dau_os_process(array &$st, array $check, $now) {
       $events[] = ['kind' => 'os_withdrawn', 'installed' => $installed, 'available' => $os['available']];
       $os['withdrawn_notified'] = true;
     }
-    if ($os['available'] === $installed || $os['available'] === null) { $os['available'] = null; }
-    else $os['available'] = null;
+    $os['available'] = null;
     $os['notes'] = '';
   }
   return $events;

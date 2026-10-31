@@ -13,8 +13,8 @@ function dau_state_defaults() {
     'docker'  => ['seen' => [], 'retry' => [], 'approved' => [], 'notified' => [], 'deferred' => [],
                   'skipped' => [],      // name => remote digest the person chose to skip
                   'rollback' => [],     // name => how to go back to the image before the last update
-                  'pinned' => [],
-                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump      // name => template Repository that was replaced by a rollback (restored by "unpin")
+                  'pinned' => [],       // name => template Repository that was replaced by a rollback (restored by "unpin")
+                  'major' => []],       // name => ['from','to','remote'] updates held back for a major version jump
     'plugins' => ['skipped' => [], 'notes' => [], 'deferred_at' => 0, 'seen' => [], 'notified' => [], 'blocked' => [], 'available' => [], 'last_check' => 0, 'last_check_ok' => 0, 'last_error' => ''],
     'os'      => ['installed' => null, 'available' => null, 'first_seen' => 0, 'notified' => null, 'withdrawn_notified' => false,
                   'last_check' => 0, 'last_check_ok' => 0, 'last_error' => '', 'notes' => '', 'error_notified' => false,

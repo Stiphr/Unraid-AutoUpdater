@@ -80,6 +80,7 @@ function dau_appdata_scan(?array $cfg = null) {
   $now = dau_now(); $orph = []; $busy = []; $prot = []; $broad = []; $ignored = [];
   $ign = array_flip($cfg['appdata']['ignore'] ?? []);
   $qroots = [];
+  foreach ($mounts as $i => $c) foreach ($c['sources'] as $s) { $sr = @realpath($s) ?: $s; $mounts[$i]['paths'][] = [$s, $sr, dau_path_tail($sr)]; }      // once, not per folder
   foreach ($roots as $ri => $root) {
     $rreal = realpath($root); $rdev = @stat($rreal)['dev'] ?? 0; $rtail = dau_path_tail($rreal);
     $qroots[] = $root . '/' . DAU_QDIR_NAME;
@@ -95,8 +96,7 @@ function dau_appdata_scan(?array $cfg = null) {
       $st = @stat($path);
       if ($st && $rdev && $st['dev'] !== $rdev) { $row['why'] = 'separate mount point'; $row['status'] = 'protected'; $row['reason'] = 'It is a separate mount point (another disk or share).'; $prot[] = $row; continue; }
       $real = realpath($path); $tail = dau_path_tail($real ?: $path);
-      foreach ($mounts as $c) foreach ($c['sources'] as $s) {
-        $sreal = @realpath($s) ?: $s; $stail = dau_path_tail($sreal);
+      foreach ($mounts as $c) foreach ($c['paths'] ?? [] as list($s, $sreal, $stail)) {
         $covers = dau_path_in($sreal, $real) || dau_path_in($stail, $tail) || dau_path_in($s, $path);   // maps this folder or something in it
         if ($covers) { $row['by'][] = $c['name'] . ($c['state'] !== 'running' ? ' (' . $c['state'] . ')' : ''); break; }
         if (dau_path_in($real, $sreal) || dau_path_in($tail, $stail)) $broad[$c['name']] = true;     // maps a parent (like /mnt/user): shown, never ownership

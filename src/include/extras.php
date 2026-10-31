@@ -71,10 +71,10 @@ function dau_image_version($imageId) {
     $env = [];
     foreach ((array)($c['Env'] ?? []) as $e) if (is_string($e) && strpos($e, '=') !== false) { list($ek, $ev) = explode('=', $e, 2); $env[$ek] = $ev; }
     foreach (['PG_MAJOR', 'PG_VERSION', 'MYSQL_MAJOR', 'MYSQL_VERSION', 'MARIADB_VERSION', 'MONGO_MAJOR', 'MONGO_VERSION', 'REDIS_VERSION', 'APP_VERSION', 'VERSION'] as $k) {
-      if (!empty($env[$k])) { $v = $env[$k]; break; }
+      if (!empty($env[$k]) && preg_match('/^\d/', $env[$k])) { $v = $env[$k]; break; }      // MYSQL_MAJOR can be a word ("innovation")
     }
   }
-  $v = dau_clip(trim((string)$v), 60);
+  $v = dau_clip(preg_replace('/^\d+:/', '', trim((string)$v)), 60);      // a Debian package version can start with an epoch: 1:11.4.2
   $src = (string)($lab['org.opencontainers.image.source'] ?? $lab['org.opencontainers.image.url'] ?? '');
   $major = preg_match('/^v?(\d+)/i', $v, $m) ? (int)$m[1] : null;
   return ['version' => $v, 'major' => $major, 'source' => preg_match('#^https://[A-Za-z0-9./_-]{3,150}$#', $src) ? $src : ''];
@@ -240,7 +240,7 @@ function dau_cleanup_scan() {
   foreach (preg_split('/\R/', trim($r['out'])) as $line) {
     $f = explode('|', $line, 4); if (count($f) < 4 || !preg_match('/^sha256:[0-9a-f]{64}$/', $f[0])) continue;
     if (isset($used[$f[0]])) continue;
-    $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0, 'status' => 'eligible', 'reason' => 'It has no name or tag and no container uses it. This is usually a leftover from an update.'];
+    if (!isset($imgs[$f[0]])) $imgs[$f[0]] = ['id' => $f[0], 'short' => dau_short_id($f[0]), 'tags' => [], 'dangling' => true, 'created' => $f[3], 'size' => 0, 'status' => 'eligible', 'reason' => 'It has no name or tag and no container uses it. This is usually a leftover from an update.'];
     if ($f[1] !== '<none>') { $imgs[$f[0]]['tags'][] = $f[1] . ($f[2] !== '<none>' ? ':' . $f[2] : ''); $imgs[$f[0]]['dangling'] = false; $imgs[$f[0]]['status'] = 'review'; $imgs[$f[0]]['reason'] = 'It was downloaded earlier and no container uses it now. Check that you do not need it; it can be downloaded again.'; }
   }
   if ($imgs) {
@@ -310,7 +310,8 @@ function dau_cleanup_run(array $imageIds, array $containerNames, array $volumeNa
   foreach ($imageIds as $id) {
     if (!isset($okImg[$id])) { $out['skipped'][] = ['what' => dau_short_id($id), 'why' => 'now in use or already removed']; continue; }
     $label = $okImg[$id]['tags'] ? implode(', ', $okImg[$id]['tags']) : $okImg[$id]['short'];
-    $do('image ' . $label, $okImg[$id]['size'], function () use ($id) { return dau_docker(['image', 'rm', $id], 120); });
+    $refs = count($okImg[$id]['tags']) > 1 ? $okImg[$id]['tags'] : [$id];      // Docker refuses an id that has several names, unless forced: each name goes, and the last one takes the image
+    $do('image ' . $label, $okImg[$id]['size'], function () use ($refs) { return dau_docker(array_merge(['image', 'rm'], $refs), 120); });
   }
   $out['freed'] = $out['size_removed'];           // kept for older callers; it is a measured-before size, not space read back from the disk
   $out['freed_text'] = dau_bytes_text($out['size_removed']);
@@ -352,7 +353,7 @@ function dau_channel_install($ch, $force = false) {
   if ($url === '') return ['ok' => false, 'error' => 'Unknown channel'];
   $cur = dau_channel_current();
   if ($cur === $ch && !$force) return ['ok' => false, 'error' => 'This server already follows that channel. Use Force update to reinstall it.'];
-  $lock = dau_lock_try(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
+  $lock = dau_lock_wait(); if (!$lock) return ['ok' => false, 'error' => 'Another job is running.'];
   $t0 = dau_now(); $what = $cur === $ch ? 'force update (' . $ch . ')' : $cur . ' -> ' . $ch;
   try {
     dau_log('info', 'plugin', DAU_NAME, 'channel', 'start', $what);

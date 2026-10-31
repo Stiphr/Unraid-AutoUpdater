@@ -75,7 +75,7 @@ function dau_plg_parse($text) {
 
 function dau_unraid_version_ok($min, $max) {
   $cur = dau_os_version();
-  if ($cur === '') return true;
+  if (!$cur) return true;
   if ($min !== '' && version_compare($cur, $min, '<')) return false;
   if ($max !== '' && version_compare($cur, $max, '>')) return false;
   return true;
@@ -103,7 +103,7 @@ function dau_plugin_validate(array $p, $latest) {
   if ((string)$x['name'] !== '' && (string)$x['name'] !== $p['name']) return $no('The update changes the plugin name.');
   $ver = (string)$x['version'];
   if ($ver !== $latest) return $no("Downloaded version ($ver) differs from the announced version ($latest).");
-  if (!dau_version_newer($ver, $p['version'])) return $no('Not newer than the installed version.');
+  if (!($p['file'] === 'unRAIDServer.plg' ? dau_os_newer($ver, $p['version']) : dau_version_newer($ver, $p['version']))) return $no('Not newer than the installed version.');
   if (!dau_unraid_version_ok((string)$x['min'], (string)$x['max'])) return $no('Not compatible with this Unraid version (min ' . (string)$x['min'] . ', max ' . (string)$x['max'] . ').');
   $oldText = (string)@file_get_contents($p['path']);
   $allowed = array_merge(dau_url_hosts($oldText), dau_url_hosts($url));

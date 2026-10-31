@@ -19,13 +19,14 @@ function dau_os_pre_spec() {
   return ['plugins' => ['bool'], 'docker' => ['bool'], 'require_plugins' => ['bool'], 'require_docker' => ['bool'], 'confirm' => ['bool'], 'notify' => ['bool'], 'scope' => ['enum', ['auto', 'all']]];
 }
 
-/** Containers the workflow may update: policy "auto", has an update, not "critical" (those always need an explicit approval). */
-function dau_os_pre_containers(array $cfg) {
+/** Containers the workflow may update: policy "auto", has an update, not "critical" (those always need an explicit approval), not pinned, and not a version the person chose to skip. */
+function dau_os_pre_containers(array $cfg, array $st) {
   $out = [];
   foreach ((dau_containers() ?? []) as $c) {
     $cc = dau_container_cfg($cfg, $c['name']);
     if ($c['update'] !== true || !$c['managed'] || $cc['policy'] !== 'auto' || !empty($cc['critical'])) continue;
     if (!empty($cfg['global']['skip_stopped']) && $c['state'] !== 'running') continue;
+    if (isset($st['docker']['pinned'][$c['name']]) || ($c['remote'] && ($st['docker']['skipped'][$c['name']] ?? '') === (string)$c['remote'])) continue;
     $out[] = $c['name'];
   }
   return $out;
@@ -96,7 +97,7 @@ function dau_os_workflow(array &$J, $latest, array $opt) {
   }
   if ($wantD) {
     dau_sticky(['stage' => 'docker']); dau_phase('Before the OS update: updating Docker containers');
-    $names = dau_os_pre_containers($cfg);
+    $names = dau_os_pre_containers($cfg, $J['st']);
     $rep['docker'] = ['updated' => 0, 'failed' => 0, 'skipped' => 0, 'selected' => count($names)];
     if ($names) {
       $b = $J['sum']['docker'];

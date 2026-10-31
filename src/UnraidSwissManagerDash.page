@@ -111,7 +111,7 @@ try {
     var al=byId('dau-w-alert'); while(al.firstChild) al.removeChild(al.firstChild);
     if(j.failures){ var a=el('a','dau-alert'); a.href=P+'?tab=activity'; a.appendChild(el('span',null,pl(j.failures,'recent failure'))); a.appendChild(el('span',null,'View')); al.appendChild(a); }
     var l=byId('dau-w-last'), n=byId('dau-w-next'), b=byId('dau-w-bk');
-    l.textContent='Checked '+ago(j.last_run,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.last_run);
+    l.textContent='Checked '+ago(j.checked,j.now)+(j.queued? ' · '+j.queued+' on hold':'')+(j.pinned? ' · '+j.pinned+' pinned':''); l.title=full(j.checked);
     n.textContent='Next '+(j.next_label? j.next_label+' ':'')+inn(j.next,j.now); n.title=full(j.next);
     b.textContent=j.backup_at? 'Backup '+ago(j.backup_at,j.now)+(j.backup_ok===false?' (failed)':'') : ''; b.title=full(j.backup_at);
     byId('dau-w-go').disabled=busy;
@@ -137,7 +137,7 @@ try {
     (docker? post('preview') : post('plugins')).then(function(j){
       if(!j||j.error) throw 0;
       var rows=(docker? j.rows : j.rows.filter(function(r){return r.latest&&!r.self&&!r.skipped;}));
-      if(docker) rows=rows.filter(function(r){return r.managed;});
+      if(docker) rows=rows.filter(function(r){return r.managed&&r.state!=='pinned'&&r.state!=='skipped';});
       show(rows.map(function(r){return docker? r.name : r.file;}),rows.map(function(r){return r.name;}));
     }).catch(function(){ while(box.firstChild) box.removeChild(box.firstChild); box.appendChild(el('p',null,'That did not work. Try again from the tab.')); box.appendChild(btn('Close','',closeAsk)); });
   }
@@ -148,7 +148,7 @@ try {
       if(!j||j.error) throw 0;
       draw(j);
       if(j.running) timer=setTimeout(load,3000);      /* only while something runs */
-          }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
+    }).catch(function(){ byId('dau-w-sum').textContent='Status not available'; byId('dau-w-pill').className='dau-pill'; });
   }
   byId('dau-w-go').addEventListener('click',function(){
     var b=this; b.disabled=true;

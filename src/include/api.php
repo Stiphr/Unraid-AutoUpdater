@@ -6,7 +6,7 @@ header('Content-Type: application/json');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 
-function out($d, $code = 200) { http_response_code($code); echo json_encode($d, JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR); exit; }
+function out($d, $code = 200) { http_response_code($code); echo json_encode($d, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR); exit; }
 function fail($m, $code = 400) { out(['error' => $m], $code); }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
@@ -59,12 +59,9 @@ function api_plugin_rows($cfg, $st) {
 
 function api_next_runs($cfg, $st) {
   $now = dau_now(); $o = [];
-  $add = function ($label, $slots) use (&$o, $st, $now) { foreach ($slots as $k => $s) $o[] = ['label' => $label, 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, $k), $now), 'count' => count($s['names'])]; };
-  $d = []; foreach (dau_docker_slots($cfg) as $k => $s) $d['d:' . $k] = $s;
-  $add('Docker', $d);
-  $p = []; foreach (dau_plugin_slots($cfg) as $k => $s) $p['p:' . $k] = $s; $add('Plugins', $p);
-  $x = []; foreach (dau_os_slots($cfg) as $k => $s) $x['o:' . $k] = $s; $add('Unraid OS', $x);
-  foreach (dau_bk_slots($cfg) as $k => $s) $o[] = ['label' => $k === 'flash' ? 'Boot drive backup' : 'Appdata backup', 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, 'b:' . $k), $now), 'count' => 1];
+  $add = function ($label, $prefix, $slots) use (&$o, $st, $now) { foreach ($slots as $k => $s) $o[] = ['label' => $label, 'text' => dau_sched_text($s['sched']), 'next' => dau_next_run($s['sched'], dau_slot_rec($st, $prefix . $k), $now), 'count' => count($s['names'] ?? [1])]; };
+  $add('Docker', 'd:', dau_docker_slots($cfg)); $add('Plugins', 'p:', dau_plugin_slots($cfg)); $add('Unraid OS', 'o:', dau_os_slots($cfg));
+  foreach (dau_bk_slots($cfg) as $k => $s) $add($k === 'flash' ? 'Boot drive backup' : 'Appdata backup', 'b:', [$k => $s]);
   return $o;
 }
 
@@ -107,7 +104,7 @@ switch ($action) {
     out(['os' => $st['os'], 'installed' => dau_os_version(), 'mode' => $cfg['os']['mode'], 'eval' => $ev, 'manual' => $man, 'stable' => $av ? dau_os_is_stable($av) : null,
          'reboot' => dau_os_reboot_safe(), 'array' => dau_os_array_state(), 'free_mb' => dau_os_boot_free_mb(), 'window_text' => dau_window_text($cfg['os']['window']),
          'skipped' => $av && ($st['os']['skipped'] ?? '') === $av, 'pending' => $st['os']['pending'], 'workflow' => $st['os']['workflow'], 'report' => $st['os']['last_report'], 'pre' => $cfg['os']['pre'],
-         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg)) : 0]);
+         'pre_containers' => !empty($cfg['os']['pre']['docker']) ? count(dau_os_pre_containers($cfg, $st)) : 0]);
   }
   case 'notes': {
     $type = (string)($_GET['type'] ?? $_POST['type'] ?? ''); $n = (string)($_GET['name'] ?? $_POST['name'] ?? ''); $st = dau_state_load();
@@ -123,7 +120,9 @@ switch ($action) {
     $st = dau_state_load(); $cfg = dau_load_config(); $ri = dau_run_info(); $pr = (array)$ri['progress'];
     $nx = null; foreach (api_next_runs($cfg, $st) as $r) if ($r['next'] && (!$nx || $r['next'] < $nx['next'])) $nx = $r;
     $bk = null; foreach ($st['backups'] as $b) if (is_array($b) && !empty($b['at']) && (!$bk || $b['at'] > $bk['at'])) $bk = $b;
-    out(['containers' => (int)$st['summary']['containers'], 'docker' => (int)$st['summary']['docker_updates'], 'plugins' => (int)$st['summary']['plugin_updates'], 'at' => (int)$st['summary']['at'],
+    $held = 0; foreach ($st['docker']['seen'] as $n => $r) if (isset($st['docker']['pinned'][$n]) || ($st['docker']['skipped'][$n] ?? '') === ($r['remote'] ?? null)) $held++;      // what you chose to keep out is not "waiting"
+    out(['containers' => (int)$st['summary']['containers'], 'docker' => max(0, (int)$st['summary']['docker_updates'] - $held), 'plugins' => count(array_diff_assoc($st['plugins']['available'], $st['plugins']['skipped'])), 'at' => (int)$st['summary']['at'],
+         'checked' => max((int)$st['summary']['at'], (int)$st['plugins']['last_check'], (int)$st['os']['last_check']),
          'os_update' => !empty($st['os']['available']) && ($st['os']['skipped'] ?? '') !== (string)$st['os']['available'],   // only whether one is waiting: the tile never shows a version number
          'failures' => dau_recent_failures(),
          'next' => $nx['next'] ?? null, 'next_label' => $nx['label'] ?? '',
@@ -233,7 +232,7 @@ switch ($action) {
         'text' => $b['schedule'] === 'off' ? '' : dau_sched_text($sched), 'files' => $b['dest'] !== '' && dau_valid_dest($b['dest']) ? dau_bk_list($k, $b['dest']) : [],
         'folder' => $b['dest'] !== '' ? $dir : '', 'free' => $why === '' && is_dir($b['dest']) ? dau_backup_free($b['dest']) : null];
     }
-    out(['ok' => true, 'backups' => $o, 'running' => (bool)(dau_read_json(DAU_PROGRESS, [])['running'] ?? false), 'now' => $now]);
+    out(['ok' => true, 'backups' => $o, 'running' => dau_run_info()['running'], 'now' => $now]);
   }
 
   case 'run': {
